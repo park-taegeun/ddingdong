@@ -1,0 +1,28 @@
+# === PlatformIO ===
+.pio/
+.vscode/
+
+# === Python ===
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# === Node ===
+node_modules/
+dist/
+build/
+
+# === macOS ===
+.DS_Store
+
+# === 환경변수 (실 파일은 절대 push 금지) ===
+.env
+.env.local
+
+# === ML 데이터/모델 placeholder (8주차 진입 시 정책 재정의) ===
+ml/data/
+ml/models/
+*.tflite
+*.h5
