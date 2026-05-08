@@ -2,6 +2,10 @@
 .pio/
 .vscode/
 
+# === clangd 인덱스 캐시 (IDE 전용, push 금지) ===
+.cache/
+.clangd/.cache/
+
 # === Python ===
 venv/
 __pycache__/

@@ -1,0 +1,13 @@
+# clangd IDE IntelliSense 설정
+# 목적: ESP32 전용 컴파일러 플래그(GCC/Xtensa)를 LLVM 기반 clangd가 인식 못 하는 문제 해결
+# 영향 범위: IDE IntelliSense만 (PlatformIO 빌드 / 펌웨어 동작 무관)
+# 적용 방법: clangd 재시작 (Cmd+Shift+P → "clangd: Restart language server")
+
+CompileFlags:
+  Remove:
+    - -mfix-esp32-psram-cache-issue   # Xtensa GCC 전용 (clang에서 unknown argument)
+    - -mlongcalls                     # Xtensa GCC 전용 (clang은 ARM/MIPS/Hexagon만 지원)
+    - -fstrict-volatile-bitfields     # Xtensa GCC 전용
+    - -fno-tree-switch-conversion     # GCC 전용 (LLVM은 -switch-conversion 옵션명 다름)
+  Add:
+    - -ferror-limit=0                 # clang 진단 출력 개수 제한 해제 (대형 펌웨어 전체 분석)
