@@ -417,3 +417,87 @@ ID 참조:
 - 🔴 디바이스마트 자동 취소 처리 확인 (5/8 17시 이후, 환불 23,870원)
 - 🟡 자성리얼 배송 추적 (5/9~5/11 도착 예상)
 - 🟢 도착 후 ESP32-S3 Sense + ESP32-C3 보드 검수 (5/15까지)
+
+---
+
+## 카테고리 23: 시연 네트워크 환경 = 모바일 핫스팟 (2026-05-08 결정)
+
+### 배경
+- 시연 장소: 학과 발표장
+- 학과 발표장 학교 WiFi 신호 약함 (기존 WiFi 환경 의존 위험)
+- 학교 WiFi는 802.1X (WPA2-Enterprise) 인증 필요
+
+### 결정
+- production 시연 환경 = WPA2-Personal (모바일 핫스팟)
+- 개발 환경 = WPA2-Personal (집 WiFi)
+- 학교 WiFi (802.1X / WPA2-Enterprise) 지원 통째로 폐기
+
+### 영향
+- 5/8 WiFi 더미 테스트 (commit 3ec17d4): WPA2-Personal 통합 환경
+  - 빌드 환경 분리 (school/home) 폐기 → 단일 환경 유지
+  - esp_wpa2.h / WPA2_ENT 코드 전부 미작성
+  - 런타임 SSID fallback (PRIMARY → FALLBACK) 도입
+  - secrets.h: PRIMARY (집) + FALLBACK (핫스팟) 2쌍 슬롯
+- 사전 준비 11일 중 가장 큰 리스크 요인 (esp_wpa2.h 호환성) 제거
+- WiFi 본 작업 시간 약 40% 단축 (1h~2h → 30분~1h)
+
+### 폐기 옵션
+- core 2.x 다운그레이드 (검토 안 함)
+- 학교 WiFi 시연 (PoC 5주차 이후 연기 검토 안 함)
+
+### 후속 영향
+- 시연 당일: 핫스팟 SSID/비번 바뀌어도 secrets.h만 수정 후 재업로드 (재빌드 X)
+- 발표장 환경 변경 시: 즉시 적응 가능 (런타임 fallback)
+
+---
+
+## 카테고리 24: IDE 환경 — clangd IntelliSense 시도 + 한계 + 우회 (2026-05-08 결정)
+
+### 배경
+- 학부생 IDE: Antigravity (VS Code fork)
+- WiFi 본 작업 (commit 3ec17d4) 후 IDE에서 빨간 줄 21건 발생
+- pio run -t compiledb 실행 후 15건으로 감소 (Arduino.h not found 해결)
+- 그러나 ESP32 전용 컴파일러 플래그 (xtensa GCC) clangd 인식 못 함
+
+### 시도 작업 (3 commits)
+
+**시도 1 (commit 70c0664): .clangd 설정 추가**
+- ESP32 전용 컴파일러 플래그 4종 clangd 무시 처리:
+  - -mfix-esp32-psram-cache-issue (Xtensa GCC 전용)
+  - -mlongcalls (Xtensa GCC 전용, LLVM은 ARM/MIPS/Hexagon만 지원)
+  - -fstrict-volatile-bitfields (Xtensa GCC 전용)
+  - -fno-tree-switch-conversion (GCC 전용)
+- -ferror-limit=0 (clang 진단 표시 개수 제한 해제)
+- 효과: Unknown argument 4종 사라짐 (15건 → 11건)
+
+**시도 2 (commit d801e01): CompilationDatabase 경로 명시**
+- 원인 분석: compile_commands.json이 firmware/ 안에 있어 clangd 매칭 실패
+- 해결: CompileFlags 하위 `CompilationDatabase: firmware` 1줄 추가
+- 효과: 효과 미달 (11건 → 11건, 변화 없음)
+
+**시도 3 (보강, commit db38da0): compile_commands.json gitignore 차단**
+- 부산물 파일 1.9MB + 절대경로 포함 → push 위험
+- .gitignore에 단일 패턴 추가 (모든 하위 디렉토리 자동 매칭)
+- 효과: push 위험 차단 완료 (`git check-ignore -v` 검증 통과)
+
+### 잔존 진단 (11건)
+- hal.h not found 1건 (헤더 경로 일부 인식 실패)
+- JsonDocument operator[] 7건 (ArduinoJson 7.x C++17 features 인식 한계)
+- serializeJson 1건 (cascading)
+- HTTPClient::begin() 1건 (WiFiClientSecure 변환 인식 한계)
+- WiFi.onEvent 1건 + template 1건 (core 3.x 시그니처 인식 한계)
+
+### 결론
+- ESP32 + clangd + ArduinoJson 7.x + Arduino-ESP32 core 3.x 조합에서 IDE 인식 한계 존재
+- 펌웨어 동작 영향 0 (컴파일 SUCCESS 유지, RAM/Flash 변동 0%)
+- 결정: **잔존 11건 무시, 작업 진행에 영향 없음**
+
+### 향후 옵션 (필요 시)
+- 옵션 A (현재 채택): 무시 (개발 시 살짝 거슬리지만 동작 영향 0)
+- 옵션 B: clangd 끄고 VS Code 기본 IntelliSense 사용 (Cmd+, → `clangd.disable`)
+- 옵션 C: ArduinoJson 7.x → 6.x 다운그레이드 (firmware/platformio.ini 수정 필요, 5/8 본 작업 영향 — 비추천)
+
+### 5/9~5/11 작업 영향
+- 카메라 / 마이크 / ToF 라이브러리 추가 시 동일 패턴 빨간 줄 가능
+- 5/9~5/11 작업 시 빨간 줄 보여도 추가 트러블슈팅 X (이미 IDE 한계 판정)
+- 라이브러리 추가 후 `cd firmware && pio run -t compiledb` 재실행은 권장 (compile_commands.json 갱신, 그러나 commit 안 됨)
