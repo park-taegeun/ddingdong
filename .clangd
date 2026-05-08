@@ -4,6 +4,7 @@
 # 적용 방법: clangd 재시작 (Cmd+Shift+P → "clangd: Restart language server")
 
 CompileFlags:
+  CompilationDatabase: firmware       # compile_commands.json이 firmware/ 하위에 위치 (.clangd 기준 상대경로)
   Remove:
     - -mfix-esp32-psram-cache-issue   # Xtensa GCC 전용 (clang에서 unknown argument)
     - -mlongcalls                     # Xtensa GCC 전용 (clang은 ARM/MIPS/Hexagon만 지원)
