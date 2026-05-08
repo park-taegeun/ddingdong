@@ -21,6 +21,9 @@ build/
 .env
 .env.local
 
+# === 펌웨어 자격증명 (실 파일은 절대 push 금지, template만 commit) ===
+firmware/include/secrets.h
+
 # === ML 데이터/모델 placeholder (8주차 진입 시 정책 재정의) ===
 ml/data/
 ml/models/
