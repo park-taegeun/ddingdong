@@ -2,6 +2,11 @@
 .pio/
 .vscode/
 
+# === PlatformIO compile_commands.json (절대경로 포함, push 금지) ===
+# pio run -t compiledb 부산물. clangd가 자동 인식하므로 commit 불필요.
+# leading slash 없는 패턴은 모든 하위 디렉토리 매칭 (gitignore PATTERN FORMAT)
+compile_commands.json
+
 # === clangd 인덱스 캐시 (IDE 전용, push 금지) ===
 .cache/
 .clangd/.cache/
