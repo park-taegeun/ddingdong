@@ -213,9 +213,9 @@ Core 1:
 - **Commit**: `6f1cecf` + `dd55759`
 - **5/11 ToF 코드 작성 시 결정 사항**: Adafruit_VL53L5 master 추적 vs commit pin (master 추적 불안정 시 commit pin)
 
-### 16.1 더미 테스트 누적 RAM/Flash 측정 결과 (2026-05-09 갱신)
+### 16.1 더미 테스트 누적 RAM/Flash 측정 결과 (2026-05-10 갱신)
 
-PlatformIO env 분리 구조로 5/8~5/9 더미 테스트 결과 누적:
+PlatformIO env 분리 구조로 5/8~5/10 더미 테스트 결과 누적:
 
 | 일자 | env | 작업 | RAM | Flash | 핵심 commit |
 |------|-----|------|-----|-------|-------------|
@@ -223,12 +223,19 @@ PlatformIO env 분리 구조로 5/8~5/9 더미 테스트 결과 누적:
 | 2026-05-08 | poc | WiFi + HTTPS 더미 | 13.8% | 25.8% | `3ec17d4` |
 | 2026-05-09 | camera_v1 | 카메라 단독 (cameraTask) | 7.0% | 9.4% | `aa6116d`, `8ce56ed` |
 | 2026-05-09 | camera_v2 | 카메라 분리 (writerTask) | 7.0% | 9.4% | `aa6116d`, `8ce56ed` |
+| 2026-05-10 | mic_dummy | 마이크 단독 (INMP441 + I2S1) | 8.1% | 8.1% | `ff3f46b`, `eb1b451` |
+
+**5/10 mic_dummy 부연**:
+- 라이브러리: legacy `driver/i2s.h` (arduino-esp32 v3.20017 SDK packaging 제약, 카테고리 28 학습 15 참조)
+- 정적 메모리: `audio_buffer` + `scratch` = 8 KiB BSS (DMA 32-bit mono × 1024 frames × 2 buffer 정적 할당, 카테고리 29 학습 16 참조)
+- INMP441 250ms 파워업 노이즈 처리 + 14 DMA buffers 폐기 (datasheet 2^18 SCK cycles ≈ 256ms 일치)
 
 **env 분리 구조 (build_src_filter)**:
 - `env:poc` — WiFi 더미 테스트 (5/8 본 작업)
 - `env:camera_v1` — Version A (cameraTask 단독)
 - `env:camera_v2` — Version B (writerTask 분리)
-- 5/10 마이크 / 5/11 ToF env 추가 예정
+- `env:mic_dummy` — 마이크 단독 (5/10 신규)
+- 5/11 ToF env 추가 예정
 
 **5/12 메모리 self-checkpoint 입력 데이터 (정적 budget)**:
 - 320KB SRAM 한계 / 3.34MB Flash 한계 / 8MB PSRAM 한계
@@ -715,3 +722,120 @@ ID 참조:
 | 5 | 진입점 2 등록 해제 UI | 🔴 시연 필수 | Dashboard |
 
 상세 카드는 노션 "데모 시나리오" 페이지 DB3에 누적 (위임 2 작업 결과).
+
+---
+
+## 카테고리 27: 위임 프롬프트 repo 구조 가정 검증 강제 (2026-05-10 신설)
+
+**학습 14 — 5/10 마이크 더미 테스트 (PoC-(7)) 작업 시 catch한 패턴.**
+
+### 27.1 패턴
+
+위임 프롬프트 작성 시 인계 패키지의 추상 표현 ("camera_dummy 컨벤션 일치", "기존 패턴 따라" 등)을 신뢰하지 말고, **실제 파일 경로 + build 설정 패턴 catch 검증**을 사전 단계로 강제.
+
+### 27.2 5/10 catch 사례
+
+- **위임 프롬프트 가정**: `firmware/dummy_tests/camera_dummy/` 디렉토리 + 동일 패턴으로 `firmware/dummy_tests/mic_dummy/` 신설
+- **실제 5/9 카메라 컨벤션**: `firmware/src/camera_*.cpp` 직접 배치 + `firmware/include/camera_common.h` + `firmware/platformio.ini`의 `build_src_filter`로 환경 격리
+- **catch 주체**: Claude Code MCP가 첫 단계 `git status` / `ls firmware/` 실행 시 디렉토리 부재 발견 → "임의 결정 금지" 원칙으로 학부생에게 옵션 제시 (`AskUserQuestion`)
+- **학부생 결정**: 옵션 1 "실제 카메라 패턴 일치" 채택 → `firmware/src/mic_*.cpp` + `firmware/include/mic_common.h` + `[env:mic_dummy]` 추가
+
+### 27.3 firmware/ 컨벤션 (5/10 catch 결과 명문화)
+
+**디렉토리 구조**:
+```
+firmware/
+├── include/
+│   ├── camera_common.h     (5/9 신설)
+│   ├── mic_common.h        (5/10 신설)
+│   ├── tof_common.h        (5/11 예정)
+│   └── secrets.h           (gitignore)
+├── src/
+│   ├── main.cpp            (env:poc 본 작업, WiFi)
+│   ├── camera_common.cpp   (5/9)
+│   ├── camera_test_v1.cpp  (5/9, env:camera_v1)
+│   ├── camera_test_v2.cpp  (5/9, env:camera_v2)
+│   ├── mic_common.cpp      (5/10, env:mic_dummy)
+│   ├── mic_test.cpp        (5/10, env:mic_dummy)
+│   ├── tof_common.cpp      (5/11 예정)
+│   └── tof_test.cpp        (5/11 예정)
+└── platformio.ini
+```
+
+**환경 격리 패턴**:
+```ini
+[env:{module}_{version}]
+build_src_filter =
+  -<*>
+  +<{module}_common.cpp>
+  +<{module}_test{_version}.cpp>
+```
+
+### 27.4 예방책
+
+- 위임 프롬프트 작성 전 `git log -p [관련 commit]` 또는 GitHub 직접 확인하여 실제 컨벤션 catch
+- 위임 프롬프트의 첫 작업 단계에 "현재 상태 확인 (`git status` + `ls [관련 폴더]`)" 강제 명시
+- 자체 검증 ② 리팩토링의 "기존 컨벤션 일치" 항목이 자동 catch 그물 역할 (mic_test.cpp의 `setup()` graceful return 패턴이 카메라 v1/v2와 1:1 매칭됨을 검증한 사례)
+
+---
+
+## 카테고리 28: packaging 제약 vs 공식 권장 분리 검증 (2026-05-10 신설)
+
+**학습 15 — 학습 13 (전제 검증) 보강 형태. 5/10 마이크 작업 시 첫 컴파일 실패 → 즉시 검증 → fallback 결정 사례.**
+
+### 28.1 패턴
+
+외부 출처(공식 문서)의 권장값 인용만으로는 부족. **실제 환경(SDK / 패키지) 노출 여부**까지 함께 검증해야 채택 결정 가능.
+
+### 28.2 5/10 catch 사례
+
+- **공식 권장 (ESP-IDF 5.x context7 docs)**: `driver/i2s_std.h` (new API). legacy `driver/i2s.h`는 deprecated, 5.0부터 redesign
+- **실제 SDK (arduino-esp32 v3.20017 = framework-arduinoespressif32@3.20017)**: 새 API 헤더 미노출
+  - 첫 컴파일 시도: `fatal error: driver/i2s_std.h: No such file or directory`
+  - 직접 검증: `find ~/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/driver/include/driver/` 결과 = `i2s.h`만, `i2s_std.h` 부재
+- **채택 결정**: legacy `driver/i2s.h` fallback (deprecation warning 0건 컴파일 출력 직접 확인 — `pio run -e mic_dummy` 출력에 `warning:` / `deprecated` 문자열 0건)
+
+### 28.3 4단계 검증 절차 (학습 13 보강)
+
+모든 라이브러리/API 채택 결정 시 다음 4단계 순차 검증:
+
+1. **공식 권장**: 공식 문서 / 출처 인용
+2. **실제 패키지 헤더 노출**: SDK 설치 경로에서 `find` / `ls`로 헤더 파일 직접 확인
+3. **컴파일 통과**: 더미 코드라도 `pio run -e [env]` SUCCESS 검증
+4. **런타임 동작**: 부품 도착 후 실측 (5/15~5/28 자성리얼 부품 도착 후)
+
+### 28.4 마이그레이션 트리거
+
+- arduino-esp32가 새 API 헤더(`driver/i2s_std.h`) 노출 시 → legacy → new API 마이그레이션 검토
+- 또는 ESP-IDF 직접 사용으로 전환 시 동일 마이그레이션
+- 마이그레이션 전: legacy API 유지 (현재 동작 중인 코드 깨지 X)
+
+---
+
+## 카테고리 29: 위임 프롬프트와 실제 컨벤션 충돌 시 기존 컨벤션 우선 (2026-05-10 신설)
+
+**학습 16 — 5/10 마이크 작업 시 위임 프롬프트의 구체 코드 패턴과 카메라 v1/v2 기존 컨벤션 충돌 catch.**
+
+### 29.1 패턴
+
+위임 프롬프트의 구체 코드 패턴 vs 기존 repo 컨벤션 충돌 시 → **기존 컨벤션 우선**. 위임 프롬프트는 일반론, 기존 컨벤션은 실제 검증된 패턴.
+
+### 29.2 5/10 catch 사례
+
+- **위임 프롬프트 (PoC-(7))**: `while (!Serial && millis() < 2000) { delay(10); }` (Serial race 방지 패턴 A, 일반 Arduino 컨벤션)
+- **실제 카메라 v1/v2 컨벤션**: `Serial.begin(115200); delay(SERIAL_BOOT_DELAY_MS=200);` (패턴 B, 단순 delay 기반)
+- **Claude Code MCP 채택**: 패턴 B (camera v1/v2 컨벤션 일치 원칙 우선 적용)
+  - mic_test.cpp:42~43 `Serial.begin(115200); delay(MIC_SERIAL_BOOT_DELAY_MS);` (=200ms)
+  - 카메라 v1/v2의 `delay(SERIAL_BOOT_DELAY_MS=200)`와 동일 구조
+
+### 29.3 정책
+
+- **원칙**: 일관성 우선. 위임 프롬프트는 일반론을 제시하지만, 기존 컨벤션은 이미 검증된 실측 패턴.
+- **예외**: 기존 컨벤션이 명백한 오류일 때만 위임 프롬프트 패턴 채택 + decisions-log entry로 명시 변경 사유 기록
+- **자동 catch**: 자체 검증 ② 리팩토링 항목 "camera v1/v2 컨벤션 일치"가 이 catch 그물 역할
+
+### 29.4 위임 프롬프트 작성 시 반영
+
+- 위임 프롬프트 작성 시 일반 패턴이 아닌 **"기존 [관련 모듈] 컨벤션 우선" 원칙을 명시**
+- 예: "Serial init은 기존 카메라 v1/v2 컨벤션 (`delay(SERIAL_BOOT_DELAY_MS)`) 일치"
+- 충돌 발생 시 Claude Code MCP가 기존 컨벤션 자동 채택할 수 있도록 명시 우선순위 부여
