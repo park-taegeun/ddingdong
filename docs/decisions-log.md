@@ -221,3 +221,82 @@
 - 카테고리 26.7 발표 스크립트 출처 외부 링크 연동
 **근거**: 5/13 발표 스크립트 보존 + 9/30 졸작 발표 자료 누적 도메인 정착
 **관련 commit**: `d593f8a` ✨ Feat: docs/presentation/ 폴더 신설 + 5/13 발표 스크립트 추가
+
+---
+
+## 2026-05-10 - 카테고리 16.1 갱신 (5/10 mic_dummy RAM/Flash 추가)
+
+**변경 카테고리**: 16.1
+**변경 내용**: 5/10 mic_dummy 행 추가 (RAM 8.1% / Flash 8.1%, env 분리). env 분리 구조 목록에 `env:mic_dummy` 추가. 부연 항목 3건 추가 (legacy `driver/i2s.h` 채택 / 정적 메모리 8 KiB BSS / 250ms 노이즈 처리)
+**영향**:
+- 5/12 메모리 self-checkpoint 입력 데이터 갱신 (WiFi + camera v1/v2 + mic_dummy = 4건 누적)
+- 5/11 ToF 더미 테스트 진행 시 동일 표 행 추가 패턴 정착
+**근거**: `pio run -e mic_dummy` SUCCESS 2.43초, RAM 26644/327680 (8.1%) / Flash 271549/3342336 (8.1%)
+**관련 commit**: (commit 1 hash 보강 예정)
+
+---
+
+## 2026-05-10 - 카테고리 27 신설 (위임 프롬프트 repo 구조 가정 검증 강제, 학습 14)
+
+**변경 카테고리**: 27 (신설)
+**변경 내용**: 위임 프롬프트 작성 시 인계 패키지의 추상 표현 신뢰 X, 실제 파일 경로 + build 설정 패턴 catch 검증 강제 패턴 명문화. firmware/ 컨벤션 (디렉토리 구조 + 환경 격리 패턴) 명문화.
+**5/10 catch 사례**: PoC-(7) 위임 프롬프트가 `firmware/dummy_tests/camera_dummy/` 가정 → 실제 5/9 카메라는 `firmware/src/` 직접 + `build_src_filter` 격리 패턴 → Claude Code MCP가 첫 단계 `git status` / `ls` 실행 시 catch → 학부생 결정 후 옵션 1 (실제 카메라 패턴 일치) 채택
+**영향**:
+- 향후 모든 위임 프롬프트 작성 시 "현재 상태 확인 (`git status` + `ls [관련 폴더]`)" 첫 단계 강제
+- 자체 검증 ② 리팩토링 "기존 컨벤션 일치" 항목이 자동 catch 그물 역할
+**근거**: 5/10 PoC-(7) 위임 프롬프트 결과 보고서 Step 1 (현재 상태 확인 → 디렉토리 구조 불일치 catch)
+**관련 commit**: (commit 1 hash 보강 예정)
+
+---
+
+## 2026-05-10 - 카테고리 28 신설 (packaging 제약 vs 공식 권장 분리 검증, 학습 15)
+
+**변경 카테고리**: 28 (신설)
+**변경 내용**: 학습 13 (전제 검증) 보강 형태. 외부 출처 인용만으로는 부족, 실제 환경(SDK / 패키지) 노출 여부까지 검증 강제. 4단계 검증 절차 (공식 권장 → 헤더 노출 → 컴파일 통과 → 런타임 동작) 명문화.
+**5/10 catch 사례**:
+- ESP-IDF 5.x 공식 권장: `driver/i2s_std.h` (new API)
+- arduino-esp32 v3.20017 SDK packaging: 새 API 헤더 미노출 (`fatal error: driver/i2s_std.h: No such file or directory`)
+- 직접 검증: `find ~/.platformio/packages/.../include/driver/` → `i2s.h`만 존재
+- 채택: legacy `driver/i2s.h` fallback (deprecation warning 0건 컴파일 출력 직접 확인)
+**영향**:
+- 향후 모든 라이브러리/API 채택 결정 시 4단계 검증 절차 강제
+- 마이그레이션 트리거 명시: arduino-esp32 새 API 헤더 노출 시 또는 ESP-IDF 직접 사용 전환 시
+**근거**: 5/10 PoC-(7) 위임 프롬프트 결과 보고서 § 학습 13 catch 검증 결과 B 항목 #5
+**관련 commit**: (commit 1 hash 보강 예정)
+
+---
+
+## 2026-05-10 - 카테고리 29 신설 (위임 프롬프트와 실제 컨벤션 충돌 시 기존 컨벤션 우선, 학습 16)
+
+**변경 카테고리**: 29 (신설)
+**변경 내용**: 위임 프롬프트의 구체 코드 패턴 vs 기존 repo 컨벤션 충돌 시 → 기존 컨벤션 우선 원칙 명문화. 위임 프롬프트는 일반론, 기존 컨벤션은 실제 검증된 패턴, 일관성 우선.
+**5/10 catch 사례**:
+- 위임 프롬프트 (PoC-(7)): `while (!Serial && millis() < 2000) { delay(10); }` (Serial race 방지 패턴 A)
+- 실제 카메라 v1/v2 컨벤션: `delay(SERIAL_BOOT_DELAY_MS=200)` (패턴 B)
+- Claude Code MCP 채택: 패턴 B (camera v1/v2 컨벤션 일치 원칙 우선 적용)
+**영향**:
+- 향후 위임 프롬프트 작성 시 "기존 [관련 모듈] 컨벤션 우선" 명시 우선순위 부여
+- 자체 검증 ② 리팩토링 "camera v1/v2 컨벤션 일치" 항목이 자동 catch 그물 역할
+**근거**: 5/10 PoC-(7) 위임 프롬프트 결과 보고서 § 자체 검증 ③ 오류 방지 검토 "Serial 미초기화 race" 항목
+**관련 commit**: (commit 1 hash 보강 예정)
+
+---
+
+## 2026-05-10 - 5/10 마이크 더미 테스트 작업 결과 종합 (eb1b451 + ff3f46b)
+
+**변경 카테고리**: (decisions.md 변경 X, 본 log만 — 작업 결과 종합 entry)
+**HEAD**: `e71c01f` → `eb1b451`
+**컴파일**: SUCCESS 2.43초 / RAM 8.1% (26644/327680 bytes) / Flash 8.1% (271549/3342336 bytes)
+**라이브러리**: legacy `driver/i2s.h` (학습 15 trigger, 카테고리 28 신설 근거)
+**학습 13 catch**:
+- INMP441 datasheet: 6/6 항목 (VDD 1.62~3.63V / SNR 61dBA / 24-bit Philips I²S / 2^18 SCK startup ≈ 256ms / L/R=GND→좌채널 / SCK 0.5~3.2MHz·WS 7.8~50kHz)
+- ESP-IDF I2S: 5/5 항목 (I2S0/I2S1 분리 / new vs legacy API / DMA 설정 / ESP32-S3 controller 2개 / arduino-esp32 packaging 제약)
+- 라이브러리 비교: 3/3 선택지 (arduino-esp32 `<I2S.h>` X / legacy `driver/i2s.h` ✅ / new `driver/i2s_std.h` X)
+- 합계: 13/13 ✅
+**자체 검증 3단계**:
+- ① 효율성 6개 항목 모두 통과 (DMA 8×1024 적정성 / Core 0 task priority / heap fragmentation X / blocking 무관 / 매직 넘버 const화 / 250ms+14 buffer 폐기 효율)
+- ② 리팩토링 6개 항목 모두 통과 (camera v1/v2 컨벤션 일치 / 매직 넘버 const화 / warmup 함수 분리 / 변수명 명료성 / DRY 무관 = 환경 격리로 분리 X / Serial prefix 일관)
+- ③ 오류 방지 11개 항목 모두 통과 (init 실패 graceful / 부품 부재 graceful / Serial race 처리 / deprecation warning 0건 / i2s_read 반환값 체크 / sign extension placeholder / Core 0 핀고정 / static BSS 채택 / L/R GND 좌채널 / 250ms 일치 / SCK·WS 권장값 준수)
+**부품 도착 후 (5/15~5/28) 추가 작업 placeholder**: 32-bit MSB-align → 24-bit 추출 (arithmetic shift) → 16-bit downcast (YAMNet 입력) → RMS 임계값 트리거 (wakeWord 검증)
+**근거**: 5/10 PoC-(7) 위임 프롬프트 결과 보고서 (Set 1 작업 결과 종합)
+**관련 commit**: `ff3f46b` 🔧 Settings: platformio.ini에 mic_dummy env 추가 + `eb1b451` ✨ Feat: 마이크 더미 테스트 코드 추가 (INMP441 + I2S1)
