@@ -232,7 +232,7 @@
 - 5/12 메모리 self-checkpoint 입력 데이터 갱신 (WiFi + camera v1/v2 + mic_dummy = 4건 누적)
 - 5/11 ToF 더미 테스트 진행 시 동일 표 행 추가 패턴 정착
 **근거**: `pio run -e mic_dummy` SUCCESS 2.43초, RAM 26644/327680 (8.1%) / Flash 271549/3342336 (8.1%)
-**관련 commit**: (commit 1 hash 보강 예정)
+**관련 commit**: `ab1b89b` 📝 Docs: decisions.md 갱신 (16.1 + 27/28/29 신설)
 
 ---
 
@@ -245,7 +245,7 @@
 - 향후 모든 위임 프롬프트 작성 시 "현재 상태 확인 (`git status` + `ls [관련 폴더]`)" 첫 단계 강제
 - 자체 검증 ② 리팩토링 "기존 컨벤션 일치" 항목이 자동 catch 그물 역할
 **근거**: 5/10 PoC-(7) 위임 프롬프트 결과 보고서 Step 1 (현재 상태 확인 → 디렉토리 구조 불일치 catch)
-**관련 commit**: (commit 1 hash 보강 예정)
+**관련 commit**: `ab1b89b` 📝 Docs: decisions.md 갱신 (16.1 + 27/28/29 신설)
 
 ---
 
@@ -262,7 +262,7 @@
 - 향후 모든 라이브러리/API 채택 결정 시 4단계 검증 절차 강제
 - 마이그레이션 트리거 명시: arduino-esp32 새 API 헤더 노출 시 또는 ESP-IDF 직접 사용 전환 시
 **근거**: 5/10 PoC-(7) 위임 프롬프트 결과 보고서 § 학습 13 catch 검증 결과 B 항목 #5
-**관련 commit**: (commit 1 hash 보강 예정)
+**관련 commit**: `ab1b89b` 📝 Docs: decisions.md 갱신 (16.1 + 27/28/29 신설)
 
 ---
 
@@ -278,7 +278,7 @@
 - 향후 위임 프롬프트 작성 시 "기존 [관련 모듈] 컨벤션 우선" 명시 우선순위 부여
 - 자체 검증 ② 리팩토링 "camera v1/v2 컨벤션 일치" 항목이 자동 catch 그물 역할
 **근거**: 5/10 PoC-(7) 위임 프롬프트 결과 보고서 § 자체 검증 ③ 오류 방지 검토 "Serial 미초기화 race" 항목
-**관련 commit**: (commit 1 hash 보강 예정)
+**관련 commit**: `ab1b89b` 📝 Docs: decisions.md 갱신 (16.1 + 27/28/29 신설)
 
 ---
 
