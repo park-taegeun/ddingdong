@@ -129,3 +129,58 @@
   - decisions.md 카테고리 22.5 (첫 줄 🔴 → 🟢)
   - 노션 DB3 "디바이스마트 자동 취소 + 환불 처리 추적" row (상태 🔴 → 🟢)
 - **관련 commit**: `92c023d`
+
+---
+
+## 2026-05-09 - 카테고리 16 신설 (16.1 더미 테스트 누적 측정 표)
+
+**변경 카테고리**: 16 (16.1 신설)
+**변경 내용**: 5/8~5/9 더미 테스트 누적 RAM/Flash 측정 표 추가, env 분리 구조 명시
+**영향**: 5/12 메모리 self-checkpoint 입력 데이터 명확화, 정적 budget 검증 범위 확정
+**관련 commit**:
+- `aa6116d` 🔧 Settings: platformio.ini에 camera_v1/camera_v2 env 추가
+- `8ce56ed` ✨ Feat: 카메라 더미 테스트 코드 추가 (Version A/B 두 가지)
+- (본 갱신 commit hash - 작업 후 채워넣기)
+
+---
+
+## 2026-05-09 - 카테고리 25 신설 (Khangura 6개 함정 코드 반영 표)
+
+**변경 카테고리**: 25 (신설)
+**변경 내용**: Manjot Khangura Medium 글 6개 함정 전체 코드 반영 여부 분석 + 분류 (#1~#6)
+**영향**:
+- 5/9 카메라 더미 테스트 코드 (commit `8ce56ed`) 검증 완결
+- 부품 도착 후 (5/15~5/28) 처리 항목 2건 명확화 (#2 DMA / #6 gain tuning)
+- 학습 13 (전제 검증 누락 패턴) 정착 트리거
+**검토 결과**: ✅ 2개 / 🟡 2개 (B 분류) / ❌ 2개 (C 분류). 코드 보강 0건 (HEAD `8ce56ed` 유지)
+**관련 commit**: (본 갱신 commit hash - 작업 후 채워넣기)
+
+---
+
+## 2026-05-09 - 카테고리 17 갱신 (11주차 동적 heap 추적 항목 추가)
+
+**변경 카테고리**: 17
+**변경 내용**: 11주차 진입 전 esp32-camera issue #620 재현 시도에 동적 heap 추적 (`ESP.getMinFreeHeap()` + stack high-water mark) 항목 동시 진행 명시
+**영향**: 5/12 메모리 self-checkpoint = 정적 budget 한정, 동적 heap = 11주차 통합 테스트로 분리. SSoT 일관성 확보
+**근거**: 5/9 카메라 더미 테스트 결과 §4 메모리 budget 평가에서 SRAM 동적 heap 추적 필요 alert 발생
+**관련 commit**: (본 갱신 commit hash - 작업 후 채워넣기)
+
+---
+
+## 2026-05-09 - 카테고리 12 보충 기록 (firecrawl 검색 결과 0건)
+
+**변경 카테고리**: 12 (변경 X, 기록만)
+**변경 내용**: 5/9 카메라 작업 시 firecrawl-mcp로 "OnlyFeet" / "Lokch777" 키워드 검색 결과 0건. 카테고리 12 사전 검증 ② "OnlyFeet 80% 매칭 + 4건"의 출처는 별도 GitHub 검색 결과로 추정 (별도 채팅방 진행)
+**영향**: 부품 도착 후 fb_get 비교 시점에 사례 재검증 검토 항목 추가
+**관련 commit**: (본 갱신 commit hash - 작업 후 채워넣기)
+
+---
+
+## 2026-05-09 - Claude Code MCP 환경 이슈 처리 패턴 정립 (참조용)
+
+**변경 카테고리**: (decisions.md 변경 X, 본 log만)
+**변경 내용**: Claude Code MCP 자동 업데이트 실패 (`Auto-update failed`) → npm prefix 충돌 (`~/.npm-global` vs Homebrew Node) → 잔여 폴더 청소 → 재설치 단순 패턴
+**처리 절차**: `rm -rf ~/.npm-global/lib/node_modules/@anthropic-ai/claude-code` + `rm -rf ~/.npm-global/lib/node_modules/@anthropic-ai/.claude-code-*` → `npm i -g @anthropic-ai/claude-code` → `claude --version` 검증
+**결과**: 2.1.119 → 2.1.137 정상 업데이트
+**영향**: 향후 동일 패턴 발생 시 sudo 백업 옵션 호출 X. 학습 12 정착
+**관련 commit**: (본 갱신 commit hash - 작업 후 채워넣기)
