@@ -212,6 +212,29 @@ Core 1:
 - **Commit**: `6f1cecf` + `dd55759`
 - **5/11 ToF 코드 작성 시 결정 사항**: Adafruit_VL53L5 master 추적 vs commit pin (master 추적 불안정 시 commit pin)
 
+### 16.1 더미 테스트 누적 RAM/Flash 측정 결과 (2026-05-09 갱신)
+
+PlatformIO env 분리 구조로 5/8~5/9 더미 테스트 결과 누적:
+
+| 일자 | env | 작업 | RAM | Flash | 핵심 commit |
+|------|-----|------|-----|-------|-------------|
+| 2026-05-07 | (단일) | monorepo 초기 셋업 | 5.6% | 7.6% | `6f1cecf`, `dd55759` |
+| 2026-05-08 | poc | WiFi + HTTPS 더미 | 13.8% | 25.8% | `3ec17d4` |
+| 2026-05-09 | camera_v1 | 카메라 단독 (cameraTask) | 7.0% | 9.4% | `aa6116d`, `8ce56ed` |
+| 2026-05-09 | camera_v2 | 카메라 분리 (writerTask) | 7.0% | 9.4% | `aa6116d`, `8ce56ed` |
+
+**env 분리 구조 (build_src_filter)**:
+- `env:poc` — WiFi 더미 테스트 (5/8 본 작업)
+- `env:camera_v1` — Version A (cameraTask 단독)
+- `env:camera_v2` — Version B (writerTask 분리)
+- 5/10 마이크 / 5/11 ToF env 추가 예정
+
+**5/12 메모리 self-checkpoint 입력 데이터 (정적 budget)**:
+- 320KB SRAM 한계 / 3.34MB Flash 한계 / 8MB PSRAM 한계
+- 5/21 PoC 통합 추정: SRAM 22% / Flash 42% / PSRAM 50KB (~0.6%)
+- 알람 없음 (정적 측정 기준)
+- **동적 heap 측정 (`ESP.getMinFreeHeap()` + stack high-water mark)** 은 **11주차 통합 테스트로 분리** (카테고리 17 별도 검증 항목 참조)
+
 ---
 
 ## 카테고리 17: 별도 검증 항목
@@ -219,6 +242,7 @@ Core 1:
 - **11주차 진입 전** esp32-camera issue #620 (WiFi join 후 fb_get fail) 재현 시도
   - 워크어라운드 후보: `fb_count=3` / WiFi power save 비활성화 / init 순서 변경
   - URL: https://github.com/espressif/esp32-camera/issues/620
+  - **동적 heap 추적 (`ESP.getMinFreeHeap()` + stack high-water mark) 동시 진행** (2026-05-09 추가, SRAM 동적 소비 분석)
 - **5/12 self-checkpoint**: 단독 테스트 4개 종합 → 5/21 통합 코어 분배 최종 확정 (카테고리 15)
   - **2026-05-08 갱신**: 자성리얼 부품 배송 일정 변경(카테고리 22.6, commit `847c599`) 카스케이드로 self-checkpoint 분리. 17.1 참조.
 
@@ -230,10 +254,12 @@ Core 1:
 
 - **진행 시점**: 5/12 (5/9~5/11 더미 테스트 직후)
 - **입력 데이터**: 5/9~5/11 더미 테스트 컴파일 결과
-  - 카메라 더미 테스트 RAM/Flash 사용량 (5/9)
-  - 마이크 더미 테스트 RAM/Flash 사용량 (5/10)
-  - ToF 더미 테스트 RAM/Flash 사용량 (5/11)
-  - WiFi 더미 테스트 사용량 (5/8 commit `3ec17d4`: RAM 13.8% / Flash 25.8%)
+  - WiFi 더미 테스트 (5/8 commit `3ec17d4`): RAM 13.8% / Flash 25.8% ✅
+  - 카메라 더미 테스트 v1/v2 (5/9 commit `aa6116d` + `8ce56ed`): RAM 7.0% / Flash 9.4% ✅
+  - 마이크 더미 테스트 RAM/Flash 사용량 (5/10 예정)
+  - ToF 더미 테스트 RAM/Flash 사용량 (5/11 예정)
+- **검증 범위**: **정적 budget 검증 한정** (컴파일 시점 측정값)
+- **동적 heap 측정 (런타임)** 은 11주차 통합 테스트로 분리 (카테고리 17 참조)
 - **검증 항목**:
   - PSRAM 8MB 한계 안에 들어오는지
   - 통합 시 메모리 fragmentation 위험 평가
