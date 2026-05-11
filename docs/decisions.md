@@ -213,9 +213,9 @@ Core 1:
 - **Commit**: `6f1cecf` + `dd55759`
 - **5/11 ToF 코드 작성 시 결정 사항**: Adafruit_VL53L5 master 추적 vs commit pin (master 추적 불안정 시 commit pin)
 
-### 16.1 더미 테스트 누적 RAM/Flash 측정 결과 (2026-05-10 갱신)
+### 16.1 더미 테스트 누적 RAM/Flash 측정 결과 (2026-05-11 갱신)
 
-PlatformIO env 분리 구조로 5/8~5/10 더미 테스트 결과 누적:
+PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 
 | 일자 | env | 작업 | RAM | Flash | 핵심 commit |
 |------|-----|------|-----|-------|-------------|
@@ -224,18 +224,26 @@ PlatformIO env 분리 구조로 5/8~5/10 더미 테스트 결과 누적:
 | 2026-05-09 | camera_v1 | 카메라 단독 (cameraTask) | 7.0% | 9.4% | `aa6116d`, `8ce56ed` |
 | 2026-05-09 | camera_v2 | 카메라 분리 (writerTask) | 7.0% | 9.4% | `aa6116d`, `8ce56ed` |
 | 2026-05-10 | mic_dummy | 마이크 단독 (INMP441 + I2S1) | 8.1% | 8.1% | `ff3f46b`, `eb1b451` |
+| 2026-05-11 | tof_dummy | ToF 단독 (VL53L5CX + I2C) | 6.1% | 11.1% | `b2434af`, `dd8ed66` |
 
 **5/10 mic_dummy 부연**:
 - 라이브러리: legacy `driver/i2s.h` (arduino-esp32 v3.20017 SDK packaging 제약, 카테고리 28 학습 15 참조)
 - 정적 메모리: `audio_buffer` + `scratch` = 8 KiB BSS (DMA 32-bit mono × 1024 frames × 2 buffer 정적 할당, 카테고리 29 학습 16 참조)
 - INMP441 250ms 파워업 노이즈 처리 + 14 DMA buffers 폐기 (datasheet 2^18 SCK cycles ≈ 256ms 일치)
 
+**5/11 tof_dummy 부연**:
+- 라이브러리: SparkFun_VL53L5CX_Arduino_Library 1.0.3 (1차) + Adafruit_VL53L5 master (폴백, lib_deps만 등록 dead code elimination)
+- 메모리: mic 대비 RAM ↓ (I2S DMA 4 KiB 부재) / Flash ↑ (VL53L5CX FW upload buffer ~86KB 포함)
+- I2C 1MHz / 8x8 64 zones / 15Hz (datasheet 8x8 mode max, SparkFun Example3 검증 패턴)
+- graceful: `initToF()` 실패 시 task spawn 생략 → `loop()` idle 진단만 (mic_test 패턴 100% 일치)
+- 학습 13 catch 33개 / 학습 14 mic 컨벤션 100% 일치 / 학습 15 단계 4 (런타임) 5/15+ 보류
+
 **env 분리 구조 (build_src_filter)**:
 - `env:poc` — WiFi 더미 테스트 (5/8 본 작업)
 - `env:camera_v1` — Version A (cameraTask 단독)
 - `env:camera_v2` — Version B (writerTask 분리)
 - `env:mic_dummy` — 마이크 단독 (5/10 신규)
-- 5/11 ToF env 추가 예정
+- `env:tof_dummy` — ToF 단독 (5/11 신규)
 
 **5/12 메모리 self-checkpoint 입력 데이터 (정적 budget)**:
 - 320KB SRAM 한계 / 3.34MB Flash 한계 / 8MB PSRAM 한계
