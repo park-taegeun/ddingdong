@@ -300,3 +300,71 @@
 **부품 도착 후 (5/15~5/28) 추가 작업 placeholder**: 32-bit MSB-align → 24-bit 추출 (arithmetic shift) → 16-bit downcast (YAMNet 입력) → RMS 임계값 트리거 (wakeWord 검증)
 **근거**: 5/10 PoC-(7) 위임 프롬프트 결과 보고서 (Set 1 작업 결과 종합)
 **관련 commit**: `ff3f46b` 🔧 Settings: platformio.ini에 mic_dummy env 추가 + `eb1b451` ✨ Feat: 마이크 더미 테스트 코드 추가 (INMP441 + I2S1)
+
+---
+
+## 2026-05-11 - 5/11 ToF 더미 테스트 작업 결과 종합 (b2434af + dd8ed66)
+
+**변경 카테고리**: (decisions.md 카테고리 16.1 누적 표 + 부연만 갱신, 카테고리 1~15 / 17~29 변경 X)
+**HEAD**: `ee1f691` → `dd8ed66`
+**컴파일**: SUCCESS 10.44초 / RAM 6.1% (20124/327680 bytes) / Flash 11.1% (371209/3342336 bytes)
+**라이브러리**: SparkFun_VL53L5CX_Arduino_Library 1.0.3 (1차 채택, 코드에서 사용) + Adafruit_VL53L5 master (폴백, lib_deps만 등록 / dead code elimination으로 link 단계에서 SparkFun만 binary 포함)
+**핀 매핑**: SDA=GPIO5(D4) / SCL=GPIO6(D5) (decisions.md 카테고리 2 핀 표 그대로)
+**I2C clock**: 1MHz (사전 검증 ① 워크어라운드 — VL53L5CX datasheet max 1Mbits/s + SparkFun Example3_SetFrequency 검증 패턴 / OnlyFeet 400kHz와 차이는 의도적)
+**8x8 / 15Hz**: datasheet 8x8 mode max (4x4는 60Hz) / SparkFun Example3 검증 / OnlyFeet 매칭 80%
+**FreeRTOS**: tofTask Core 0 priority 3 (micTask Core 0 priority 4와 분리, decisions.md 카테고리 14 5/21 PoC 분배 잠정안 적용)
+**graceful**: `initToF()` 실패 시 task spawn 생략 + `loop()` idle 진단 (mic_test 패턴 100% 일치) / 2회 retry + I2C bus scan 진단 (OnlyFeet 패턴 채택)
+**static buffer**: `VL53L5CX_ResultsData measurementData` ~1356B BSS (task 스택 6 KiB 폭주 방지, mic_test `audio_buffer` 8 KiB BSS 패턴 일치)
+**학습 13 catch**: 33개 (datasheet 6 + SparkFun 10 + Adafruit 8 + OnlyFeet 5 + arduino-esp32 Wire 4), 누락 0
+**학습 14 mic 컨벤션 일치**: 10개 항목 100% (헤더 분리 / Serial race 200ms / graceful return / 매직 넘버 constexpr / setup 구조 / xTaskCreatePinnedToCore / 함수 분리 / 로그 prefix `[tof]`·`[BOOT]`·`[MEM:tag]` / include 순서 / platformio.ini env 패턴)
+**학습 15 4단계**: 1 공식 권장 ✅ + 2 패키지 헤더 ✅ + 3 컴파일 통과 ✅ (SparkFun + Adafruit 양쪽 archived) + 4 런타임 동작 보류 (자성리얼 5/15~5/28 부품 도착 후)
+**자체 검증 3단계** (학습 16 catch 그물):
+- ① 효율성 8개 모두 통과/무관 (1MHz / 8x8·15Hz / DMA 무관 / lib RAM 검증 / PSRAM static / Core 0 점유율 67ms idle / O(64) 순회 placeholder)
+- ② 리팩토링 7개 모두 통과 (변수명 / 기존 컨벤션 일치 / DRY 의도적 분리 / 매직 넘버 const화 / 네이밍 일관성 / 함수 분리 / 로그 prefix)
+- ③ 오류 방지 12개 모두 통과 (graceful / I2C NACK retry / FW upload 실패 catch / null pointer X / heap 할당 X / Wire 단독 / core 3.x 호환 / -Wall 경고 0건 / power-on / Serial race)
+**부품 도착 후 (5/15~5/28) 추가 작업 placeholder**: 64 zone 순회 (`measurementData.distance_mm[i]`) → `target_status==5||9` valid 필터 → center 4 zones (27,28,35,36) 평균 침입자 거리 메트릭 (OnlyFeet 패턴) → Motion Indicator (Adafruit lib API, 5주차 사람 검증 단계)
+**근거**: 5/11 PoC-(7) 위임 프롬프트 결과 보고서 (ToF 더미 테스트 종합)
+**관련 commit**: `b2434af` 🔧 Settings: platformio.ini에 tof_dummy env 추가 + `dd8ed66` ✨ Feat: ToF 더미 테스트 코드 추가 (VL53L5CX + I2C)
+
+---
+
+## 2026-05-11 - Adafruit_VL53L5 lib_deps master 추적 채택 결정 (PoC 단계, 8주차 prod 진입 시 commit pin 재검토)
+
+**변경 카테고리**: (decisions.md 변경 X, 본 log만 — 학부생 alert 처리 entry / 8주차 진입 시 카테고리 28 row 신설 검토 트리거)
+**결정**: 현 PoC 단계는 `https://github.com/adafruit/Adafruit_VL53L5.git` master 브랜치 추적 (commit pin 미적용)
+**근거**:
+1. Adafruit 공식 라이브러리는 안정적 (breaking change push 빈도 낮음)
+2. PoC 기간 짧음 (~3주, 5/8~5/28)
+3. SparkFun 1차 채택이라 Adafruit은 폴백 전용 (실제 사용 코드 없음, link 단계 dead code elimination으로 binary 미포함)
+**트레이드오프**:
+- master 추적 (현 채택): 최신 패치 자동 / 단 Adafruit이 breaking change push 시 빌드 깨짐
+- commit pin (8주차 검토): 안정 보장 / 단 보안·버그 패치 누락 시 수동 갱신 필요
+**재검토 시점**: 8주차 prod 진입 시 (`env:prod` 추가 시점, decisions.md 카테고리 5 참조). 채택 시 카테고리 28 (packaging 제약 vs 공식 권장 분리) row 신설 검토.
+**노션 DB3**: 신규 row 1건 신설 (트리거 일자 = 8주차 진입 / 알림 태그 "Adafruit master vs commit pin")
+**근거**: 5/11 PoC-(7) 위임 프롬프트 § 학부생 alert (DB3 row 신설용)
+**관련 commit**: `dd8ed66` ✨ Feat: ToF 더미 테스트 코드 추가 (VL53L5CX + I2C) — `firmware/include/tof_common.h` 출처 인용 라인에 master 추적 명시 + `firmware/platformio.ini` `[env:tof_dummy]` 주석에 학부생 alert 명문화
+
+---
+
+## 2026-05-11 - 학습 14 catch 그물 작동 사례 (5/10 mic 컨벤션 → 5/11 tof 100% 일치 검증)
+
+**변경 카테고리**: (decisions.md 변경 X, 본 log만 — 카테고리 27/29 명문화 효과 확인 entry)
+**사례**: 5/10 mic_dummy에서 catch한 컨벤션 10개 항목이 5/11 tof_dummy 작성 시 자체 검증 ② 리팩토링 "기존 컨벤션 일치" 항목에서 자동 catch 그물로 작동 → 100% 일치 강제
+**컨벤션 10개 항목**:
+1. 헤더 분리 (`*_common.h` const+API / `*_common.cpp` init+helper / `*_test.cpp` setup+loop+static task)
+2. Serial race 방지 (`Serial.begin(115200); delay(*_SERIAL_BOOT_DELAY_MS=200);` 후 `\n[BOOT] ...`)
+3. graceful 패턴 (`if (!init*()) { Serial.println("..."); return; }` + `loop()` 5초 idle 진단)
+4. 매직 넘버 (모두 prefix + `constexpr`)
+5. setup() 구조 (Serial→delay→[BOOT]→init→(warmup)→xTaskCreate→[BOOT] started)
+6. xTaskCreatePinnedToCore (`(fn, "name", STACK, nullptr, PRIORITY, nullptr, CORE)`)
+7. 함수 분리 (common: init/helper / test: static task + setup + loop)
+8. 로그 prefix (`[tof]`·`[mic]` 런타임 / `[BOOT]` 부팅 / `[MEM:tag]` 메모리)
+9. include 순서 (h: `<Arduino.h>` → 라이브러리 헤더 / cpp: `"*_common.h"`)
+10. platformio.ini env 패턴 (`extends` 미사용, 모든 필드 직접 명시 / `lib_deps` env에 명시 / `build_src_filter = -<*> +<...>`)
+**라인 번호 직접 인용 (자체 검증 ② 리팩토링)**: `firmware/src/mic_test.cpp:42-57` (setup 패턴) vs `firmware/src/tof_test.cpp:45-60` (동일 구조)
+**효과**:
+- 카테고리 27 (위임 프롬프트는 추상 표현 신뢰 X, 실제 파일 경로/build 설정 catch 강제) 명문화 효과 확인
+- 카테고리 29 (위임 프롬프트와 실제 컨벤션 충돌 시 기존 컨벤션 우선) 명문화 효과 확인
+- 위임 프롬프트 → 실제 코드 컨벤션 일치까지 자동 catch
+**근거**: 5/11 PoC-(7) 위임 프롬프트 결과 보고서 § 자체 검증 ② 리팩토링 "기존 컨벤션 일치" 항목 (mic_test.cpp / tof_test.cpp 라인 번호 직접 인용)
+**관련 commit**: `dd8ed66` ✨ Feat: ToF 더미 테스트 코드 추가 (VL53L5CX + I2C)
