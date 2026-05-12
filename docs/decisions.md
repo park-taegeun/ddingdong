@@ -200,6 +200,8 @@ Core 1:
 2. cameraTask 단독 vs writerTask 분리 시 fb_get 안정성
 3. ToF 15Hz 유지율 (다른 task에 의해 누락되는지)
 
+> **5/12 메모리 self-checkpoint 결과 (카테고리 17.1.1)**: 정적 SRAM 18.2% / Flash 31.6%, Plan B 미발동 → **메모리 측면 잠정안 유지 가능**. 타이밍 self-checkpoint (17.1.2) 결과 대기 (5/15+ 부품 도착 후).
+
 ---
 
 ## 카테고리 16: monorepo + PlatformIO 셋업 결과 (2026-05-07)
@@ -247,8 +249,8 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 
 **5/12 메모리 self-checkpoint 입력 데이터 (정적 budget)**:
 - 320KB SRAM 한계 / 3.34MB Flash 한계 / 8MB PSRAM 한계
-- 5/21 PoC 통합 추정: SRAM 22% / Flash 42% / PSRAM 50KB (~0.6%)
-- 알람 없음 (정적 측정 기준)
+- 5/8 사전 추정: SRAM 22% / Flash 42% / PSRAM 50KB (~0.6%) — **5/12 실측으로 정정됨**
+- 5/12 실측 (방법 1 delta sum, 카테고리 17.1.1.1): SRAM **18.2%** / Flash **31.6%** / PSRAM 50KB — Plan B 미발동 (카테고리 17.1.1.2 Stage 1 임계값 25%/40% 안전 여유)
 - **동적 heap 측정 (`ESP.getMinFreeHeap()` + stack high-water mark)** 은 **11주차 통합 테스트로 분리** (카테고리 17 별도 검증 항목 참조)
 
 ---
@@ -387,6 +389,7 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 #### 17.1.3 5/21 통합 코어 분배 최종 확정 시점 영향
 
 - 메모리 self-checkpoint(5/12) + 타이밍 self-checkpoint(부품 도착 후) 모두 완료 후 진행
+- **5/12 메모리 self-checkpoint 결과 (카테고리 17.1.1)**: SRAM 18.2% / Flash 31.6%, Plan B 미발동 → 메모리 측면 잠정안 유지 가능
 - 부품 도착 시점에 따라 자연 연기 가능성:
   - **최단 (5/15 도착)**: 5/18 타이밍 self-checkpoint → 5/21 가능 (PoC 1주차 진행 중)
   - **중간/최장 (5/22~5/28 도착)**: PoC 1주차 진입 후 처리 → Plan B 다단계 트리거 검토와 연결

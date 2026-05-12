@@ -410,3 +410,5 @@
 - WiFi 동적 추정 ~80KB: arduino-esp32 일반 패턴 인용, 본 프로젝트 실측 미진행
 **관련 카테고리**: 16.1 (입력 데이터 5건) / 17.1.1 (본 갱신 대상) / 17.1.3 (5/21 통합 시점 입력) / 14 (코어 분배 잠정안 재확정 입력) / 28·29 (학습 15·16 적용 그물)
 **관련 commit**: 본 entry 자체 (`docs/decisions.md` 17.1.1 갱신 + `docs/decisions-log.md` 본 entry 추가)
+
+**PoC-(9) 객관 검증 catch (학습 14 catch 그물 작동, 5/12 사례)**: 1차 판정에서 옵션 A (갱신 없음) 추천 → 학부생 push back ("진짜 갱신이 필요없는지 객관적으로 검증") → 2차 객관 검증 시 카테고리 16.1 / 15 / 17.1.3 cross-reference 충돌 5건 발견 (critical 1건 + moderate 2건 + minor 2건) → 후속 commit으로 critical/moderate 3건 보강. **학습 14 catch 그물 사례 추가 (사전 준비 11일 누적 5건째)**.
