@@ -272,8 +272,8 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 - **입력 데이터**: 5/9~5/11 더미 테스트 컴파일 결과
   - WiFi 더미 테스트 (5/8 commit `3ec17d4`): RAM 13.8% / Flash 25.8% ✅
   - 카메라 더미 테스트 v1/v2 (5/9 commit `aa6116d` + `8ce56ed`): RAM 7.0% / Flash 9.4% ✅
-  - 마이크 더미 테스트 RAM/Flash 사용량 (5/10 예정)
-  - ToF 더미 테스트 RAM/Flash 사용량 (5/11 예정)
+  - 마이크 더미 테스트 (5/10 commit `eb1b451`): RAM 8.1% / Flash 8.1% ✅
+  - ToF 더미 테스트 (5/11 commit `dd8ed66`): RAM 6.1% / Flash 11.1% ✅
 - **검증 범위**: **정적 budget 검증 한정** (컴파일 시점 측정값)
 - **동적 heap 측정 (런타임)** 은 11주차 통합 테스트로 분리 (카테고리 17 참조)
 - **검증 항목**:
@@ -281,6 +281,98 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
   - 통합 시 메모리 fragmentation 위험 평가
   - 카메라 frame buffer + I2S DMA 버퍼 + ToF zone 데이터 동시 보유 가능성
 - **산출물**: 통합 메모리 budget 표 (카메라 + 마이크 + ToF + WiFi 합산)
+
+##### 17.1.1.1 통합 budget 추정 결과 (2026-05-12 갱신)
+
+**산출 방법** — 방법 1 (delta sum, 채택) + 방법 2 (단순 합산, 참고):
+
+| 일자 | env | RAM | Flash | RAM delta (vs baseline) | Flash delta (vs baseline) |
+|------|-----|-----|-------|-------------------------|----------------------------|
+| 2026-05-07 | (단일 baseline) | 5.6% | 7.6% | — | — |
+| 2026-05-08 | poc (WiFi+HTTPS) | 13.8% | 25.8% | +8.2pp | +18.2pp |
+| 2026-05-09 | camera_v2 | 7.0% | 9.4% | +1.4pp | +1.8pp |
+| 2026-05-10 | mic_dummy | 8.1% | 8.1% | +2.5pp | +0.5pp |
+| 2026-05-11 | tof_dummy | 6.1% | 11.1% | +0.5pp | +3.5pp |
+
+> 베이스라인 정의: 5/7 monorepo 셋업 시 단일 env (Arduino core + FreeRTOS + Serial + USB CDC + nvs_flash 등 공통 부분)
+
+**방법 1 — delta sum (정적 추정 채택)**:
+- RAM = baseline + Σ(delta) = 5.6 + 8.2 + 1.4 + 2.5 + 0.5 = **18.2%** (~59,640 bytes / 320 KiB)
+- Flash = baseline + Σ(delta) = 7.6 + 18.2 + 1.8 + 0.5 + 3.5 = **31.6%** (~1,056,178 bytes / 3.34 MB)
+- 근거: 베이스라인은 모든 env에 공통 포함 → 1회만 카운트, 페리페럴별 delta는 중복 없이 가산
+
+**방법 2 — 단순 합산 (참고용, 베이스라인 4× 중복)**:
+- RAM: 13.8 + 7.0 + 8.1 + 6.1 = **35.0%** (Σ env, 베이스라인 4중 카운트)
+- Flash: 25.8 + 9.4 + 8.1 + 11.1 = **54.4%** (Σ env, 베이스라인 4중 카운트)
+- 한계: 통합 binary는 단일 baseline + 페리페럴별 코드 → 방법 2는 over-count
+
+**페리페럴별 정적 contribution (방법 1 delta 분해)**:
+
+| 페리페럴 | RAM delta | Flash delta | PSRAM | 출처 / 근거 |
+|---------|-----------|-------------|-------|-------------|
+| WiFi/HTTPS | +8.2pp (~26.9 KB) | +18.2pp (~608 KB) | 0 | esp_wifi.a + lwIP + wpa_supplicant + mbedtls (HTTPS) + WiFiClientSecure + HTTPClient + ArduinoJson. arduino-esp32 v3.20017 issue #5990·#9741 (WIFI_STA 진입 시 ~45KB heap 점유 패턴 일치) |
+| 카메라 OV2640/OV3660 | +1.4pp (~4.6 KB) | +1.8pp (~60 KB) | runtime fb (별도) | esp_camera v2.1.2 driver + 센서 테이블. frame buffer는 `fb_location=CAMERA_FB_IN_PSRAM`으로 PSRAM 점유 (카테고리 13) |
+| 마이크 INMP441 | +2.5pp (~8.2 KB) | +0.5pp (~17 KB) | 0 | legacy `driver/i2s.h` (카테고리 28 학습 15) + `audio_buffer + scratch = 8 KiB BSS` (32-bit × 1024 frames × 2 buffer 정적 할당, 카테고리 16.1 5/10 부연 일치) |
+| ToF VL53L5CX | +0.5pp (~1.6 KB) | +3.5pp (~117 KB) | 0 | SparkFun_VL53L5CX_Arduino_Library 1.0.3 + Wire. RAM = `VL53L5CX_ResultsData ~1356B BSS` (카테고리 16.1 5/11 부연 일치). Flash 117KB ⊃ FW upload buffer ~84KB (UM2884 — 매 power-on 마다 host MCU가 I2C로 upload, RAM-based sensor) |
+
+**PSRAM 활용 분석**:
+- 카메라 frame buffer 한정: QVGA JPEG `fb_count=2` × `jpeg_quality=12` + line buffer + DMA descriptor → 약 50 KB 추정 (5/8 사전 추정 보존)
+- 다른 페리페럴(WiFi/Mic/ToF): PSRAM 점유 0
+- PSRAM 점유율: 50/8192 = **0.6%** — 8MB 한계 대비 매우 여유
+
+**통합 추정값 (정적, 동적 별도)**:
+
+| 자원 | 정적 추정 (5/12) | 동적 한계 (11주차 측정 예정, 추정치) | ESP32-S3 한계 |
+|------|-----------------|----------------------------------|----------------|
+| SRAM (BSS+DATA) | 18.2% (~59.6 KB) | + α (런타임 heap, 추정 +30~50% peak) | **320 KB** (arduino-esp32 user-available, datasheet 512KB 중 ROM/cache 점유 제외) |
+| Flash | 31.6% (~1.06 MB) | (정적 한정, 동적 Flash X) | **3.34 MB** (default partition table) / 8 MB physical |
+| PSRAM | ~50 KB (0.6%) | + α (카메라 동적 alloc 시 frame queue 변동) | **8 MB** (XIAO ESP32-S3 Sense) |
+
+**5/8 PoC-(5) 사전 추정과의 차이 (정정 분석)**:
+
+| 자원 | 사전 추정 (5/8) | 갱신 결과 (5/12) | 차이 | 정정 사유 |
+|------|----------------|-----------------|------|-----------|
+| SRAM | 22% | 18.2% | **-3.8pp** | mic delta 사전 +5% 가정 → 실측 +2.5pp / tof delta 사전 +3% 가정 → 실측 +0.5pp |
+| Flash | 42% | 31.6% | **-10.4pp** | tof FW image 사전 +6%(~200KB) 가정 → 실측 +3.5pp(~117KB, FW 84KB + driver) |
+| PSRAM | 50 KB | 50 KB | 0 | 카메라 frame buffer만 PSRAM 점유, 사전 추정 일치 |
+
+→ **실측 결과 모두 사전 추정 안에 안전 수렴**. Plan B 트리거 미발동.
+
+##### 17.1.1.2 Plan B 트리거 정량화 (2026-05-12 신설)
+
+**임계값 산정 근거** (학습 16 적용 — 위임 프롬프트 일반론 30/50/70% 대신 ESP32-S3 한계 + 동적 마진 기반 재산정):
+
+- ESP32-S3 user-available SRAM 320 KB (datasheet 출처)
+- 정적 18.2% + 동적 typical 30~50% peak = peak 50~70% (WiFi + Camera 동시 활성 사례 기준)
+- WiFi peak 동적 점유 ~80 KB (TLS handshake + lwIP TX/RX + HTTPClient body, arduino-esp32 issue #5990·#5630 패턴 인용)
+- Camera I2S DMA + line buffer ~16 KB IRAM (frame buffer는 PSRAM)
+- 4 task stacks ~16-32 KB
+- Heap fragmentation 안전 마진 ~30-40 KB
+
+| Stage | 트리거 조건 (정적 분석 기반) | 대응 |
+|-------|------------------------------|------|
+| **Stage 1** (알람) | 정적 SRAM ≥ **25%** OR 정적 Flash ≥ **40%** | 알람만, 작업 계속. `ESP.getMinFreeHeap()` + stack high-water mark 동적 측정 권장 (11주차 정식 항목, 카테고리 17) |
+| **Stage 2** (최적화) | 정적 SRAM ≥ **35%** OR 정적 Flash ≥ **60%** | 최적화 검토. 후보: mic DMA buffer 8→4 (4 KiB BSS 절감) / VL53L5CX FW를 PSRAM 이전 (Flash ~84KB 절감) / WiFi sdkconfig minimal / HTTPS RX buffer 축소 |
+| **Stage 3** (Plan B) | 정적 SRAM ≥ **50%** OR 정적 Flash ≥ **75%** | Plan B 발동. 후보: 카메라 QVGA → CIF / ToF 8x8 → 4x4 모드 (RAM ¼ 절감) / Adafruit_VL53L5 폴백 제거 / WiFi → ESP-NOW 대체 (lwIP/mbedtls 제외) |
+
+> **현 상태 (5/12)**: 정적 SRAM 18.2% / Flash 31.6% — **모든 Stage 미발동** (Stage 1 임계값 25% / 40% 안전 여유)
+
+##### 17.1.1.3 분석 근거 출처 (catch 24개 항목)
+
+1. **ESP32-S3 datasheet** (5개): 512 KB on-chip SRAM (user-available 320 KB) / 8MB·16MB·32MB Flash 옵션 / 8MB·16MB PSRAM 옵션 / dual-core LX7 @ 240MHz / WiFi 802.11 b/g/n + BT 5 LE 통합 — Espressif ESP32-S3 Datasheet v2.2 (`espressif.com`)
+2. **arduino-esp32 v3.20017** (4개): WIFI_STA 진입 시 ~45KB heap 점유 (issue #5990) / WiFi.h include만 ~500KB Flash (issue #9741) / MIN free heap 60-90KB peak / framework-arduinoespressif32@3.20017.241212 (카테고리 16)
+3. **ESP-IDF heap_caps** (3개): `MALLOC_CAP_8BIT` / `MALLOC_CAP_DMA` (internal SRAM 한정) / `MALLOC_CAP_SPIRAM` 분리 — `heap_caps_get_free_size()` API 노출 (학습 15 검증)
+4. **esp_camera 패턴** (4개): `fb_count` 다중 시 continuous mode (double-speed) / `CAMERA_FB_IN_PSRAM` (default high-res) / `CAMERA_FB_IN_DRAM` 옵션 (PSRAM 부재 시) / esp32-camera v2.1.2 ESP Component Registry / WiFi join 후 fb_get fail (issue #620, 카테고리 17 11주차 항목)
+5. **legacy driver/i2s.h DMA** (3개): arduino-esp32 v3.20017 packaging `i2s_std.h` 미노출 (카테고리 28 학습 15 일치) / DMA buffer 정적 할당 패턴 (mic_dummy 8 KiB BSS) / I2S0/I2S1 controller 분리 (ESP32-S3 dual)
+6. **VL53L5CX** (5개): FW upload ~84 KB (UM2884) / 매 power-on마다 I2C upload / RAM-based sensor (internal flash 없음) / I2C max 1 Mbits/s (datasheet) / ULD driver `/VL53L5CX_ULD_API` (SparkFun 1.0.3 = ULD 1.3.x 기반)
+
+##### 17.1.1.4 한계
+
+- **정적 분석 한정**: BSS + DATA + Flash 컴파일 시점 측정. 동적 heap fragmentation / 런타임 peak / task stack high-water mark 미반영
+- **동적 heap 측정** (`ESP.getMinFreeHeap()` + `uxTaskGetStackHighWaterMark()`): 부품 도착 후(5/15+) 또는 11주차 통합 테스트로 분리 (카테고리 17)
+- **페리페럴 동시 활성 fragmentation**: PoC 1주차 통합 시 실측 (5/21 시점, 카테고리 15·17.1.3)
+- **Plan B 임계값**: 정적 분석 기반 1차 추정 — 동적 측정 후 (11주차) 재조정 가능
+- **WiFi 동적 추정 80 KB**: arduino-esp32 일반 패턴 인용, 본 프로젝트 HTTPClient + ArduinoJson 7.x 조합 실측 미진행
 
 #### 17.1.2 타이밍 self-checkpoint (부품 도착 + 실측 후)
 

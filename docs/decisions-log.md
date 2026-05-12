@@ -368,3 +368,45 @@
 - 위임 프롬프트 → 실제 코드 컨벤션 일치까지 자동 catch
 **근거**: 5/11 PoC-(7) 위임 프롬프트 결과 보고서 § 자체 검증 ② 리팩토링 "기존 컨벤션 일치" 항목 (mic_test.cpp / tof_test.cpp 라인 번호 직접 인용)
 **관련 commit**: `dd8ed66` ✨ Feat: ToF 더미 테스트 코드 추가 (VL53L5CX + I2C)
+
+---
+
+## 2026-05-12 - 메모리 self-checkpoint 결과 (카테고리 17.1.1 통합 budget 추정)
+
+**변경 카테고리**: 17.1.1 (본문 갱신, 17.1.1.1~17.1.1.4 sub-section 신설)
+**HEAD**: `6c9c0fc` (시작) → 본 commit
+**배경**: 사전 준비 11일 단독 페리페럴 테스트 5건 (5/8 WiFi / 5/9 camera_v1·v2 / 5/10 mic / 5/11 tof) 완료. 4종 페리페럴 동시 활성 시 통합 budget 정적 추정 필요. 5/8 PoC-(5) 사전 추정(SRAM 22% / Flash 42% / PSRAM 50KB)을 5/10·5/11 실측 데이터로 정정.
+**결정**:
+- **방법 1 (delta sum, 채택)**: 정적 SRAM **18.2%** (~59.6 KB) / 정적 Flash **31.6%** (~1.06 MB) / PSRAM ~50 KB (0.6%)
+- **방법 2 (단순 합산, 참고)**: SRAM 35.0% / Flash 54.4% (베이스라인 4× 중복 over-count)
+- **페리페럴별 정적 contribution (delta 분해)**:
+  - WiFi/HTTPS: +8.2pp RAM / +18.2pp Flash (esp_wifi + lwIP + mbedtls + HTTPClient + ArduinoJson)
+  - 카메라: +1.4pp RAM / +1.8pp Flash (esp_camera driver, frame buffer는 PSRAM)
+  - 마이크: +2.5pp RAM (8 KiB BSS audio_buffer + scratch) / +0.5pp Flash (legacy driver/i2s.h)
+  - ToF: +0.5pp RAM (1.6KB measurementData) / +3.5pp Flash (FW upload buffer ~84 KB + driver)
+- **Plan B 트리거 정량화 (학습 16 적용)**:
+  - Stage 1 (알람): 정적 SRAM ≥ 25% OR Flash ≥ 40% — 동적 측정 권장
+  - Stage 2 (최적화): 정적 SRAM ≥ 35% OR Flash ≥ 60% — DMA buffer 축소 / VL53L5CX FW PSRAM 이전 / WiFi sdkconfig minimal
+  - Stage 3 (Plan B): 정적 SRAM ≥ 50% OR Flash ≥ 75% — 카메라 해상도/ToF 모드 축소 / WiFi → ESP-NOW
+  - **현 상태 모든 Stage 미발동** (정적 18.2%/31.6%, Stage 1 25%/40% 안전 여유)
+**5/8 사전 추정과의 차이 (정정 분석)**:
+- SRAM **-3.8pp** (22% → 18.2%): mic +5% 가정 → 실측 +2.5pp / tof +3% 가정 → 실측 +0.5pp
+- Flash **-10.4pp** (42% → 31.6%): tof FW image +6%(~200KB) 가정 → 실측 +3.5pp(~117KB)
+- PSRAM 0 변동 (50KB 카메라 frame buffer만)
+- → 실측 모두 사전 추정 안에 안전 수렴
+**근거**:
+- ESP32-S3 datasheet (5개 항목): 512KB SRAM / 320KB user-available / 8MB PSRAM / 8MB Flash / dual LX7 240MHz
+- arduino-esp32 v3.20017 (4개): WIFI_STA ~45KB heap (issue #5990) / WiFi.h ~500KB Flash (issue #9741) / MIN free heap 60-90KB peak / framework 3.20017.241212
+- ESP-IDF heap_caps (3개): `MALLOC_CAP_8BIT` / `MALLOC_CAP_DMA` (internal SRAM) / `MALLOC_CAP_SPIRAM`
+- esp_camera 패턴 (4개): `fb_count` continuous mode / `CAMERA_FB_IN_PSRAM` / `CAMERA_FB_IN_DRAM` 옵션 / issue #620 WiFi join 후 fb_get
+- legacy driver/i2s.h (3개): arduino-esp32 v3.20017 `i2s_std.h` 미노출 (카테고리 28 학습 15) / DMA static / I2S0·I2S1 분리
+- VL53L5CX (5개): FW upload ~84KB (UM2884) / 매 power-on I2C upload / RAM-based sensor / I2C max 1 Mbits/s / ULD driver
+- 출처 catch 합계: 24개 (학습 13 목표 21+ 충족 ✅)
+**한계**:
+- 정적 분석 한정 (BSS + DATA + Flash 컴파일 시점)
+- 동적 heap (`ESP.getMinFreeHeap()` + stack high-water mark): 부품 도착 후(5/15+) 또는 11주차 통합 테스트로 분리 (카테고리 17)
+- 페리페럴 동시 활성 fragmentation: PoC 1주차 통합 시 실측 (5/21, 카테고리 17.1.3)
+- Plan B 임계값: 정적 1차 추정 — 동적 측정 후 재조정 가능
+- WiFi 동적 추정 ~80KB: arduino-esp32 일반 패턴 인용, 본 프로젝트 실측 미진행
+**관련 카테고리**: 16.1 (입력 데이터 5건) / 17.1.1 (본 갱신 대상) / 17.1.3 (5/21 통합 시점 입력) / 14 (코어 분배 잠정안 재확정 입력) / 28·29 (학습 15·16 적용 그물)
+**관련 commit**: 본 entry 자체 (`docs/decisions.md` 17.1.1 갱신 + `docs/decisions-log.md` 본 entry 추가)
