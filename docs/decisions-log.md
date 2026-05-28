@@ -13,6 +13,7 @@
 | 2026-05-06 | 음향 트리거 | (미정) | 단순 RMS 임계값 (옵션 A) | 학부생 작업 단순화 |
 | 2026-05-07 | Git commit 언어 | (미정) | 한국어 + 이모지 컨벤션 | 발표 자료/회고 가독성 |
 | 2026-05-07 | firmware 폴더 구조 | firmware/poc/ | firmware/ 평탄화 + env 분기 | 본 개발 전환 비용 절감 |
+| 2026-05-28 | API 엔드포인트 버저닝 | `/api/detect`, `/api/enrich` | `/api/v1/*` (detect/enrich/notifications/stats) | v1/v2 병행 + 대시보드 폴링 엔드포인트 확장 |
 
 ---
 
@@ -583,3 +584,47 @@
 
 - 모든 후속 PoC / Domain 채팅방에서 Claude 박음 본문 자가검증 3단계 강제 적용
 - 매일 밤 3-set 루틴 Set 2 (프로젝트 지침 수정본)에 본 룰 추가 박음 강제
+
+---
+
+## 2026-05-28 (목) — PoC-(14) Phase 1 React 대시보드 완료 + 결정 1~8 SSoT 반영
+
+**배경**:
+- 2026-05-26 (HEAD 142121b, 카테고리 8.1 신설) ~ 2026-05-28 chunk. 5/26~6/14 부품 무관 작업 영역(카테고리 8.1)에서 Phase 1 React 단독 대시보드 진행.
+- 2026-05-28 PoC-(14): 결정 1~8 확정 (API 명세 5건 + 기술 스택 + 컴포넌트 17개 + 페이지 5종 + 디자인 토큰) + Phase 1 PR #1 머지 + GitHub Flow 첫 PR 완주.
+
+**작업 결과 (decisions.md 반영)**:
+1. **카테고리 4 (ML)** — predicted_class 3종 enum 추가: 초인종(`doorbell`) / 노크(`knock`) / 화재경보(`fire_alarm`), Dense(3) 매핑
+2. **카테고리 6 (서버) + 6.1 신설** — API 명세 1차 확정:
+   - **엔드포인트 버저닝 결정 변경**: `/api/detect`·`/api/enrich` → `/api/v1/*` (detect / enrich / notifications / stats). 상단 표 행 추가
+   - Device/Dashboard Bearer Token 분리 + HTTPS 강제 + `client_request_id`/`request_id`(ULID) 분리 + HTTP status 8종 + rate limit(device_id 5초 1회, Retry-After) + idempotency_keys(24h TTL) + stats period=today
+   - 상세 JSON 미박음, 코드 포인터만 (`dashboard/src/types/`)
+3. **카테고리 7 (알림)** — 카카오 토큰 상태 API = 상대값 `kakao_token_expires_in_minutes` + status enum(valid/expiring/expired)
+4. **카테고리 8 + 8.2 신설** — Phase 1 확정 기술 스택(Vite + React 19 + TS + Tailwind v4 CSS-first + shadcn/ui) + 컴포넌트 17개(4계층) + 페이지 5종 + 디자인 토큰(터치 44~56px / 화재경보 shake+pulse-border / 한국 대중 앱 영감)
+5. **카테고리 8.1** — Phase 1 완료 마킹 (PR #1, 69파일/9180줄, Playwright 검증 통과)
+6. **카테고리 20** — 문서/코드 push 분리 명문화 (문서 단독 = main 직접 push / 코드 = feat 브랜치 + PR 강제), Squash 기본 유지
+7. **카테고리 27 (학습 14) 27.5 신설** — 라이브러리 설정 방식/버전 가정 검증 사례 (Tailwind v3 박음 → v4 CSS-first 공식 기본값 catch)
+8. **카테고리 29 (학습 16) 29.5 신설** — 용어 컨벤션 (위임 '도어벨' → SSoT '초인종')
+
+**PR #1 정정 기록 (오기 catch)**:
+- 위임 프롬프트 본문: "Squash merge로 머지" + "브랜치 삭제 완료"로 기술
+- 실제: **PR #1 = merge commit으로 머지** (`95c3208`, Squash 설정 미적용 — 1회성 예외). origin 브랜치 삭제 완료(학부생 웹 확인), 로컬 feat 브랜치 정리 완료 (`git branch -d` + `git fetch --prune`)
+- **복구 계획**: 다음 PR 전 repo Settings에서 Squash merging 활성화 → 카테고리 20 "Squash 기본" SSoT 복구. 카테고리 20 룰 자체는 유지 (완화 X)
+
+**학습 17 catch 그물 작동 (위임 프롬프트 카테고리 번호 혼동)**:
+- 위임 프롬프트가 학습 N ↔ 카테고리 N 혼동: "카테고리 4(API)" / "카테고리 14(학습)" / "카테고리 16(학습)" / "카테고리 11(chunk 일지)"
+- `git show HEAD:docs/decisions.md` SSoT 대조 결과 정정:
+  - API 명세 → 카테고리 6(서버)/4(ML)/7(알림) 분산 (cat 4 단독 X, cat 6 기존 `/api/detect` 충돌)
+  - 학습 14 = 카테고리 27 (cat 14 = ToF 코드), 학습 16 = 카테고리 29 (cat 16 = monorepo)
+  - chunk 일지 = 본 decisions-log 날짜 entry (cat 11 = 동결된 사전 준비 일정, 미수정)
+- 학부생 확인 후 SSoT 위치로 자체 정정 (5/26 "카테고리 9→8" 자체정정 선례 정합)
+
+**학습 적용**:
+- 학습 13 (출처 catch): 적용 — API 결정/컴포넌트/페이지 전부 `dashboard/src/types/` + 머지 코드 직접 대조 후 박음
+- 학습 14 (가정 검증): 적용 — Tailwind v3 가정 → v4 공식 기본값 catch (27.5) + 위임 카테고리 번호 SSoT 대조
+- 학습 15 (packaging vs 공식): 적용 — Tailwind v4 = 현재 공식 기본값(`package.json` 실제 설치 + context7) 대조
+- 학습 16 (기존 컨벤션 우선): 적용 — '도어벨'→'초인종' 용어 정정 (29.5) + decisions.md 본문 형식 100% 보존 (append만)
+- 학습 17 (인계 패키지 catch + 유도리 마인드): 적용 — 위임 카테고리 번호 혼동 catch + Phase 2 전환 날짜 미고정 유지
+
+**관련 카테고리**: 4 / 6 (6.1 신설) / 7 / 8 (8.2 신설) / 8.1 / 20 / 27 (27.5 신설) / 29 (29.5 신설)
+**관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md`, 문서 단독 변경 = 카테고리 20 신규 룰로 main 직접 push)

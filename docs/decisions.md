@@ -51,6 +51,7 @@
 - librosa는 16kHz mono 변환 전용 (멜스펙트로그램 직접 입력 X)
 - **초인종 개인 등록**: 멜스펙트로그램 2D 템플릿 + FastDTW SP/DTW + cosine distance
 - **train/val/test 분할**: 파일 단위 필수 (data leakage 방지)
+- **predicted_class 3종 (enum, 2026-05-28 PoC-(14) 확정)**: 초인종(`doorbell`) / 노크(`knock`) / 화재경보(`fire_alarm`) — Dense(3) 출력 매핑. 서버/대시보드 API 전역 enum (코드: `dashboard/src/types/notification.ts` `PredictedClass`). 한글 표기 = **"초인종"** (카테고리 3/5 SSoT 컨벤션, "도어벨" 미사용 — 카테고리 29.5 참조)
 
 ---
 
@@ -77,7 +78,19 @@
 - Nginx + Gunicorn(워커 2개, `preload_app=True`) + Flask
 - SQLite + Flask-SQLAlchemy
 - TLS: Let's Encrypt + ESP32는 `setInsecure()` (PoC 한계)
-- **API**: `POST /api/detect`, `POST /api/enrich`
+- **API**: `/api/v1/*` 버저닝 (2026-05-28 확정 — 기존 `POST /api/detect`·`POST /api/enrich`에서 버저닝 전환, decisions-log 2026-05-28 참조)
+
+### 6.1 API 명세 1차 확정 (2026-05-28 PoC-(14), Phase 1 대시보드 셋업 연동)
+
+> 상세 요청/응답 JSON 구조 = `dashboard/src/types/` (`api.ts` / `notification.ts` / `stats.ts`) + PoC-(14) 채팅방. 본 카테고리엔 **결정 + 근거만** (JSON 미박음).
+
+- **엔드포인트 버저닝**: `/api/v1/*` — `detect`(ESP32→서버 1차) / `enrich`(ESP32→서버 2차 사진+음성) / `notifications`(대시보드 폴링) / `stats`(대시보드 폴링). 근거: 향후 API 변경 시 v1/v2 병행 + 대시보드 폴링 엔드포인트 확장
+- **인증 분리**: Device Bearer Token (ESP32, `firmware/include/secrets.h`) ↔ Dashboard Bearer Token (React, `.env`) — 디바이스/대시보드 권한 도메인 분리
+- **통신**: HTTPS 강제 (Let's Encrypt + ESP32 `setInsecure()`, 본 카테고리 TLS 항목 일치)
+- **요청 추적 분리**: `client_request_id` (ESP32 자체 생성, 재시도 멱등 키) + `request_id` (서버 ULID 발급) — 디바이스/서버 추적 ID 분리 (코드: `notification.ts`)
+- **HTTP Status 8종 + rate limit**: `device_id` 5초당 1회, 초과 시 `Retry-After` 헤더
+- **Idempotency**: `idempotency_keys` 테이블 (24시간 TTL) — `client_request_id` 기반 재시도 중복 차단
+- **stats period**: `today` 단일 (Phase 1, 코드 `stats.ts` `StatsPeriod`)
 
 ---
 
@@ -87,6 +100,7 @@
 - **카카오톡**: '나에게 보내기' (memo) — 비즈 앱 심사 회피
 - **이미지**: 카카오 이미지 업로드 API (S3 불필요)
 - **토큰**: 액세스 6시간 + 리프레시 60일, SQLite 저장
+- **토큰 상태 API (2026-05-28 확정)**: 대시보드 응답은 절대 만료시각 대신 **상대값** `kakao_token_expires_in_minutes` + `status` enum(`valid`/`expiring`/`expired`) 노출 — 클라이언트 시계 오차 무관 + 대시보드 "토큰 만료 임박" 경고 UI 직결 (코드: `dashboard/src/types/stats.ts` `SystemHealth`)
 - **2차 알림**: best-effort + 1회 재시도
 - **화재경보 알림 형식** (2026-05-09 추가, 카테고리 26 시연 시나리오 연동): 강조 표현 + 정부 지정 대응 수칙 동시 발송. 1차 알림만 (2차 사진 + 자막 미발송). ToF 사람 검증 우회 (카테고리 3과 동일 정책)
 
@@ -115,6 +129,7 @@
 **Phase 1: React 웹 대시보드 단독**:
 - 작업 범위: Vite + React + shadcn/ui + Tailwind 셋업 + UI 골격 + 핵심 컴포넌트 (알림 카드 / 통계 / 설정 / 접근성 UI) + mock JSON 데이터 (카테고리 4 API 명세 1차 안 기반) + REST 폴링 3초 구조
 - 위임 프롬프트 진행 방식: 카테고리 4 + 8 cross-reference catch 강제 (API 명세 1차 결정) + find-skills MCP 활용 강제 (frontend / react / vite / shadcn-ui) + 코드 작성 자체 검증 3단계 강제
+- **✅ 완료 (2026-05-28 PoC-(14), PR #1 머지)**: 69파일 / 9180줄. Playwright 실동작 검증 통과 (5종 알림 카드 분기 + 다크모드 + Pretendard 실로드 + 콘솔 0 에러). 확정 기술 스택 / 컴포넌트 17개 / 디자인 토큰 = 카테고리 8.2 / API 명세 = 카테고리 6.1·4·7. ※ Phase 2 전환 = 학부생 자율 (날짜 미고정, 학습 17 정합)
 
 **Phase 2: React + Flask 동시 (Flask 학습 진입)**:
 - 작업 범위: Flask + SQLAlchemy 모델 + API 엔드포인트 (학부생 MacBook M4 로컬 진행) + POST /api/detect + POST /api/enrich 1차 구현 (카테고리 4) + React mock → 실제 API 전환 + REST 폴링 실제 동작 검증 + 미니 E2E 통합 1차
@@ -135,6 +150,29 @@
 - 학부생 push back "단계별로 세부 날짜까지는 확정짓지마" → 학습 17 유도리 마인드 직접 위반 catch
 - 정정 = chunk 단위 작업 범위만 SSoT, 세부 날짜 박지 X = AI 본인도 학습 17 catch 그물 작동 대상
 - decisions-log 2026-05-26 entry로 영구 반영
+
+### 8.2 Phase 1 확정 기술 스택 + 컴포넌트 + 디자인 토큰 (2026-05-28 PoC-(14))
+
+**기술 스택**:
+- Vite + React 19 + TypeScript + Tailwind v4 (CSS-first, `@theme inline` — `tailwind.config.js` 없음) + shadcn/ui
+- 라우팅: React Router (v7 설치, v6 호환 API) — 5페이지 + 404
+- 데이터 fetching: `fetch` + `useEffect` custom hook (`usePolling`) — TanStack Query 미채택 (Phase 1 단순성)
+- 상태: Context API + `useState` (`OnboardingContext` / `SettingsContext`) — Zustand 미채택
+- 아이콘: Lucide React / 차트: shadcn/ui Chart (recharts, lazy 분할)
+- 폰트: Pretendard Variable
+
+**컴포넌트 17개 (4계층) + StatsCardsSection**:
+- 레이아웃 3: AppShell / Header / Sidebar
+- 통계카드 4: TotalDetectionsCard / ClassDistributionCard / TimingMetricsCard / SystemHealthCard (+ StatsCardsSection 묶음)
+- 알림 5: NotificationCard / List / Image / STT / StatusBadge
+- 보조 5: EmptyState / ErrorBoundary / HelpTooltip / LoadingSkeleton / OnboardingModal
+
+**페이지 5종 (+404)**: Home / Notifications / Stats / Settings / Help
+
+**디자인 토큰**:
+- 컬러 / 타이포 (Pretendard 정량) / 터치 타겟 (44 / 48 / 52 / 56px 단계)
+- 화재경보 강조: `shake` + `pulse-border` 애니메이션 (+ `prefers-reduced-motion` 대응)
+- 디자인 영감: 한국 대중 앱 (카카오톡 / 토스 / 당근) 우선
 
 ---
 
@@ -547,6 +585,12 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 - **Claude Code MCP 자동 처리**: 브랜치 생성 + 작업 + push + PR 생성
 - **학부생**: PR 리뷰 + 머지
 
+### 문서/코드 변경 push 분리 (2026-05-28 명문화)
+- **문서 단독 변경** (`docs/*.md` — decisions.md / decisions-log.md / git-convention.md 등): **main 직접 push 허용** (PR 불필요)
+- **코드 변경** (`firmware/` / `dashboard/` / `ml/` / `server/`): **feat 브랜치 + PR 강제**
+- 근거: PR 목적 = 코드 품질 catch (컴파일 / 리뷰). 문서는 충돌·리뷰 불필요 → SSoT 갱신 지연 방지
+- **Squash merge 기본 유지** (완화 X). ※ PR #1(2026-05-28)은 merge commit으로 머지된 1회성 예외 — repo Settings에서 Squash merging 활성화 후 복구 예정 (decisions-log 2026-05-28 참조)
+
 ### 5/17 종료 시점 액션
 - 본 카테고리 세부 룰 최종 확정
 - PoC-(2) 인계 패키지에 포함
@@ -958,6 +1002,13 @@ build_src_filter =
 - 위임 프롬프트의 첫 작업 단계에 "현재 상태 확인 (`git status` + `ls [관련 폴더]`)" 강제 명시
 - 자체 검증 ② 리팩토링의 "기존 컨벤션 일치" 항목이 자동 catch 그물 역할 (mic_test.cpp의 `setup()` graceful return 패턴이 카메라 v1/v2와 1:1 매칭됨을 검증한 사례)
 
+### 27.5 5/28 사례 — 라이브러리 설정 방식/버전 가정 검증 (Phase 1 대시보드)
+
+- **위임 프롬프트 가정**: Tailwind 디자인 토큰을 `tailwind.config.js`에 박음 (= Tailwind v3 멘탈모델)
+- **실제 (현재 공식 기본값)**: shadcn/ui + Vite 공식 경로 = **Tailwind v4 (CSS-first, 설정파일 없음, `@theme inline`)**
+- **catch 주체**: Claude Code MCP가 context7 공식 문서 + `dashboard/package.json` 실제 설치 대조 → v4 기본값 catch. 토대(전체 디자인 토큰)라 되돌리기 비용 큼 → surface 후 진행, 학부생이 v4 채택 + `@custom-variant dark` / `tw-animate-css` 정정 스펙 직접 제시
+- **명문화**: 위임 프롬프트가 박은 **라이브러리 설정 방식/버전 가정**도 SSoT(현재 설치 `package.json` + 공식 문서) 대조 대상. 학습 14(가정 검증)를 "repo 구조" → "툴링 버전/설정 기본값"으로 확장 (학습 15·17 정합)
+
 ---
 
 ## 카테고리 28: packaging 제약 vs 공식 권장 분리 검증 (2026-05-10 신설)
@@ -1020,6 +1071,12 @@ build_src_filter =
 - 위임 프롬프트 작성 시 일반 패턴이 아닌 **"기존 [관련 모듈] 컨벤션 우선" 원칙을 명시**
 - 예: "Serial init은 기존 카메라 v1/v2 컨벤션 (`delay(SERIAL_BOOT_DELAY_MS)`) 일치"
 - 충돌 발생 시 Claude Code MCP가 기존 컨벤션 자동 채택할 수 있도록 명시 우선순위 부여
+
+### 29.5 5/28 사례 — 용어 컨벤션 (도어벨 → 초인종)
+
+- **위임 프롬프트 용어**: "도어벨" (일반 용어)
+- **기존 SSoT 컨벤션**: predicted_class 한글 표기 = **"초인종"** (카테고리 3/4/5). "도어벨"은 카테고리 26 시연용 물리 장치 한정 용어
+- **catch + 채택**: Claude Code MCP가 decisions.md SSoT 대조 → predicted_class 한글 표기 = "초인종" 채택 (`doorbell` 영문 enum은 코드 유지). 위임 프롬프트 **일반 용어 < 기존 SSoT 컨벤션** (학습 16 원칙 적용, 학습 17 catch 그물 연동)
 
 ---
 
