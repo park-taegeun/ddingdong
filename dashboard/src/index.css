@@ -1,0 +1,170 @@
+/* src/index.css (Tailwind v4 + shadcn/ui 정합) */
+
+/* Pretendard — CSS @import는 최상단 필수 (Tailwind 인라인 전에 위치해야 컴파일 출력에서 유효) */
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css');
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: #FFFFFF;
+  --background-sub: #F7F8FA;
+  --foreground: #1A1A1A;
+  --foreground-secondary: #6B7280;
+  --primary: #0088FF;
+  --primary-foreground: #FFFFFF;
+  --success: #00C896;
+  --warning: #FFA800;
+  --danger: #FF4444;
+  --danger-deep: #CC0000;
+  --border: #E5E7EB;
+  --status-online: #00C896;
+  --status-processing: #FFA800;
+  --status-failed: #FF4444;
+  --status-offline: #9CA3AF;
+  --radius-card: 16px;
+}
+
+.dark {
+  --background: #191B1F;
+  --background-sub: #26282C;
+  --foreground: #F7F8FA;
+  --foreground-secondary: #9CA3AF;
+  --border: #3A3D42;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-background-sub: var(--background-sub);
+  --color-foreground: var(--foreground);
+  --color-foreground-secondary: var(--foreground-secondary);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-danger-deep: var(--danger-deep);
+  --color-border: var(--border);
+  --color-status-online: var(--status-online);
+  --color-status-processing: var(--status-processing);
+  --color-status-failed: var(--status-failed);
+  --color-status-offline: var(--status-offline);
+
+  /* 타이포 */
+  --text-display: 32px;
+  --text-h1: 24px;
+  --text-h2: 20px;
+  --text-h3: 18px;
+  --text-body: 16px;
+  --text-caption: 14px;
+
+  /* 간격 (50-60대 터치) */
+  --spacing-touch: 44px;
+  --spacing-btn: 48px;
+  --spacing-input: 52px;
+  --spacing-menu: 56px;
+
+  /* 애니메이션 (화재경보) */
+  --animate-shake: shake 0.5s ease-in-out infinite;
+  --animate-pulse-border: pulse-border 1s ease-in-out infinite;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+
+@keyframes pulse-border {
+  0%, 100% { border-color: var(--danger); }
+  50% { border-color: var(--danger-deep); }
+}
+
+body {
+  font-family: 'Pretendard Variable', system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* === shadcn/ui 컴포넌트 필수 토큰 (Step 3 컴포넌트 의존, 브랜드 토큰에 매핑) ===
+   위 사용자 토큰 블록은 그대로 유지. card/popover/secondary/muted/accent/destructive/
+   input/ring/chart/radius는 shadcn 컴포넌트가 참조하므로 브랜드 토큰을 재사용해 정의.
+   var() 참조라 .dark 에서 background/foreground/border가 바뀌면 자동 추종. */
+:root {
+  --radius: 0.75rem; /* rounded-xl = 16px (카드 radius 정합) */
+  --card: var(--background);
+  --card-foreground: var(--foreground);
+  --popover: var(--background);
+  --popover-foreground: var(--foreground);
+  --secondary: var(--background-sub);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--background-sub);
+  --muted-foreground: var(--foreground-secondary);
+  --accent: var(--background-sub);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--danger);
+  --destructive-foreground: #FFFFFF;
+  --input: var(--border);
+  --ring: var(--primary);
+  --chart-1: var(--primary);
+  --chart-2: var(--warning);
+  --chart-3: var(--danger);
+  --chart-4: var(--success);
+  --chart-5: var(--foreground-secondary);
+}
+
+@theme inline {
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* === 접근성 토글 (SettingsContext가 <html>에 클래스 부여) === */
+/* 글씨 크게 — 50-60대 가독성. 전체 UI 15% 확대. */
+html.large-text {
+  zoom: 1.15;
+}
+
+/* 애니메이션 줄이기 — prefers-reduced-motion 자동 감지에 더해 수동 토글 */
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
