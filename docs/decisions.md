@@ -79,6 +79,8 @@
 - SQLite + Flask-SQLAlchemy
 - TLS: Let's Encrypt + ESP32는 `setInsecure()` (PoC 한계)
 - **API**: `/api/v1/*` 버저닝 (2026-05-28 확정 — 기존 `POST /api/detect`·`POST /api/enrich`에서 버저닝 전환, decisions-log 2026-05-28 참조)
+- **구현 골격 (2026-06-14 Phase 2-1차, PR #2 `37a92b3`)**: `server/` = Flask app factory + Blueprint(`/api/v1`) + Flask-SQLAlchemy 모델 2종(`notifications` / `idempotency_keys` 24h TTL) + 엔드포인트 4종. ML 추론 = mock(실제 YAMNet 11주차), HTTPS/EC2 = 11주차(현재 로컬 http). 상세 = 카테고리 8.1 2-1차 항목
+- **미결 (rate limit Redis 교체, 11주차)**: 현재 rate limit = in-memory dict. Gunicorn 워커 2개(`preload_app=True`) 시 워커별 dict 분리 → rate limit 무효화. 11주차 배포 진입 시 Redis(공유 스토어) 교체 필요
 
 ### 6.1 API 명세 1차 확정 (2026-05-28 PoC-(14), Phase 1 대시보드 셋업 연동)
 
@@ -135,6 +137,8 @@
 - 작업 범위: Flask + SQLAlchemy 모델 + API 엔드포인트 (학부생 MacBook M4 로컬 진행) + POST /api/detect + POST /api/enrich 1차 구현 (카테고리 4) + React mock → 실제 API 전환 + REST 폴링 실제 동작 검증 + 미니 E2E 통합 1차
 - 위임 프롬프트 진행 방식: Flask 학습 곡선 catch 강제 (학부생 첫 진입 = Claude Code MCP가 본문 설명 + 코드 작성 + 학습 영역 분리 강제) + 자체 검증 3단계 강제
 - AWS EC2 인스턴스 띄우는 시점 = 11~12주차 (7/27 이후) 진입 시 (Phase 2는 로컬 단독, AWS 비용 0원)
+- **✅ 2-1차 완료 (2026-06-14, PR #2 `37a92b3`, 브랜치 `feat/server-flask-skeleton` 머지 후 삭제)**: Flask 백엔드 골격 — app factory + Blueprint(`/api/v1`) + 모델 2종(`notifications` / `idempotency_keys` 24h TTL) + 엔드포인트 4종(`detect` / `enrich` / `notifications` / `stats`). 인증 Device/Dashboard Token 분리 + rate limit(device_id 5초 1회) + idempotency + HTTP Status 8종, curl 15종 통과. ML 추론 = mock(실제 YAMNet 11주차), HTTPS/EC2 = 11주차(현재 로컬 http). **JSON 1:1 = `dashboard/src/types/`** (api.ts / notification.ts / stats.ts) — SSoT 단일화 유지. 상세 = 카테고리 6 + 6.1
+- **2-2차 메모 (React 실제 API 연동, 미진행)**: React mock → 실제 API 전환 + REST 폴링 실동작 검증 + 미니 E2E 통합 1차. **미결 (api.ts cursor 타입 추가)**: 현재 `NotificationsApiResponse = { notifications }` 단일 → 백엔드 cursor 메타(`next_cursor` / `has_more`)는 additive. 2-2차 연동 시 `dashboard/src/types/api.ts`에 cursor 타입 추가 필요
 
 **Phase 1 → Phase 2 전환 트리거** (학부생 자율, 학습 17 정합 — 날짜 박지 X):
 - Phase 1 React UI 골격 + mock 데이터 완성도 학부생 자체 평가 후
@@ -925,7 +929,7 @@ ID 참조:
 
 ### 26.8 검증 채널 (Demo-Verify-(N) 채팅방)
 
-- **신설 시점**: 5월 중 (시점 자유, 학부생 결정)
+- **신설 시점**: 5월 중 (시점 자유, 학부생 결정) → **7월 초 재설정 (2026-06-14)**: 메이크잇펀 부품 슬립(6/17~19 도착) + Phase 2 진행 중(2-1차 6/14 완료) + ML/시연 준비 단계(8주차~) 정렬. 정량 데드라인 X(학습 17 유도리 마인드) 유지. 상세 = 노션 DB3
 - **임무**: 시연 시나리오 → 시스템 기능 매핑 + 구현 가능성 평가 + Gap 카드 작성
 - **Gap 카드 누적 위치**: 노션 "데모 시나리오" 페이지 DB3
 - **Gap 처리 분기**:

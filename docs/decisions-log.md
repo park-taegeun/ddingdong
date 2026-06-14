@@ -628,3 +628,31 @@
 
 **관련 카테고리**: 4 / 6 (6.1 신설) / 7 / 8 (8.2 신설) / 8.1 / 20 / 27 (27.5 신설) / 29 (29.5 신설)
 **관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md`, 문서 단독 변경 = 카테고리 20 신규 룰로 main 직접 push)
+
+---
+
+## 2026-06-14 (일) — Phase 2-1차 Flask 백엔드 골격 완료 + 미결 2건 + 데모 트리거 재설정
+
+**배경**:
+- 2026-05-28 (HEAD `1838bec`, Phase 1 완료) ~ 2026-06-14 chunk. 5/29~6/13 약 보름 작업 0건 슬립 — 메이크잇펀 부품 6/17~19 도착 대기 + 학교 일정. **학습 17 유도리 마인드 정합** (외부 의존 chunk 슬립 시 정량 데드라인 X, 부품 무관 작업 자유 재배치).
+- 2026-06-14 Phase 2-1차: Flask 백엔드 골격 구현 → **PR #2 Squash 머지** (`1838bec`→`37a92b3`, 브랜치 `feat/server-flask-skeleton` 머지 후 삭제). 카테고리 20 "Squash 기본" SSoT 복구 확인 (PR #1 1회성 merge commit 예외 → PR #2 Squash 정상 적용).
+
+**작업 결과 (Phase 2-1차 구현, decisions.md 8.1 반영)**:
+- `server/` = Flask app factory + Blueprint(`/api/v1`) + Flask-SQLAlchemy 모델 2종(`notifications` / `idempotency_keys` 24h TTL) + 엔드포인트 4종(`detect` / `enrich` / `notifications` / `stats`)
+- 인증 Device/Dashboard Bearer Token 분리 + rate limit(device_id 5초 1회, Retry-After) + idempotency(`client_request_id` 기반) + HTTP Status 8종, curl 15종 통과
+- ML 추론 = mock (실제 YAMNet 11주차) / HTTPS·EC2 = 11주차 (현재 로컬 http, AWS 비용 0원)
+- **JSON 1:1 = `dashboard/src/types/`** (api.ts / notification.ts / stats.ts) SSoT 단일화 유지 (카테고리 6.1 코드 포인터 정합)
+
+**미결 2건 박음 (decisions.md 반영)**:
+1. **카테고리 6 — rate limit Redis 교체 (11주차)**: 현재 rate limit = in-memory dict. Gunicorn 워커 2개(`preload_app=True`, 카테고리 6) 시 워커별 dict 분리 → rate limit 무효화. 11주차 배포 진입 시 Redis(공유 스토어) 교체 필요.
+2. **카테고리 8.1 — api.ts cursor 타입 부재 (2-2차 추가)**: 현재 `NotificationsApiResponse = { notifications }` 단일 → 백엔드 cursor 메타(`next_cursor` / `has_more`)는 additive. 2-2차 React 연동 시 `dashboard/src/types/api.ts`에 cursor 타입 추가 필요.
+
+**데모 시나리오 트리거 재설정 (카테고리 26.8)**:
+- Demo-Verify-(N) 채팅방 신설 시점 "5월 중" → **7월 초 재설정**. 근거: 메이크잇펀 부품 슬립 + Phase 2 진행 중(2-1차 6/14 완료) + ML/시연 준비 단계(8주차~) 정렬. 정량 데드라인 X(학습 17 유도리 마인드) 유지, 상세 = 노션 DB3 (Set 3).
+
+**학습 적용**:
+- 학습 13 (출처 catch): 적용 — Phase 2-1차 구현 내용 = PR #2 머지 코드 + `dashboard/src/types/` 직접 대조 후 박음.
+- 학습 17 (인계 패키지 catch + 유도리 마인드): 적용 — 5/29~6/13 슬립을 데드라인 위반 아닌 정상 chunk 재배치로 기록 + 데모 트리거 정량 데드라인 X 유지 + 위임 카테고리 번호(6 / 8.1 / 26) `git show` SSoT 사전 대조 후 박음.
+
+**관련 카테고리**: 6 / 6.1 / 8.1 / 20 / 26 (26.8)
+**관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md`, 문서 단독 변경 = 카테고리 20 main 직접 push)
