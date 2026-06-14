@@ -18,6 +18,10 @@ __pycache__/
 *.pyo
 .ipynb_checkpoints/
 
+# === SQLite DB (서버 로컬 데이터, push 금지) ===
+*.db
+*.db-journal
+
 # === Node ===
 node_modules/
 dist/

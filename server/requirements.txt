@@ -1,0 +1,5 @@
+# 띵동 Phase 2-1 백엔드 의존성 (PyPI 최신 안정 버전, 2026-06-14 확인)
+# 카테고리 6: SQLite + Flask-SQLAlchemy / 카테고리 27.5: 버전 가정 검증 강제
+Flask==3.1.3
+Flask-SQLAlchemy==3.1.1
+python-dotenv==1.2.2
