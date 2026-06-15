@@ -27,6 +27,9 @@ node_modules/
 dist/
 build/
 
+# === Playwright MCP E2E 부산물 (스냅샷/콘솔 로그, push 금지) ===
+.playwright-mcp/
+
 # === macOS ===
 .DS_Store
 
