@@ -81,6 +81,8 @@
 - **API**: `/api/v1/*` 버저닝 (2026-05-28 확정 — 기존 `POST /api/detect`·`POST /api/enrich`에서 버저닝 전환, decisions-log 2026-05-28 참조)
 - **구현 골격 (2026-06-14 Phase 2-1차, PR #2 `37a92b3`)**: `server/` = Flask app factory + Blueprint(`/api/v1`) + Flask-SQLAlchemy 모델 2종(`notifications` / `idempotency_keys` 24h TTL) + 엔드포인트 4종. ML 추론 = mock(실제 YAMNet 11주차), HTTPS/EC2 = 11주차(현재 로컬 http). 상세 = 카테고리 8.1 2-1차 항목
 - **미결 (rate limit Redis 교체, 11주차)**: 현재 rate limit = in-memory dict. Gunicorn 워커 2개(`preload_app=True`) 시 워커별 dict 분리 → rate limit 무효화. 11주차 배포 진입 시 Redis(공유 스토어) 교체 필요
+- **CORS 처리 (2026-06-15 Phase 2-2차, PR #3 `cec9c9b`)**: `flask-cors` 미설치 → React dev 서버 → Flask 호출 시 **Vite dev proxy(dev 전용)**로 동일 origin 우회 (대시보드 `VITE_API_BASE_URL=/api/v1` 상대 경로 → Vite가 백엔드로 프록시, 백엔드 CORS 헤더 미추가)
+- **미결 (배포 CORS, 11주차)**: Vite dev proxy = 개발 전용. 11주차 배포 진입 시 proxy 무효 → Nginx 동일 origin 서빙(대시보드 정적 + `/api/v1` 리버스 프록시) or 백엔드 CORS 헤더 별도 필요
 
 ### 6.1 API 명세 1차 확정 (2026-05-28 PoC-(14), Phase 1 대시보드 셋업 연동)
 
@@ -138,7 +140,8 @@
 - 위임 프롬프트 진행 방식: Flask 학습 곡선 catch 강제 (학부생 첫 진입 = Claude Code MCP가 본문 설명 + 코드 작성 + 학습 영역 분리 강제) + 자체 검증 3단계 강제
 - AWS EC2 인스턴스 띄우는 시점 = 11~12주차 (7/27 이후) 진입 시 (Phase 2는 로컬 단독, AWS 비용 0원)
 - **✅ 2-1차 완료 (2026-06-14, PR #2 `37a92b3`, 브랜치 `feat/server-flask-skeleton` 머지 후 삭제)**: Flask 백엔드 골격 — app factory + Blueprint(`/api/v1`) + 모델 2종(`notifications` / `idempotency_keys` 24h TTL) + 엔드포인트 4종(`detect` / `enrich` / `notifications` / `stats`). 인증 Device/Dashboard Token 분리 + rate limit(device_id 5초 1회) + idempotency + HTTP Status 8종, curl 15종 통과. ML 추론 = mock(실제 YAMNet 11주차), HTTPS/EC2 = 11주차(현재 로컬 http). **JSON 1:1 = `dashboard/src/types/`** (api.ts / notification.ts / stats.ts) — SSoT 단일화 유지. 상세 = 카테고리 6 + 6.1
-- **2-2차 메모 (React 실제 API 연동, 미진행)**: React mock → 실제 API 전환 + REST 폴링 실동작 검증 + 미니 E2E 통합 1차. **미결 (api.ts cursor 타입 추가)**: 현재 `NotificationsApiResponse = { notifications }` 단일 → 백엔드 cursor 메타(`next_cursor` / `has_more`)는 additive. 2-2차 연동 시 `dashboard/src/types/api.ts`에 cursor 타입 추가 필요
+- **✅ 2-2차 완료 (2026-06-15, PR #3 `cec9c9b`)**: React mock → 실제 Flask API 연동. `dashboard/src/types/api.ts`에 cursor 메타(`next_cursor` / `has_more`) additive 추가 + mock → 실제 fetch 전환(`apiGet` 공용 헬퍼로 DRY, 폴링 훅 무수정) + Vite dev proxy로 CORS 우회. env `VITE_API_BASE_URL=/api/v1`(상대 경로, proxy 경유). 미니 E2E 전항목 통과: seed 11건 렌더 + detect 오늘 주입 → stats 0→1 반영 + CORS 0건 + 폴링 3초 + 콘솔 0 에러 + tsc/eslint/build 통과. CORS 처리 상세 = 카테고리 6
+- **follow-up (stats 폴링 중복, 2026-06-15 발굴)**: 2-2차 연동 후 `/stats`가 폴링 주기당 2회 호출됨 — `useStats`(통계 섹션) + `useDevice`(헤더 디바이스 상태)가 독립 폴러로 각자 호출. GET은 rate-limit 제외 + 3초 주기라 현재 안전하나, 공유 폴러 or Context 통합 권고(추후 폴리시 or 11주차). 학습 16(기존 컨벤션 우선)에 따라 이번엔 미변경
 
 **Phase 1 → Phase 2 전환 트리거** (학부생 자율, 학습 17 정합 — 날짜 박지 X):
 - Phase 1 React UI 골격 + mock 데이터 완성도 학부생 자체 평가 후
@@ -739,6 +742,12 @@ ID 참조:
 - 5/26~6/14 chunk 작업 방향 = 카테고리 8 (대시보드) Phase 1 / Phase 2 단계별 진행 (별도 카테고리 8 본문 + decisions-log 2026-05-26 entry 참조)
 - 학습 17 유도리 마인드 정합 — 22주 마스터 가이드라인 정량 데드라인 X, 본 약 1개월 슬립도 가이드라인 안에서 흡수 가능 (졸업 발표 9/30 기준 약 18주 남음)
 - 학습 17 (유도리 마인드, 22주 일정 = 가이드라인) 정합
+
+**부품 전량 도착 catch 완료 (2026-06-15, 학습 13·14)**:
+- 메이크잇펀 XIAO ESP32-S3 Sense Pre-Soldered 수령 — SKU `102010635`, ST 정품, 학부생 직접 화면 catch. 발송 예정 6/15 → **실제 6/15 조기 도착(추가 슬립 없음)**. 5/26 catch 시점 도착 예상 약 6/17~6/19 대비 조기 도착
+- 디바이스마트 부품 전량 수령: INMP441 모듈("납땜" 버전) / VL53L5CX-SATEL(ST 정품, `497-VL53L5CX-SATEL-ND`) / 점퍼선 3종(M-M / M-F)
+- **인두기 불필요 확정**: INMP441 라벨 "납땜"(헤더 사전 납땜) + VL53L5CX-SATEL 정품 헤더 박힘 + XIAO Pre-Soldered → 전량 납땜 완료 상태로 도착, 인두기 추가 구매 불요
+- 다이소 잔여 구매 항목 = **브레드보드만** (USB-C 케이블 집 보유)
 
 ---
 

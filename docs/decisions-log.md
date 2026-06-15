@@ -656,3 +656,36 @@
 
 **관련 카테고리**: 6 / 6.1 / 8.1 / 20 / 26 (26.8)
 **관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md`, 문서 단독 변경 = 카테고리 20 main 직접 push)
+
+---
+
+## 2026-06-15 (월) — Phase 2-2차 React 실제 API 연동 완료 + 부품 전량 도착 (인두기 불필요 확정)
+
+**배경**:
+- 2026-06-14 (HEAD `37a92b3`, Phase 2-1차 Flask 골격) ~ 2026-06-15 chunk. 2-1차에서 박은 미결 2건 중 1건(카테고리 8.1 api.ts cursor 타입 부재)을 2-2차에서 해소.
+- 2026-06-15 Phase 2-2차: React mock → 실제 Flask API 연동 → **PR #3 Squash 머지** (`37a92b3`→`cec9c9b`). 카테고리 20 "Squash 기본" SSoT 정합.
+- 동일 6/15 메이크잇펀 발송 예정일에 부품 전량 조기 도착 (XIAO + 디바이스마트 동시 catch). 5/26 catch 시점 도착 예상 약 6/17~6/19 대비 조기.
+
+**작업 결과 (Phase 2-2차 구현, decisions.md 8.1 / 6 반영)**:
+- `dashboard/src/types/api.ts`에 cursor 메타(`next_cursor` / `has_more`) **additive 추가** (2-1차 박은 미결 해소, 기존 `NotificationsApiResponse` 형식 보존)
+- React mock → 실제 fetch 전환 — `apiGet` **공용 헬퍼로 DRY** 처리, 폴링 훅(`usePolling` 등) 무수정 (학습 16 기존 컨벤션 우선 정합)
+- **CORS = Vite dev proxy(dev 전용)로 우회** — `flask-cors` 미설치, env `VITE_API_BASE_URL=/api/v1` 상대 경로 → Vite가 백엔드로 프록시 (동일 origin)
+- 미니 E2E 전항목 통과: seed 11건 렌더 + detect 오늘 주입 → stats 0→1 반영 + CORS 0건 + 폴링 3초 + 콘솔 0 에러 + tsc / eslint / build 통과
+
+**미결 2건 박음 (decisions.md 반영)**:
+1. **카테고리 6 — 배포 CORS (11주차)**: Vite dev proxy = 개발 전용. 11주차 배포 진입 시 proxy 무효 → Nginx 동일 origin 서빙(대시보드 정적 + `/api/v1` 리버스 프록시) or 백엔드 CORS 헤더 별도 필요.
+2. **카테고리 8.1 — stats 폴링 중복 (follow-up)**: 2-2차 연동 후 `/stats`가 폴링 주기당 2회 호출 (`useStats` 통계 섹션 + `useDevice` 헤더 독립 폴러). GET = rate-limit 제외 + 3초 주기라 현재 안전. 공유 폴러 or Context 통합 권고(추후 폴리시 or 11주차). 학습 16에 따라 이번엔 미변경.
+
+**부품 전량 도착 catch (카테고리 22.7 반영, 학습 13·14)**:
+- 메이크잇펀 XIAO ESP32-S3 Sense **Pre-Soldered** 수령 (SKU `102010635`, ST 정품, 학부생 직접 화면 catch). 발송 예정 6/15 → **실제 6/15 조기 도착(추가 슬립 없음)**.
+- 디바이스마트 부품 전량: INMP441 모듈("납땜" 버전) / VL53L5CX-SATEL(ST 정품, `497-VL53L5CX-SATEL-ND`) / 점퍼선 3종(M-M / M-F).
+- **인두기 불필요 확정** — INMP441 라벨 "납땜" + SATEL 정품 헤더 + XIAO Pre-Soldered = 전량 납땜 완료 상태. 다이소 잔여 = **브레드보드만**(USB-C 케이블 집 보유).
+
+**학습 적용**:
+- 학습 13 (출처 catch): 적용 — 2-2차 구현 내용 = PR #3 머지 코드 + `dashboard/src/types/api.ts` 직접 대조 후 박음 + 부품 = 학부생 직접 화면 catch (SKU / 부품번호 / "납땜" 라벨 실물 확인).
+- 학습 14 (가정 검증): 적용 — "납땜 필요?" 가정 → 실물 라벨/헤더 직접 catch로 인두기 불필요 확정 (catch 그물 작동) + 위임 카테고리 번호(6 / 8.1 / 8.2 / 22.7) `git show` SSoT 사전 대조 후 박음.
+- 학습 16 (기존 컨벤션 우선): 적용 — `apiGet` 공용 헬퍼 + 폴링 훅 무수정으로 기존 컨벤션 보존 + stats 폴링 중복도 이번 chunk 미변경(권고만 박음).
+- 학습 17 (인계 패키지 catch + 유도리 마인드): 적용 — 부품 조기 도착을 슬립 단축으로 흡수 + 정량 데드라인 미고정 유지.
+
+**관련 카테고리**: 6 / 8.1 / 22.7 / 20
+**관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md`, 문서 단독 변경 = 카테고리 20 main 직접 push)
