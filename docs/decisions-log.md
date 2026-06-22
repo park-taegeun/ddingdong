@@ -689,3 +689,36 @@
 
 **관련 카테고리**: 6 / 8.1 / 22.7 / 20
 **관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md`, 문서 단독 변경 = 카테고리 20 main 직접 push)
+
+---
+
+## 2026-06-22 (월) — PoC-(17) 1차 부팅 검증 완료 (camera_v1 + poc PASS) + 카테고리 32 신설
+
+**배경**:
+- 5/7~5/11 작성 더미 펌웨어의 **실보드(XIAO ESP32-S3 Sense Pre-Soldered) 1차 부팅 검증**. 6/15 부품 전량 도착(전 entry) 후 첫 실보드 검증. USB-C 단독(결선 0)으로 가능한 2종(카메라·WiFi)만 진행. 학부생 = 결과 판정, MCP = 실행/해석. **검증 전용 = firmware 0 수정 / commit·push 0 / secrets.h 미열람**.
+- HEAD `0d15fe2` (Phase 2-2차) 기준, 검증 전후 working tree clean 유지.
+
+**검증 결과 (PASS 2종)**:
+- **카메라(camera_v1) PASS**: 센서 **OV3660 실측 확정**(PID `0x3660` = 라이브러리 SSoT 일치, 가정 적중 → 센서 코드 수정 불필요). PSRAM 8MB OCTAL 인식 / QVGA JPEG ~6KB ~30fps 연속 캡처 / fb_get NULL 0건 / 힙 누수 없음.
+- **WiFi(poc) PASS — 안테나 진단 적중**: 안테나 미장착 시 양쪽 SSID 15s timeout 반복 → **u.FL 외장 안테나 장착 즉시 `Connected via PRIMARY` (RSSI -53dBm, 0.7초 연결) + HTTPS POST 200**. 0순위 가설(XIAO WiFi = 외장 안테나 필수) 확정. secrets.h 자격증명·2.4GHz는 정상이었음.
+
+**발견 이슈 2건 (별도 수정 위임 — 본 검증 코드 0 수정)**:
+1. **env:poc src_filter blacklist 회귀**: `[env:poc]`만 blacklist(`+<*>`) 잔존 → 5/10·5/11 추가된 mic_test/tof_test의 `setup()`/`loop()` 흡수 → multiple definition 링크 충돌(5/8 이후 미재빌드로 잠복). 1차 검증은 `PLATFORMIO_BUILD_SRC_FILTER` 환경변수 override로 우회. 근본 = whitelist 통일 별도 위임(카테고리 27.6).
+2. **camera_common.cpp PID 버그**: `id.PID == 0x36` 비교 vs 실제 `uint16_t 0x3660` → 라벨 `(UNKNOWN)` 오표기 + OV3660 dark-image 보정(Khangura #6) 미실행. **캡처는 정상**, 시연 밝기 위해 `0x36→0x3660` 수정 필요. 별도 수정 위임.
+
+**환경 변경 1건 (코드 아님, 학부생 승인)**:
+- **pio penv 복구/정정**: `/tmp/pio-venv`(5/7 기록) = `/tmp` 재부팅 소실 → 공식 설치 스크립트로 `~/.platformio/penv`(표준)에 PlatformIO Core **6.1.19** 복구(system python 무수정). 정적 기록의 재부팅 무효화 = **학습 14 사례**로 카테고리 16 정정.
+
+**SSoT 반영 (decisions.md)**:
+- 카테고리 1 — OV3660 실측 확정 + WiFi 외장 안테나 필수 append
+- 카테고리 16 — `/tmp/pio-venv` → `~/.platformio/penv` 정정(학습 14) + env:poc src_filter 회귀 기록
+- 카테고리 27.6 — env:poc whitelist 통일 방향 + blacklist 금지 예방 명문화
+- **카테고리 32 신설** — PoC-(17) 1차 부팅 검증 결과(범위/카메라/WiFi/이슈 2건/환경 변경/제약 준수)
+
+**학습 적용**:
+- 학습 13 (출처 catch): 적용 — OV3660 = 시리얼 실측 PID `0x3660`을 라이브러리 `sensor.h` SSoT와 직접 대조 후 박음(AI 패턴 짜맞춤 X). 캡처 프레임/RSSI/HTTPS status 전부 실제 시리얼 로그 catch.
+- 학습 14 (가정 검증): 적용 — `/tmp/pio-venv` 정적 기록 → 재부팅 소실 실측으로 정정 + WiFi timeout "안테나?" 가정 → 장착 실측으로 확정(catch 그물 작동) + 카테고리 번호(1/16/27/32) `git show` SSoT 사전 대조.
+- 학습 17 (catch 그물 + 유도리): 적용 — 블로커 3건(pio 부재 / src_filter 충돌 / WiFi timeout) 전부 임의 결정 X, `AskUserQuestion` 후 진행 + 발견 이슈 2건은 본 검증 범위 밖(코드 0 수정)으로 분리해 별도 위임 명시.
+
+**관련 카테고리**: 1 / 16 / 25 / 27.6 / 32
+**관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md`, 문서 단독 변경 = 카테고리 20 main 직접 push)
