@@ -46,7 +46,7 @@ void logMemoryDiagnostics(const char* tag) {
 const char* sensorIdToName(int pid) {
   switch (pid) {
     case 0x26: return "OV2640";
-    case 0x36: return "OV3660";
+    case OV3660_PID: return "OV3660";   // 0x3660 (uint16_t). 잘린 0x36 비교 버그 정정 (decisions.md 카테고리 32.4)
     case 0x76: return "OV7670";
     case 0x77: return "OV7725";
     default:   return "UNKNOWN";
@@ -76,8 +76,8 @@ bool initCameraWithDiagnostics() {
   if (sensor != nullptr) {
     Serial.printf("[CAMERA] Sensor PID=0x%02x (%s)\n",
                   sensor->id.PID, sensorIdToName(sensor->id.PID));
-    if (sensor->id.PID == 0x36) {
-      // Khangura 함정 #6 보정 (OV3660 한정).
+    if (sensor->id.PID == OV3660_PID) {
+      // Khangura 함정 #6 보정 (OV3660 한정). id.PID는 uint16_t 0x3660 — 잘린 0x36 비교 시 영영 미실행 (카테고리 25/32.4).
       sensor->set_brightness(sensor, 1);
       sensor->set_saturation(sensor, -2);
       Serial.println("[CAMERA] OV3660 brightness/saturation 보정 적용");
