@@ -720,5 +720,10 @@
 - 학습 14 (가정 검증): 적용 — `/tmp/pio-venv` 정적 기록 → 재부팅 소실 실측으로 정정 + WiFi timeout "안테나?" 가정 → 장착 실측으로 확정(catch 그물 작동) + 카테고리 번호(1/16/27/32) `git show` SSoT 사전 대조.
 - 학습 17 (catch 그물 + 유도리): 적용 — 블로커 3건(pio 부재 / src_filter 충돌 / WiFi timeout) 전부 임의 결정 X, `AskUserQuestion` 후 진행 + 발견 이슈 2건은 본 검증 범위 밖(코드 0 수정)으로 분리해 별도 위임 명시.
 
+**후속 수정 완료 — 발견 이슈 2건 (PR #4 `c4c8f47` Squash 머지, 2026-06-22)**:
+- **이슈 ② camera PID**: `camera_common.cpp` `0x36` 리터럴 → **`OV3660_PID` 매크로**로 정정 (L49 `case 0x36` → `case OV3660_PID` + L79 OV3660 dark-image 보정 분기). 학습 15 헤더 노출 검증 통과(`sensor.h:22`에 `OV3660_PID` 정의 확인) → dark-image 보정(Khangura #6) 분기 정상 작동 복구.
+- **이슈 ① env:poc**: `[env:poc]` blacklist → **whitelist `-<*> +<main.cpp>`** 통일 + 임시 우회(`PLATFORMIO_BUILD_SRC_FILTER` 환경변수) 제거. footprint = **poc RAM 13.8% / Flash 25.8% = 5/8 원본 poc(commit `3ec17d4`) footprint 일치** → main.cpp 단독 컴파일·회귀 해소 증명. (참고: camera_v1 9.4% 무변동.)
+- SSoT 동기화: 카테고리 27.6 "방향 → ✅ 완료" / 카테고리 32.4 이슈 ①② "예정 → ✅ 수정 완료" append (기존 이력성 문장 보존, 학습 8).
+
 **관련 카테고리**: 1 / 16 / 25 / 27.6 / 32
-**관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md`, 문서 단독 변경 = 카테고리 20 main 직접 push)
+**관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md`, 문서 단독 변경 = 카테고리 20 main 직접 push) + 발견 이슈 2건 수정 = **PR #4 `c4c8f47`** (`firmware/` 코드 수정, Squash 머지)
