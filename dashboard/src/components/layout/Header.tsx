@@ -39,7 +39,9 @@ export function Header({ onMenuClick }: HeaderProps) {
             )}
             aria-hidden
           />
-          <span className="hidden text-caption font-medium text-foreground-secondary sm:inline">
+          {/* sm 미만에서도 SR이 상태를 읽도록 sr-only로 a11y 트리 상주(시각 표현은 동일).
+              색상(dot) 단독 의존 해소 — WCAG 1.4.1. */}
+          <span className="sr-only text-caption font-medium text-foreground-secondary sm:not-sr-only">
             {deviceLabel}
           </span>
         </div>

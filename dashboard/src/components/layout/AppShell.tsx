@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { Outlet } from "react-router-dom"
 import { OnboardingModal } from "@/components/feedback/OnboardingModal"
+import { NotificationAnnouncer } from "@/components/notifications/NotificationAnnouncer"
 import { Header } from "./Header"
 import { Sidebar } from "./Sidebar"
 
@@ -51,6 +52,9 @@ export function AppShell() {
       </div>
 
       <OnboardingModal />
+
+      {/* 신규 알림 스크린리더 announce (어느 페이지든 동작하도록 상시 마운트) */}
+      <NotificationAnnouncer />
     </div>
   )
 }
