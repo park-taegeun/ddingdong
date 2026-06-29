@@ -1,3 +1,4 @@
+import type { Ref } from "react"
 import { Menu, Moon, Sun } from "lucide-react"
 import { useSettings } from "@/contexts/SettingsContext"
 import { useDevice } from "@/hooks/useDevice"
@@ -5,9 +6,11 @@ import { cn } from "@/lib/utils"
 
 interface HeaderProps {
   onMenuClick: () => void
+  // 모바일 drawer 닫힐 때 포커스를 되돌릴 트리거(B-1b 포커스 복원)
+  menuButtonRef?: Ref<HTMLButtonElement>
 }
 
-export function Header({ onMenuClick }: HeaderProps) {
+export function Header({ onMenuClick, menuButtonRef }: HeaderProps) {
   const { isOnline, health } = useDevice()
   const { theme, toggleTheme } = useSettings()
 
@@ -20,6 +23,7 @@ export function Header({ onMenuClick }: HeaderProps) {
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-background/95 px-4 backdrop-blur lg:px-6">
       <button
+        ref={menuButtonRef}
         type="button"
         onClick={onMenuClick}
         className="flex h-touch w-touch items-center justify-center rounded-xl text-foreground-secondary hover:bg-background-sub lg:hidden"
