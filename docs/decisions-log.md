@@ -727,3 +727,36 @@
 
 **관련 카테고리**: 1 / 16 / 25 / 27.6 / 32
 **관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md`, 문서 단독 변경 = 카테고리 20 main 직접 push) + 발견 이슈 2건 수정 = **PR #4 `c4c8f47`** (`firmware/` 코드 수정, Squash 머지)
+
+---
+
+## 2026-06-29 (월) — PoC-(19) 웹 대시보드 베테랑 리뷰 + Phase B 접근성 3PR 완결 + 학습 18 신설
+
+**배경**:
+- Phase 2 완료(2-2차, PR #3 `cec9c9b`) 이후 별도 chunk. 웹 대시보드 **베테랑 리뷰(read-only)** + **접근성 3PR(B-0/B-1a/B-1b)** 진행. HEAD = `3408d97`(PR #7 머지) = origin/main, working tree clean.
+- 본 entry는 위 결과의 SSoT(decisions.md) + 변경 이력(decisions-log.md) 동기화. 문서 단독 = 카테고리 20 main 직접 push.
+
+**작업 결과 (decisions.md 카테고리 8.3 신설 반영)**:
+- **B-0 (PR #5 `56e44b8`)**: dashboard `tsconfig` strict 활성화 — Phase B 타입 안전 토대.
+- **B-1a (PR #6 `e9b9879`)**: a11y 색상 단독 의존 해소(텍스트/아이콘 병행) + `aria-live` announcer로 폴링 갱신 SR 공지. announcer = notifications 폴러 1개 신규.
+- **B-1b (PR #7 `3408d97`)**: 본문 바로가기(skip link) + 모바일 drawer 키보드 포커스 트랩/복원.
+- **베테랑 리뷰(read-only, 코드 0 수정)**: 🔴 0 / 🟡 4 / 🟢 6 / deferred 6. 🟡🟢 = Phase B 작업으로 분류·반영.
+
+**폴링 배율 정정 (decisions.md 8.1 follow-up, 이력성 보존)**:
+- 기존 "stats 폴링 주기당 **2회**"는 과소 집계 → 실측 **3중**(StatsPage + StatsCardsSection + Header) + B-1a announcer 폴러 +1 = **폴링 통합 대상 = stats 3중 + announcer 1**. 통합(공유 폴러/Context)은 deferred 유지(8.3 미결, 11주차). 기존 "2회" 문장 덮어쓰기 X, 정정 sub-bullet append(학습 8).
+
+**학습 18 신설 (decisions.md 카테고리 20 보강)**:
+- **학습 18 (PR 웹 머지 후 로컬 main 동기화 필수)**: GitHub 웹 PR squash 머지 → remote main 새 해시 생성 → 로컬 main 미반영. 다음 feature 브랜치 따기 전 `git checkout main && git pull origin main` 강제. 누락 시 squash로 사라진 원본 커밋 위에서 브랜치 갈라져 다음 PR이 이전 PR 커밋 끌고 감.
+- **사건 (2026-06-29 PR #6 꼬임)**: 원인 = PR #5 머지 후 로컬 main 미pull 상태에서 B-1a 브랜치 분기 → PR #6에 PR #5 strict 커밋 끌려옴 + merge commit 생성. 해결 = fast-forward pull로 정상 복구. 교훈 = "git pull 폐지"(동일 로컬 머신) 룰의 **명시적 예외 = PR 웹 머지 직후**.
+
+**github MCP write 인증 이슈 (decisions.md 카테고리 18 반영)**:
+- MCP "connected"여도 write 시 `Bad credentials` 발생 가능(연결 ≠ PAT 유효). 트리거 = 재현 시 PAT 재발급, 우회 = git-native 명령. 본 항목 자체가 이번 갱신 반영 대상.
+
+**학습 적용**:
+- 학습 13 (출처 catch): 적용 — PR #5/#6/#7 해시 + 카테고리 번호를 `git log --oneline` / `git show HEAD:docs/decisions.md` SSoT 직접 대조 후 박음. 리뷰 🔴0/🟡4/🟢6/deferred6 = chunk 인계 수치 그대로 기록(AI 임의 가공 X).
+- 학습 14 (repo 구조 가정 검증): 적용 — 인계 추정 카테고리 번호(8.1 하위 vs 8.3 / 학습 위치 / 폴링 기록 위치) 전부 실측 정정. 폴링 정정 대상은 카테고리 6 아닌 **8.1 follow-up(L146)** 실측 확인.
+- 학습 16 (기존 컨벤션 우선): 적용 — 8.1/8.2 기존 기록 보존 + 폴링 "2회" 문장 덮어쓰기 X(정정 append) + Phase B 잔존 항목 코드 미변경.
+- 학습 17 (유도리 + AI도 catch): 적용 — Phase B → 8.3 신설 판단을 실제 구조(8.1=날짜 chunk / 8.2=기술스택) 근거로 결정(임의 X), 신규 최상위 카테고리 33 불필요 판단으로 구조 보존. 날짜 정량 데드라인 미박음.
+
+**관련 카테고리**: 8 (8.1 / 8.2 / 8.3) / 18 / 20
+**관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md`, 문서 단독 변경 = 카테고리 20 main 직접 push) + Phase B = **PR #5 `56e44b8` / PR #6 `e9b9879` / PR #7 `3408d97`** (`dashboard/` 코드, Squash 머지)

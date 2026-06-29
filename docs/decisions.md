@@ -144,6 +144,7 @@
 - **✅ 2-1차 완료 (2026-06-14, PR #2 `37a92b3`, 브랜치 `feat/server-flask-skeleton` 머지 후 삭제)**: Flask 백엔드 골격 — app factory + Blueprint(`/api/v1`) + 모델 2종(`notifications` / `idempotency_keys` 24h TTL) + 엔드포인트 4종(`detect` / `enrich` / `notifications` / `stats`). 인증 Device/Dashboard Token 분리 + rate limit(device_id 5초 1회) + idempotency + HTTP Status 8종, curl 15종 통과. ML 추론 = mock(실제 YAMNet 11주차), HTTPS/EC2 = 11주차(현재 로컬 http). **JSON 1:1 = `dashboard/src/types/`** (api.ts / notification.ts / stats.ts) — SSoT 단일화 유지. 상세 = 카테고리 6 + 6.1
 - **✅ 2-2차 완료 (2026-06-15, PR #3 `cec9c9b`)**: React mock → 실제 Flask API 연동. `dashboard/src/types/api.ts`에 cursor 메타(`next_cursor` / `has_more`) additive 추가 + mock → 실제 fetch 전환(`apiGet` 공용 헬퍼로 DRY, 폴링 훅 무수정) + Vite dev proxy로 CORS 우회. env `VITE_API_BASE_URL=/api/v1`(상대 경로, proxy 경유). 미니 E2E 전항목 통과: seed 11건 렌더 + detect 오늘 주입 → stats 0→1 반영 + CORS 0건 + 폴링 3초 + 콘솔 0 에러 + tsc/eslint/build 통과. CORS 처리 상세 = 카테고리 6
 - **follow-up (stats 폴링 중복, 2026-06-15 발굴)**: 2-2차 연동 후 `/stats`가 폴링 주기당 2회 호출됨 — `useStats`(통계 섹션) + `useDevice`(헤더 디바이스 상태)가 독립 폴러로 각자 호출. GET은 rate-limit 제외 + 3초 주기라 현재 안전하나, 공유 폴러 or Context 통합 권고(추후 폴리시 or 11주차). 학습 16(기존 컨벤션 우선)에 따라 이번엔 미변경
+  - **정정 (2026-06-29 PoC-(19) 베테랑 리뷰 실측, 위 "2회"는 과소 집계 — 이력성 보존, 덮어쓰기 X)**: `/stats` 폴러 실측 = **3중** (StatsPage + StatsCardsSection + Header 독립 폴러). 추가로 Phase B B-1a(aria-live announce)가 notifications **announcer 폴러 +1** 신설 → **폴링 통합 대상 = stats 3중 + announcer 1**. 통합(공유 폴러/Context)은 여전히 deferred (카테고리 8.3 미결, 11주차 or 폴리시). 학습 16 정합 미변경 유지.
 
 **Phase 1 → Phase 2 전환 트리거** (학부생 자율, 학습 17 정합 — 날짜 박지 X):
 - Phase 1 React UI 골격 + mock 데이터 완성도 학부생 자체 평가 후
@@ -182,6 +183,28 @@
 - 컬러 / 타이포 (Pretendard 정량) / 터치 타겟 (44 / 48 / 52 / 56px 단계)
 - 화재경보 강조: `shake` + `pulse-border` 애니메이션 (+ `prefers-reduced-motion` 대응)
 - 디자인 영감: 한국 대중 앱 (카카오톡 / 토스 / 당근) 우선
+
+### 8.3 Phase B 접근성 + 베테랑 리뷰 (2026-06-29 PoC-(19) 신설)
+
+> Phase 2 완료(2-2차, PR #3) 이후 별도 chunk. 웹 대시보드 **베테랑 리뷰(read-only)** + **접근성 3PR(B-0/B-1a/B-1b)** 완결. 8.1/8.2(Phase 1/2 기록) 보존, 본 절은 Phase B 결과 전용.
+
+**B-0 — dashboard tsconfig strict 활성화 (✅ PR #5 `56e44b8` 머지)**:
+- dashboard `tsconfig` strict 모드 활성화 = Phase B 접근성 작업의 타입 안전 토대.
+
+**B-1a — a11y 색상 단독 의존 해소 + aria-live announce (✅ PR #6 `e9b9879` 머지)**:
+- 상태 표시 색상 단독 의존 해소(텍스트/아이콘 병행) + `aria-live` announcer로 폴링 갱신 스크린리더 공지.
+- ※ announcer = notifications 폴러 **1개 신규** → 폴링 통합 대상에 합산 (8.1 follow-up 정정 = stats 3중 + announcer 1).
+- ※ PR #6 머지 시 로컬 main 미동기화로 PR #5 strict 커밋이 끌려오고 merge commit 생성된 사건 → **학습 18 신설 근거**(카테고리 20).
+
+**B-1b — Skip-to-content + 모바일 drawer 포커스 트랩/복원 (✅ PR #7 `3408d97` 머지)**:
+- 본문 바로가기(skip link) + 모바일 drawer 키보드 포커스 트랩 + 닫을 때 트리거로 포커스 복원.
+
+**베테랑 리뷰 결과 (read-only, 본 리뷰 코드 0 수정)**:
+- 🔴 Critical **0건** / 🟡 4건 / 🟢 6건 / **deferred 6건**. 🟡🟢 항목은 Phase B 작업(B-0/B-1a/B-1b)으로 분류·반영.
+- deferred 6건 대표 4건: ① 폴러 통합(stats 3중 + announcer 1 → 공유 폴러/Context) ② Pretendard self-host(현재 번들/CDN 의존) ③ large-text 모드 ④ **SR 실청취 미검증**(코드상 aria 반영했으나 실제 스크린리더 청취 테스트 미수행).
+
+**Phase B 잔존 미착수 (11주차 or 폴리시 — 본 chunk 미변경)**:
+- 폴러 통합 / Pretendard self-host / large-text 모드 / SR 실청취 실측 — 전부 deferred. 학습 16(기존 컨벤션 우선) 정합으로 권고만 박음, 코드 미변경.
 
 ---
 
@@ -514,6 +537,12 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 3. skill 없으면 → MCP 단독 수행 (검색 절차 절대 생략 X)
 4. 활용 MCP: `github` / `context7` / `firecrawl-mcp` / `playwright` / `notion`
 
+### github MCP write 인증 이슈 (2026-06-29 PoC-(19) catch)
+
+- **현상**: MCP "connected" 상태여도 write(PR 생성·파일 push 등) 시 `Bad credentials` 발생 가능 — **MCP 연결 ≠ GitHub PAT 유효**.
+- **트리거**: 다음 write 작업에서 `Bad credentials` 재현 시 → GitHub PAT 재발급.
+- **우회**: git 자체 명령(`git push origin main` 등)으로 대체. 문서 단독 변경은 main 직 push라 git-native로 무손실 대체 가능(카테고리 20).
+
 ### 채팅방 분리 트리거
 - **시점 기반**: chunk 종료 시점
 - **컨텍스트 무게 기반**: 응답 느려지거나 헷갈림
@@ -601,6 +630,10 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 - **코드 변경** (`firmware/` / `dashboard/` / `ml/` / `server/`): **feat 브랜치 + PR 강제**
 - 근거: PR 목적 = 코드 품질 catch (컴파일 / 리뷰). 문서는 충돌·리뷰 불필요 → SSoT 갱신 지연 방지
 - **Squash merge 기본 유지** (완화 X). ※ PR #1(2026-05-28)은 merge commit으로 머지된 1회성 예외 — repo Settings에서 Squash merging 활성화 후 복구 예정 (decisions-log 2026-05-28 참조)
+
+### PR 웹 머지 후 로컬 main 동기화 필수 (2026-06-29 학습 18 신설)
+
+학습 18 (PR 웹 머지 후 로컬 main 동기화 필수): GitHub 웹에서 PR squash 머지 시 remote main에 새 해시 커밋 생성 → 로컬 main 미반영. 다음 feature 브랜치 따기 전 `git checkout main && git pull origin main` 강제. 누락 시 squash로 사라진 원본 커밋 위에서 브랜치가 갈라져 다음 PR이 이전 PR 커밋을 끌고 감(2026-06-29 PR #6 = PR #5 strict 커밋 끌려옴 + merge commit 생성 사례). "git pull 폐지" 룰(동일 로컬 머신)의 명시적 예외 = PR 웹 머지 직후. 정상 복구 = fast-forward pull(rewrite 0).
 
 ### 5/17 종료 시점 액션
 - 본 카테고리 세부 룰 최종 확정
