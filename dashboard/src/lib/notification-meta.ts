@@ -47,12 +47,33 @@ export const PREDICTED_CLASS_ORDER: PredictedClass[] = [
   "fire_alarm",
 ]
 
-// 화재경보 정부 지정 대응 수칙 3종 (decisions.md 카테고리 7 / 26.3 화재경보 진입점)
-export const FIRE_ALARM_GUIDELINES = [
-  "119에 즉시 신고하세요.",
-  "낮은 자세로 대피로를 확보해 이동하세요.",
-  "젖은 수건으로 코와 입을 막으세요.",
-] as const
+// 화재경보 청각장애인 대응 수칙 — decisions.md 카테고리 7.1 확정 4단계 (2026-06-30 PoC-(20)).
+// 도움말 카드 + 카카오 알림(11~14주차) 공용 SSoT. 임의 윤문 금지(확정 카피 ① 그대로).
+export interface FireGuidelineStep {
+  text: string
+  subLines?: string[] // 보조 안내(신고 수단 등) — 들여쓰기 노출
+}
+
+export const FIRE_ALARM_GUIDELINES: FireGuidelineStep[] = [
+  { text: "바로 대피하세요. 끄기·신고보다 대피가 먼저입니다." },
+  {
+    text: "엘리베이터 대신 비상계단으로, 젖은 천으로 입·코를 가리고 낮은 자세로 이동하세요.",
+  },
+  {
+    text: "안전한 곳에 도착한 뒤 119에 신고하세요.",
+    subLines: [
+      "119 영상통화(수어)나 문자로 신고하세요. 음성통화 없이 가능합니다.",
+      "「긴급신고 바로앱」도 사용할 수 있습니다.",
+    ],
+  },
+  {
+    text: "대피가 어려우면 화장실·베란다 창문 쪽으로 이동해, 휴대폰으로 119에 위치를 알리고(영상·문자), 창밖으로 손전등·밝은 천을 흔들며 구조를 기다리세요.",
+  },
+]
+
+// 출처 라벨 (카테고리 7.1 확정 카피 ① 하단 ⓘ 출처 줄)
+export const FIRE_ALARM_SOURCE =
+  "출처: 소방청 「119 안전교육」(청각장애인용) · 119 영상통화 신고(손말이음센터 107)"
 
 // skip_reason 한국어 라벨
 export const SKIP_REASON_LABEL: Record<string, string> = {
