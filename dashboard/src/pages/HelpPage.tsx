@@ -5,6 +5,7 @@ import { useOnboarding } from "@/contexts/OnboardingContext"
 import {
   CLASS_META,
   FIRE_ALARM_GUIDELINES,
+  FIRE_ALARM_SOURCE,
   PREDICTED_CLASS_ORDER,
 } from "@/lib/notification-meta"
 import { cn } from "@/lib/utils"
@@ -74,22 +75,35 @@ export function HelpPage() {
 
       <Card className="border-danger/30">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-h3 text-danger">
+          <CardTitle className="flex items-center gap-2 text-h3 text-danger-deep">
             <TriangleAlert className="h-5 w-5" aria-hidden />
             화재경보가 울리면
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <ol className="space-y-2">
-            {FIRE_ALARM_GUIDELINES.map((guideline, i) => (
-              <li key={guideline} className="flex gap-2 text-body">
+        <CardContent className="space-y-4">
+          <ol className="space-y-3">
+            {FIRE_ALARM_GUIDELINES.map((step, i) => (
+              <li key={step.text} className="flex gap-2 text-body">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-danger text-caption font-bold text-white">
                   {i + 1}
                 </span>
-                <span>{guideline}</span>
+                <div className="space-y-1">
+                  <p>{step.text}</p>
+                  {step.subLines?.map((sub) => (
+                    <p
+                      key={sub}
+                      className="text-caption text-foreground-secondary"
+                    >
+                      → {sub}
+                    </p>
+                  ))}
+                </div>
               </li>
             ))}
           </ol>
+          <p className="text-caption text-foreground-secondary">
+            ⓘ {FIRE_ALARM_SOURCE}
+          </p>
         </CardContent>
       </Card>
 

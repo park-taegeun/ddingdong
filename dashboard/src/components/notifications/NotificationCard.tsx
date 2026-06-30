@@ -48,7 +48,7 @@ export function NotificationCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-start gap-2">
             <div className="min-w-0">
-              <h3 className={cn("text-h3 font-bold", isFire && "text-danger")}>
+              <h3 className={cn("text-h3 font-bold", isFire && "text-danger-deep")}>
                 {meta.label}
               </h3>
               <p className="text-caption text-foreground-secondary tabular-nums">
@@ -94,17 +94,27 @@ export function NotificationCard({
           {/* 화재경보 정부 지정 대응 수칙 3종 */}
           {isFire && (
             <div className="mt-3 rounded-xl bg-danger/10 p-3">
-              <p className="mb-2 flex items-center gap-1.5 text-body font-bold text-danger">
+              <p className="mb-2 flex items-center gap-1.5 text-body font-bold text-danger-deep">
                 <TriangleAlert className="h-4 w-4" aria-hidden />
                 화재 시 대응 수칙
               </p>
               <ol className="space-y-1.5">
-                {FIRE_ALARM_GUIDELINES.map((guideline, i) => (
-                  <li key={guideline} className="flex gap-2 text-body">
+                {FIRE_ALARM_GUIDELINES.map((step, i) => (
+                  <li key={step.text} className="flex gap-2 text-body">
                     <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-danger text-caption font-bold text-white">
                       {i + 1}
                     </span>
-                    <span>{guideline}</span>
+                    <div className="space-y-0.5">
+                      <span>{step.text}</span>
+                      {step.subLines?.map((sub) => (
+                        <p
+                          key={sub}
+                          className="text-caption text-foreground-secondary"
+                        >
+                          → {sub}
+                        </p>
+                      ))}
+                    </div>
                   </li>
                 ))}
               </ol>
