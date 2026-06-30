@@ -6,6 +6,8 @@ export type StatsPeriod = "today"
 export type DeviceStatus = "online" | "offline" | "processing"
 export type TokenStatus = "valid" | "expiring" | "expired"
 export type ServiceStatus = "ok" | "degraded" | "error"
+// 기기 신호 세기 — 빈 상태 "시스템 건강" 카드 3지표 중 하나. 실측 = 11주차 센서 연동.
+export type SignalStrength = "strong" | "weak" | "none"
 
 export interface StatsSummary {
   total_detections: number
@@ -42,6 +44,7 @@ export interface SkipReasonCounts {
 export interface SystemHealth {
   device_last_seen_at: string
   device_status: DeviceStatus
+  signal_strength: SignalStrength
   kakao_token_status: TokenStatus
   kakao_token_expires_in_minutes: number
   clova_api_status: ServiceStatus

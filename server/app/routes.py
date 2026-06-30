@@ -270,11 +270,15 @@ def _build_stats(rows, start_kst, end_kst):
         },
         "skip_reasons": skip_reasons,
         # system_health: device_last_seen 만 실데이터, 외부 연동값은 11~14주차 전까지 mock
+        # device_status/signal_strength = 기기 liveness·신호(센서 heartbeat) → 실연동 11주차.
+        # 감지 0건(조용한 하루)에도 기기는 살아있으므로 detection 유무와 분리해 online mock 고정
+        # (빈 상태 "시스템 정상" 안심 카드 전제). 11주차에 실제 heartbeat 로 대체.
         "system_health": {
             "device_last_seen_at": kst_now_iso()
             if last_seen is None
             else to_kst_iso(last_seen),
-            "device_status": "online" if last_seen is not None else "offline",
+            "device_status": "online",
+            "signal_strength": "strong",
             "kakao_token_status": "valid",
             "kakao_token_expires_in_minutes": 240,
             "clova_api_status": "ok",

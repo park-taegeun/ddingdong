@@ -203,6 +203,7 @@ export const MOCK_STATS: StatsResponse = {
   system_health: {
     device_last_seen_at: "2026-05-28T16:04:50+09:00",
     device_status: "online",
+    signal_strength: "strong",
     kakao_token_status: "valid",
     kakao_token_expires_in_minutes: 240,
     clova_api_status: "ok",
