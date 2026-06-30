@@ -788,3 +788,32 @@
 
 **관련 카테고리**: 7 (7.1 신설) / 3 (화재경보 ToF 우회) / 26 (시연 시나리오)
 **관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md`, 문서 단독 변경 = 카테고리 20 main 직접 push)
+
+---
+
+## 2026-06-30 (화) — PoC-(20) Phase B 페르소나 정합 (웹 대시보드 라이트/건강카드 + 화재 도움말 반영, PR #8·#9)
+
+> 동일 날짜 선행 entry(화재 수칙 확정 `223d000`)에 이어진 **B chunk 웹 대시보드 페르소나 정합** 작업. A 화재 수칙은 위 entry 참조(재기술 X).
+
+**배경**: PoC-(20) B chunk — 5060 청각장애인 페르소나 직격 관점에서 웹 대시보드 정합. 산출 코드 2 PR + docs 반영.
+
+**작업 결과 (카테고리 8.3 B-2~B-4 append 반영)**:
+- **PR #8 `a615162`(feat) → `3544db4`(머지) — 라이트 테마 기본 전환**: 다크 기본 → 라이트 기본(다크 토글+localStorage opt-in 보존). 위임 "다크 위주" 가설 = `:root` 라이트 토큰 이미 완비로 **거짓 판명**(학습 17 catch). 폰트 토큰 상향(body 16→17 / caption 14→15) + footer dev cruft 제거 + 연결배지 3구분(색+shape+텍스트, WCAG 1.4.1).
+- **PR #9 `ca61e1b` — 시스템 건강 카드 + 화재 도움말 반영 + 대비 보정**: 빈 화면 에러카드 → "시스템 정상 작동" 안심 카드(3지표). 타입 SSoT ㄴ안(`SystemHealth` 재사용 + `signal_strength` additive, 신규 필드 난립 X — 학습 16/29). device_status mock=online 고정(실 heartbeat 11주차). 도움말 화재 카드 = 7.1 확정 카피 ① 4단계 **verbatim 교체**. 화재 텍스트 대비 `#FF4444`(3.0:1) → `#CC0000`(~5.2:1).
+
+**페르소나 그물 작동 (학습 17 = AI도 catch 대상)**:
+- 화재 카피 페르소나 누수 4건 정정(외치기 제외 / 119 음성신고 전제 제거 / 신고수단 확정수단 우선 / 구조요청 시각·문자 구체화) — 선행 entry에서 회수.
+- AI 위임 가정 2회 catch: ① "다크 위주" 테마 가설(실측 거짓) ② 타입 신규 필드 가정 → 기존 `SystemHealth` 재사용으로 교정.
+
+**잔존(여전히 deferred — 본 PR로 미해소)**: 폴러 통합(stats 3중 + announcer 1 + **건강카드 useDevice +1**) / Pretendard self-host / large-text / SR 실청취 / (신규)화재 번호뱃지 대비 ~3:1 발표 전 실측 권고. → 11주차 or 폴리시.
+
+**학습 적용**:
+- 학습 14 (카테고리 번호 사전 검증): 적용 — 8.3/7.1 + commit hash(`223d000`/`a615162`/`3544db4`/`ca61e1b`) `git show`·`git log` 실측 대조 후 인용.
+- 학습 16/29 (기존 컨벤션·타입 우선): 적용 — `SystemHealth` 재사용 + additive 필드.
+- 학습 17 (AI도 catch 대상): 적용 — 위임 가정 2건 실측 반증.
+- 학습 18 (웹 머지 후 pull): 적용 — PR #8/#9 머지 후 2회 정상 fast-forward.
+
+**비범위**: 노션/지침 동기화 = 별도 Set(2·3) 이월. deferred 항목 상태 변경 없음(미착수 유지).
+
+**관련 카테고리**: 8 (8.3 B-2~B-4 append) / 7 (7.1 도움말 반영 한 줄 보강) / 20 (docs-only main 직접 push)
+**관련 commit**: 코드 PR #8 `a615162`/`3544db4` · PR #9 `ca61e1b` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)

@@ -114,6 +114,8 @@
 
 위 "화재경보 알림 형식"의 **정부 지정 대응 수칙 본문을 확정**. 1차 출처 조사 → 페르소나 누수 3건 정정 → 베테랑 검증 통과(2026-06-30). 본 수칙 = **도움말 카드(B 단계 교체)** + **카카오 알림 본문(11~14주차)** 공용 SSoT.
 
+> **도움말 화면 반영 완료** (PR #9 `ca61e1b`) — 구 카피 → 아래 **확정 카피 ① 4단계 verbatim** 교체(카테고리 8.3 B-3·B-4 참조). 카카오 알림 본문(확정 카피 ②, 11~14주차)은 **미반영 유지**.
+
 **핵심 전환 결정 (결함 3건 교정)**:
 - ① "119 즉시 신고" → **"즉시 대피, 안전 확보 후 신고"** (음성통화 전제 제거 — 청각장애인은 음성 신고 불가).
 - ② **대피-신고 순서 역전 교정** (공식 = "불 끄기·신고보다 대피가 우선").
@@ -253,6 +255,22 @@
 
 **Phase B 잔존 미착수 (11주차 or 폴리시 — 본 chunk 미변경)**:
 - 폴러 통합 / Pretendard self-host / large-text 모드 / SR 실청취 실측 — 전부 deferred. 학습 16(기존 컨벤션 우선) 정합으로 권고만 박음, 코드 미변경.
+
+**B-2 ~ B-4 — 페르소나 정합 (2026-06-30 PoC-(20), 웹 대시보드 5060 페르소나 직격)**:
+
+- **B-2 라이트 테마 기본 전환 (✅ PR #8 `a615162` feat, 머지 `3544db4`)**: 다크 기본 → **라이트 기본**(SettingsContext default 전환, 다크는 토글+localStorage opt-in **보존** — 통째 제거 X). ※ 위임 "다크 위주" 가설 = 실측상 `:root` 라이트 토큰 **이미 완비**로 거짓 판명(학습 17 catch). 폰트 토큰 상향(`--text-body` 16→17 / `--text-caption` 14→15). footer dev cruft("Phase 1·v0.1") 제거. 연결배지 3구분(online=초록 / offline=빨강 / processing=노랑 — 색+shape+텍스트, WCAG 1.4.1). 근거: 타겟 5060 노안 가독성.
+- **B-3·B-4 시스템 건강 카드 + 화재 카피 반영 + 대비 보정 (✅ PR #9 `ca61e1b` 머지)**:
+  - 빈 화면 에러카드 → **"시스템 정상 작동" 안심 카드**(SystemHealthSummaryCard, 3지표 기기/마지막감지/신호).
+  - **타입 SSoT ㄴ안**(학습 16/29): 기존 `SystemHealth`(device_status/device_last_seen_at 기보유) + `signal_strength` **additive**(신규 필드 난립 X). 서버 mock + mock-data 1:1.
+  - ※ `device_status` mock=online 고정(빈 상태 안심 전제, **실 heartbeat 연동 11주차**). 빈 vs 에러 구분 보존(emptySlot = 정상-빈만 대체, loading/error 무영향).
+  - 도움말 화재 카드 = **7.1 확정 카피 ① 4단계 verbatim 교체**(7.1 → 도움말 화면 반영 완결).
+  - 화재 텍스트 대비 보정(`#FF4444` 3.0:1 → `#CC0000` ~5.2:1, salience fill `#FF4444` 유지).
+
+**잔존(여전히 deferred — B-2~B-4로 미해소, 갱신)**:
+- 폴러 통합 — **카운트 갱신**: stats 3중 + announcer 1 + **건강카드 useDevice +1**. / Pretendard self-host / large-text 모드 / SR 실청취 실측. → 11주차 or 폴리시.
+- (신규) **화재 번호뱃지 대비** ~3:1(큰 글씨라 WCAG 1.4.3 large-text 3:1 충족 추정) → 발표 전 실측 권고. 과한 단정 금지.
+
+**GitHub Flow**: 코드 PR #8/#9 = 8~9번째 사이클(feat 브랜치 + Squash 머지 + self-approve). 학습 18(웹 머지 후 pull) 2회 정상 fast-forward.
 
 ---
 
