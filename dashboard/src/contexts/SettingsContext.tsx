@@ -23,9 +23,9 @@ const STORAGE_KEY = "ddingdong-settings"
 
 function getInitialSettings(): Settings {
   const fallback: Settings = {
-    theme: window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light",
+    // 라이트 기본 — 5060 노안 가독성 정석(PoC-(20) 시안 합의). 시스템 다크 추종 대신 라이트 고정,
+    // 다크는 Header 토글 opt-in + localStorage 영속으로 유지(통째 제거 X).
+    theme: "light",
     largeText: false,
     reduceMotion: false,
   }

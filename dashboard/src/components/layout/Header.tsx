@@ -1,5 +1,6 @@
 import type { Ref } from "react"
-import { Menu, Moon, Sun } from "lucide-react"
+import { Menu, Moon, RefreshCw, Sun, Wifi, WifiOff } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
 import { useSettings } from "@/contexts/SettingsContext"
 import { useDevice } from "@/hooks/useDevice"
 import { cn } from "@/lib/utils"
@@ -10,15 +11,29 @@ interface HeaderProps {
   menuButtonRef?: Ref<HTMLButtonElement>
 }
 
+// 연결 상태 3구분 — 기존 상태값(isOnline / health)만으로 파생(새 상태 로직 X).
+// 색 + 아이콘 shape + 텍스트 3중 표현(WCAG 1.4.1 색 단독 의존 해소).
+function deriveConnection(
+  isOnline: boolean,
+  hasHealth: boolean,
+): { label: string; Icon: LucideIcon; colorClass: string } {
+  if (isOnline) {
+    return { label: "디바이스 온라인", Icon: Wifi, colorClass: "text-status-online" }
+  }
+  if (hasHealth) {
+    return { label: "디바이스 오프라인", Icon: WifiOff, colorClass: "text-status-failed" }
+  }
+  return { label: "연결 확인 중", Icon: RefreshCw, colorClass: "text-status-processing" }
+}
+
 export function Header({ onMenuClick, menuButtonRef }: HeaderProps) {
   const { isOnline, health } = useDevice()
   const { theme, toggleTheme } = useSettings()
 
-  const deviceLabel = isOnline
-    ? "디바이스 온라인"
-    : health
-      ? "디바이스 오프라인"
-      : "연결 확인 중"
+  const { label: deviceLabel, Icon: ConnIcon, colorClass } = deriveConnection(
+    isOnline,
+    health !== null,
+  )
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-background/95 px-4 backdrop-blur lg:px-6">
@@ -36,15 +51,10 @@ export function Header({ onMenuClick, menuButtonRef }: HeaderProps) {
 
       <div className="ml-auto flex items-center gap-2">
         <div className="flex h-touch items-center gap-2 rounded-xl bg-background-sub px-3">
-          <span
-            className={cn(
-              "h-2.5 w-2.5 rounded-full",
-              isOnline ? "bg-status-online" : "bg-status-offline",
-            )}
-            aria-hidden
-          />
-          {/* sm 미만에서도 SR이 상태를 읽도록 sr-only로 a11y 트리 상주(시각 표현은 동일).
-              색상(dot) 단독 의존 해소 — WCAG 1.4.1. */}
+          {/* 아이콘 shape가 상태별로 달라(Wifi/WifiOff/Refresh) 색 외에 형태로도 구분 — WCAG 1.4.1. */}
+          <ConnIcon className={cn("h-4 w-4 shrink-0", colorClass)} aria-hidden />
+          {/* sm 미만에서도 SR이 상태를 읽도록 sr-only로 a11y 트리 상주(시각 표현은 아이콘).
+              색상 단독 의존 해소 — 텍스트 라벨 + 아이콘 shape 병행. */}
           <span className="sr-only text-caption font-medium text-foreground-secondary sm:not-sr-only">
             {deviceLabel}
           </span>

@@ -52,13 +52,14 @@
   --color-status-failed: var(--status-failed);
   --color-status-offline: var(--status-offline);
 
-  /* 타이포 */
+  /* 타이포 — 5060 노안 기준 본문 베이스 한 단계 상향(body 16→17 / caption 14→15).
+     계층 보존: h3 18 > body 17 > caption 15 (토큰 레벨, 개별 하드코딩 없음 — DRY). */
   --text-display: 32px;
   --text-h1: 24px;
   --text-h2: 20px;
   --text-h3: 18px;
-  --text-body: 16px;
-  --text-caption: 14px;
+  --text-body: 17px;
+  --text-caption: 15px;
 
   /* 간격 (50-60대 터치) */
   --spacing-touch: 44px;
