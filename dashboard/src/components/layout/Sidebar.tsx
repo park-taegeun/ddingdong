@@ -54,7 +54,6 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         <p className="text-caption text-foreground-secondary">
           청각장애인 알림 시스템
         </p>
-        <p className="text-caption text-foreground-secondary">Phase 1 · v0.1</p>
       </div>
     </div>
   )
