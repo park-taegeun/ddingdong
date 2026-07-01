@@ -853,3 +853,24 @@
 
 **관련 카테고리**: 33 (신설) / 5 (5.1 append) / 4 (fine-tuning 필요성 수치 확정 연동) / 20 (docs-only main 직접 push)
 **관련 commit**: 코드 PR #10 `de05c7e` · #11 `adbf349` · #12 `cd9c16e` · #13 `01715aa` · #14 `749c4a6` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
+
+---
+
+## 2026-07-01 (수) Set 1 — SavedModel export 버그 해결 반영 (33.3-③ 클로즈 + 근본원인 정정)
+
+> PoC-(22)에서 미결 33.3-③(SavedModel export untracked resource 버그) 해결. PR #15(`feat/ml-savedmodel-export`) 머지 완료 + 학부생 로컬 실 YAMNet export + reload 추론 검증 통과 → 본 entry로 SSoT 반영.
+
+**PR #15 머지 (`6d9411e`)**: `ml/training/export.py` 독립 엔트리포인트 신설(`python -m ml.training.export`) — **재학습 없이** `best.keras`(head) + frozen YAMNet 합성 → 서빙 SavedModel(`ml/models/yamnet/inference_savedmodel/`, git 미커밋) 산출. 서빙 시그니처 = 입력 `waveform (1, None) float32`(배치 1 고정·단일 클립) → 출력 `(1, 3) float32`(라벨 순서 = `CLASSES` 상속). 방식 = `tf.saved_model.save` → **Keras 3 `model.export()`** 전환으로 미추적 리소스 해소.
+
+**33.3-③ 클로즈 (미결 3건 → 2건)**: ③ SavedModel export 버그 → **✅ 해결(2026-07-01 PoC-(22), PR #15)**. 항목은 이력 보존(학습 8 원본 보존)으로 삭제 없이 해결 표기(strikethrough + 해결 주석). 미결 카운트 3→2 정합(잔여 = ① pitch shift 대상 ② SpecAugment 배선).
+
+**근본원인 정정 (학습 19 정합)**: 당초 전제("frozen hub backbone 변수 미추적")는 방향은 맞았으나 정확한 메커니즘은 **`build_inference_model`(model.py)이 raw `hub.load()` 객체를 Keras `Lambda`(`yamnet_backbone`) 클로저로 캡처 → Lambda가 클로저 trackable을 객체 그래프에 미등록**. `model.export()`의 `ExportArchive`가 서빙 `tf.function`을 트레이스하며 캡처 리소스를 함께 추적·직렬화해 해소. 진단 재검증 후 실측 메커니즘 반영.
+
+**학습 적용**:
+- 학습 18/19 (진단 재검증): 적용 — 위임 프롬프트가 기재한 입력 시그니처 `(None, None)`를 코드(`export.py`/`model.py`) 실측으로 재검증 → 실제 `tf.keras.Input(shape=(None,), batch_size=1)` = `(1, None)`로 **정정 후 기재**(코드 SSoT 우선).
+- 학습 17 (인계 catch): 적용 — 33.2/33.3 실제 문구를 `git show HEAD:docs/decisions.md`로 실측 인용 후 diff 적용, 카테고리 33 ↔ 학습 19 번호 혼동 방지.
+
+**비범위**: 카테고리 33.1/33.4/5.1/1~32 무수정, ml 코드 무수정(문서 단독). 노션/지침 동기화 = 별도 Set 이월.
+
+**관련 카테고리**: 33 (33.2 체크포인트 정정 + 33.3-③ 클로즈) / 20 (docs-only main 직접 push)
+**관련 commit**: 코드 PR #15 `6d9411e` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
