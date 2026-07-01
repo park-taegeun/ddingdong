@@ -123,9 +123,102 @@ def test_empty_and_ultrashort_clips_skipped():
         return stats, guard
 
 
+def _make_piece_dataset(
+    root: Path, sources_per_class: int = 4, pieces_per_source: int = 3, seed: int = 7
+) -> Path:
+    """원본(source) 1개당 조각(piece) N개 구조의 더미 생성.
+
+    파일명 = f"{cls}_src{s:02d}_30.0_40.0_{idx:07d}.wav" — 조각 인덱스는 맨 끝 7자리
+    (_0000000/_0003000/_0006000). 중간에 점(.) 든 좌표(_30.0_40.0)를 넣어 실데이터
+    (AudioSet)와 source_key 파싱(끝 앵커·Path 함정)을 관통 검증.
+    """
+    rng = np.random.default_rng(seed)
+    freq = {"doorbell": 880.0, "knock": 220.0, "fire_alarm": 3000.0}
+    paths = config.resolve_paths(root)
+    for cls in config.CLASSES:
+        for s in range(sources_per_class):
+            skey = f"{cls}_src{s:02d}_30.0_40.0"
+            for p in range(pieces_per_source):
+                dur = 0.6 + 0.3 * float(rng.random())
+                n = int(dur * config.SAMPLE_RATE)
+                t = np.arange(n) / config.SAMPLE_RATE
+                y = (0.6 * np.sin(2 * np.pi * freq[cls] * t)
+                     + 0.05 * rng.standard_normal(n)).astype(np.float32)
+                idx = p * 3000  # 0/3000/6000 → _0000000/_0003000/_0006000
+                save_wav(paths.clips / cls / f"{skey}_{idx:07d}.wav", y)
+    return root
+
+
+def test_source_group_split_no_scatter():
+    """★ 회귀 가드 — data leakage fix: 원본(source) 단위 그룹 분할.
+
+    같은 원본의 조각 3개가 절대 쪼개지지 않고 한 split 에 통째 들어가는지 +
+    split 조기 무결성 assert + 05 완주 + stem 누수가드 통과를 검증.
+    """
+    SPC, PPS = 4, 3  # sources_per_class, pieces_per_source
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _make_piece_dataset(Path(tmp), sources_per_class=SPC, pieces_per_source=PPS)
+        paths, final_counts, guard = _run_pipeline(root)
+
+        rows = split.load_split_manifest(paths)
+
+        # 1) source_key 컬럼 존재 + 파싱 정확(맨 끝 7자리만 제거, 점/앵커 보존)
+        for r in rows:
+            assert r["source_key"] == config.source_key(r["stem"])
+            assert r["source_key"] + "_" in r["stem"] + "_"  # source_key 는 stem 의 접두
+        # 대표 매핑 직접 확인
+        assert config.source_key("doorbell_src00_30.0_40.0_0003000") == \
+            "doorbell_src00_30.0_40.0"
+
+        # 2) ★ 핵심: 어떤 (class, source) 도 2개 이상 split 에 흩어지지 않음
+        split_of = split.assert_source_integrity(rows)  # 위반 시 SourceSplitError
+        # 조각 단위로도 재확인 — source 별 split 집합 == 1
+        by_src: dict[tuple[str, str], set[str]] = {}
+        for r in rows:
+            by_src.setdefault((r["class"], r["source_key"]), set()).add(r["split"])
+        for key, splits in by_src.items():
+            assert len(splits) == 1, f"source {key} 가 여러 split 에 흩어짐: {splits}"
+
+        # 3) 클래스별 source 개수 == SPC, 조각 총 개수 == SPC*PPS
+        for cls in config.CLASSES:
+            cls_srcs = {r["source_key"] for r in rows if r["class"] == cls}
+            cls_clips = [r for r in rows if r["class"] == cls]
+            assert len(cls_srcs) == SPC, f"{cls} source 개수"
+            assert len(cls_clips) == SPC * PPS, f"{cls} 조각 총 개수"
+            # 각 source 는 정확히 PPS 조각
+            for sk in cls_srcs:
+                n_pieces = sum(1 for r in cls_clips if r["source_key"] == sk)
+                assert n_pieces == PPS, f"{sk} 조각 수 {n_pieces}≠{PPS}"
+
+        # 4) train source 집합 ∩ (val∪test source 집합) = 공집합 (Step 4 의미 직접 확인)
+        train_src = {k for k, s in split_of.items() if s == "train"}
+        holdout_src = {k for k, s in split_of.items() if s != "train"}
+        assert not (train_src & holdout_src), "train source 가 holdout 과 겹침"
+
+        # 5) 증강은 train 조각에만 — holdout stem 은 03 에 없음(누수 0)
+        train_stems = {r["stem"] for r in rows if r["split"] == "train"}
+        holdout_stems = {r["stem"] for r in rows if r["split"] != "train"}
+        aug_base = set()
+        for cls in config.CLASSES:
+            for a in iter_audio_files(paths.augmented / cls):
+                aug_base.add(augment.base_stem(a.name))
+        assert aug_base <= train_stems, "train 밖 조각이 증강됨"
+        assert not (aug_base & holdout_stems), "val/test 조각이 증강됨(누수)"
+
+        # 6) 05 완주 + stem 누수가드 통과(이중)
+        assert guard["train"] > 0 and guard["val"] >= 0 and guard["test"] >= 0
+        return final_counts, guard, len(by_src)
+
+
 def _main() -> int:
     counts, guard = test_pipeline_end_to_end()
     print("PASS — test_pipeline_end_to_end")
+    scounts, sguard, n_src = test_source_group_split_no_scatter()
+    print(f"PASS — test_source_group_split_no_scatter (원본 {n_src}개, 미분할·누수0)")
+    for split_name in ("train", "val", "test"):
+        row = scounts[split_name]
+        print(f"  {split_name:<5} " + " ".join(f"{c}={row[c]}" for c in config.CLASSES)
+              + f"  total={sum(row.values())}")
     stats, eguard = test_empty_and_ultrashort_clips_skipped()
     fa = stats["fire_alarm"]
     print("PASS — test_empty_and_ultrashort_clips_skipped")
