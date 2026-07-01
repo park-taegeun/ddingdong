@@ -817,3 +817,39 @@
 
 **관련 카테고리**: 8 (8.3 B-2~B-4 append) / 7 (7.1 도움말 반영 한 줄 보강) / 20 (docs-only main 직접 push)
 **관련 commit**: 코드 PR #8 `a615162`/`3544db4` · PR #9 `ca61e1b` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
+
+---
+
+## 2026-07-01 (수) — ML 크리티컬 패스 선작업: dataset 파이프라인 + 4대 버그 fix + YAMNet 예비 학습 성공 (카테고리 33 신설 + 5.1 append + 학습 19 신설)
+
+> 8~10주차 ML fine-tuning 크리티컬 패스 **선작업** 대량 진행. 코드 5 PR(#10~#14) 머지 완료 → 학부생 로컬 예비 학습 성공(test 검증) → 본 entry로 SSoT 반영. 실 파이프라인·학습 = 학부생 로컬(데이터셋 EPERM), repo 안은 합성 더미 관통 검증만.
+
+**배경**: 2026-06-30(HEAD `978af68`, Phase B 완결) ~ 2026-07-01 chunk. ML 데이터셋 파이프라인 부재 → 8주차 fine-tuning 진입 전 크리티컬 패스 선작업으로 착수.
+
+**코드 작업 결과 (5 PR Squash 머지, 카테고리 33.1~33.2 반영)**:
+- **PR #10 `de05c7e` — 파이프라인 구축(`ml/pipeline`)**: 01_clips(2,798) → 02 preprocess → 파일단위 split → 03 augment(train만) → 05 조립 + 누수 guards. 원커맨드 `run_all` + manifest.
+- **PR #11 `adbf349` — 빈·초단파 클립 가드**: fire_alarm 길이-0 wav 6개(AI Hub S_103)가 augment FFT 크래시 → `MIN_DURATION_SEC=0.1` skip(1차) + augment 진입 가드(2차). 1648→1642. 원본 무수정.
+- **PR #12 `cd9c16e` — 원본(source) 단위 group split**: 조각(`_\d{7}$`) 흩어짐 = data leakage → 원본 단위 통째 배정 + 조기 무결성 assert. 누수가드 정상 검출 사건이 근거.
+- **PR #13 `01715aa` — YAMNet 학습 골격(`ml/training`) + 05 auto-clean**: frozen backbone + head(131,587 trainable) transfer learning + class_weight balanced 자동 + assemble 05 재생성 전 auto-clean(stale 16797 잔여물 제거).
+- **PR #14 `749c4a6` — 02/03 stale auto-clean (학습 19 근거)**: 빈클립 05 부활 재발 → **당초 가설(split이 01 읽음) = git log -L로 no-op 반증** → 진짜 원인(02/03 clean 부재) 재확정 → 05 idiom을 02/03에 일반화.
+
+**예비 학습 성공 (2026-07-01, py3.11+TF2.16, CPU, 카테고리 33.2)**:
+- early stopping(best epoch 18). **val_accuracy 0.902 / val_macro_f1 0.856**.
+- **test(n=424, 미사용): accuracy 0.887 / macro_f1 0.848** — doorbell f1 0.736 / knock 0.881 / fire_alarm 0.927.
+- pre-trained Top-1(초30/노40/화20%) 대비 대폭 상승 → 카테고리 4 fine-tuning 필요성 수치 확정.
+- confusion: `doorbell→fire_alarm` 오분류 10건(최다, doorbell 최소 클래스) → 8주차 직접 녹음 보강 예정. **안전 방향 편향**(역방향 화재 놓침 8건뿐).
+- 05 실측 배분: **train 11,586 / val 437 / test 424**(계획값과 다름 = source split + train augment + 빈6 제외, 카테고리 5.1).
+
+**미결 3건 등록 (카테고리 33.3)**: ① pitch shift 대상(`KOREAN_SOURCE_MARKERS` 빈 상태, 8주차 전) ② SpecAugment(hub embedding 모드 미적용, logmel 배선 남음, 발표 전) ③ SavedModel export 버그(untracked resource, 11주차 배포 전).
+
+**학습 19 신설 (카테고리 33.4)**: **근본원인 진단 재검증** — 위임의 근본원인 진단(가설)도 코드 SSoT로 재검증, no-op이면 맹목 적용 금지 후 pivot. 학습 17(AI도 catch 대상) 확장. ※ MCP가 "학습 18"로 칭한 번호 충돌을 **학습 19로 정정**(SSoT 학습 18 = PR 웹 머지 후 pull, 별개).
+
+**학습 적용**:
+- 학습 14 (카테고리 번호 사전 검증): 적용 — `git show HEAD:docs/decisions.md | grep "^## 카테고리"` 실측(최신=32 → 신규 33 확정) 후 append.
+- 학습 17 (AI도 catch 대상): 적용 — PR #10~#14 매핑을 GitHub API 실측 대조(#11/#12 커밋 subject `(#N)` 미표기 → API로 PR 번호 확정).
+- 학습 19 (진단 재검증): 본 chunk에서 신설 + 자기 적용(PR #14 no-op 반증 사례).
+
+**비범위**: 노션/지침 동기화 = 별도 Set 이월. deferred 항목(폴러 통합 등) 상태 무변경.
+
+**관련 카테고리**: 33 (신설) / 5 (5.1 append) / 4 (fine-tuning 필요성 수치 확정 연동) / 20 (docs-only main 직접 push)
+**관련 commit**: 코드 PR #10 `de05c7e` · #11 `adbf349` · #12 `cd9c16e` · #13 `01715aa` · #14 `749c4a6` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
