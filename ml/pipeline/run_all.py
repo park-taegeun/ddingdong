@@ -30,7 +30,7 @@ def _print_summary(final_counts: dict[str, dict[str, int]], guard: dict[str, int
           f"train={guard['train']} val={guard['val']} test={guard['test']} (겹침 0)")
 
 
-def run(paths: Paths) -> dict[str, dict[str, int]]:
+def run(paths: Paths, clean: bool = True) -> dict[str, dict[str, int]]:
     log = logging.getLogger("ml.pipeline")
     log.info("DATA_ROOT = %s", paths.root)
 
@@ -43,6 +43,9 @@ def run(paths: Paths) -> dict[str, dict[str, int]]:
     preprocess.preprocess(paths)
     split.split_dataset(paths)
     augment.augment(paths)
+    if clean:
+        # 05 재생성 전 기존 train/val/test 를 비워 stale 중첩 방지(--no-clean 로 opt-out).
+        assemble.clean_final(paths)
     final_counts = assemble.assemble(paths)
     guard = assert_no_leakage(assemble.load_final_manifest(paths))
     _print_summary(final_counts, guard)
@@ -56,13 +59,17 @@ def main(argv: list[str] | None = None) -> int:
         help="데이터 루트(01_clips 상위). 미지정 시 DDINGDONG_DATA_ROOT env 또는 기본 경로.",
     )
     parser.add_argument("--quiet", action="store_true", help="INFO 로그 억제")
+    parser.add_argument(
+        "--no-clean", action="store_true",
+        help="05_final_dataset 재생성 전 auto-clean 비활성(기본은 stale 방지 위해 clean).",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.WARNING if args.quiet else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
     )
-    run(config.resolve_paths(args.data_root))
+    run(config.resolve_paths(args.data_root), clean=not args.no_clean)
     return 0
 
 

@@ -45,6 +45,9 @@ ml/data/
 ml/models/
 *.tflite
 *.h5
+# 학습 체크포인트/추론 SavedModel (코드/config/README 만 push, 가중치 커밋 0)
+*.keras
+saved_model.pb
 
 # === ML 오디오 파일 (git 커밋 0 — 코드/config/manifest 스키마만 push) ===
 *.wav
