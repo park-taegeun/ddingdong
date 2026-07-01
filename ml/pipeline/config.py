@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -82,11 +83,36 @@ SPECAUGMENT: dict[str, object] = {
 SAMPLE_WEIGHT_RANGE: tuple[float, float] = (1.5, 2.0)  # 한국 환경음 가중
 
 # --------------------------------------------------------------------------
-# 분할 (카테고리 5: 파일 단위 필수 — data leakage 방지)
-# 계획 배분 train1954/val434/test410 은 참고값. 실제는 비율 + 재현 seed.
+# 분할 (카테고리 5: "파일 단위 분할, data leakage 방지")
+#   ★ 실제 요구 = 원본(source) 단위 그룹 분할. 한 원본 오디오를 3초 간격으로 자른
+#     조각(piece) 클립이 다수 존재(파일 stem 끝에 `_`+7자리 조각 인덱스: _0000000,
+#     _0003000, ...). 같은 원본의 조각이 train/val/test 로 흩어지면 leakage → 반드시
+#     원본 단위로 통째 배정해야 "파일 단위 분할, leakage 방지"의 실제 의도를 충족.
+#   계획 배분 train1954/val434/test410 은 참고값. 실제는 비율 + 재현 seed.
 # --------------------------------------------------------------------------
 SPLIT_RATIO: tuple[float, float, float] = (0.70, 0.15, 0.15)  # train / val / test
 SEED: int = 42
+
+# 조각(piece) suffix 파싱 규칙 — 원본(source) 단위 그룹 분할의 핵심(매직넘버/정규식 금지).
+#   규칙: 파일 stem 맨 끝의 `_` + 7자리 조각 인덱스(`_\d{7}$`) 하나만 제거한 나머지 = source key.
+#   ★ 끝 앵커($) 필수 — 회귀 위험 최상위: 중간 숫자 블록(AI Hub `..._S_103_C_001_0001_...`)
+#     이나 소수점 좌표(AudioSet `_30.0_40.0`)를 절대 건드리지 말고, 맨 끝 조각 인덱스
+#     "딱 하나"만 제거한다.
+PIECE_SUFFIX_PATTERN: re.Pattern[str] = re.compile(r"_\d{7}$")
+
+
+def source_key(stem: str) -> str:
+    """파일 stem → 원본(source) key. 맨 끝 조각 suffix(`_\\d{7}$`) 하나만 제거.
+
+    - 조각 suffix 가 없는 단일 클립(조각 안 된 원본)은 stem 전체가 곧 source key
+      (그룹 1개, 에러 아님).
+    - ★ 반드시 **stem 문자열에 직접** 적용할 것. AudioSet `..._30.0_40.0_0000000`
+      처럼 점(.)이 든 이름을 `Path(stem).stem` 으로 재처리하면 마지막 점 뒤를 확장자로
+      오인해 `..._30.0_40` 로 잘린다(실측 확인). 여기선 Path 를 다시 씌우지 않고
+      정규식만 적용해 그 함정을 회피한다. 호출부는 `p.stem`(확장자 .wav 제거된
+      값, 점은 보존)을 그대로 넘긴다.
+    """
+    return PIECE_SUFFIX_PATTERN.sub("", stem, count=1) or stem
 
 # --------------------------------------------------------------------------
 # 데이터 루트 (외부 형제 폴더 — Claude Code는 OS TCC로 접근 불가. config 값으로만.)
