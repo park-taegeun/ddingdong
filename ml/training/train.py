@@ -126,12 +126,17 @@ def train(
         encoding="utf-8",
     )
     if export_inference and yamnet is not None:
-        # backbone(hub SavedModel)+head 합성 그래프는 SavedModel 로 내보내는 게 견고
-        # (.keras 의 Lambda 직렬화 제약 회피). 이 경로는 실 YAMNet 로 학부생 런타임에서 검증.
+        # backbone(hub SavedModel)+head 합성 그래프를 서빙 SavedModel 로 내보낸다.
+        # ★ tf.saved_model.save(model) 은 Lambda 클로저가 캡처한 frozen YAMNet 리소스가
+        #   객체 그래프에 미추적(untracked)이라 'Tried to export ... untracked resource'
+        #   AssertionError 로 실패한다. Keras 3 표준 model.export() 는 ExportArchive 가
+        #   서빙 tf.function 을 트레이스하며 캡처 리소스를 함께 추적·직렬화하므로 해소된다
+        #   (decisions.md 33.3-③, .keras 의 Lambda 직렬화 제약도 동일 회피). 실 YAMNet
+        #   최종 검증은 학부생 런타임(합성 더미로 export 경로 검증 완료).
         infer = model.build_inference_model(head, yamnet)
         export_dir = out_dir / "inference_savedmodel"
-        tf.saved_model.save(infer, str(export_dir))
-        log.info("추론 SavedModel 저장 → %s", export_dir)
+        infer.export(str(export_dir))
+        log.info("추론 SavedModel(export) 저장 → %s", export_dir)
 
     log.info("체크포인트 → %s | history → %s", ckpt_path, hist_path)
     return {
