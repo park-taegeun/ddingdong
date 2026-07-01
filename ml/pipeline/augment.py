@@ -42,6 +42,8 @@ def _rng_for(stem: str, salt: str) -> np.random.Generator:
 
 def _pink_noise(n: int, rng: np.random.Generator) -> np.ndarray:
     """1/f 핑크 노이즈(주파수 영역 1/sqrt(f) 필터)."""
+    if n <= 0:  # 길이 0 → rfft "Invalid number of FFT data points (0)" 방어(최종 안전판)
+        return np.zeros(0, dtype=np.float32)
     white = rng.standard_normal(n)
     spec = np.fft.rfft(white)
     freqs = np.fft.rfftfreq(n)
@@ -87,6 +89,8 @@ def _pitch_targets(stem: str) -> list[float]:
 
 def _augment_one(y: np.ndarray, cls: str, stem: str) -> dict[str, np.ndarray]:
     """원본 waveform 하나 → {augtag: waveform}. peak 정규화는 저장 시 save_wav 가 clip."""
+    if y.shape[0] < config.MIN_SAMPLES:  # 2차 방어: 빈/초단파는 증강 불가 → 산출물 0
+        return {}
     out: dict[str, np.ndarray] = {}
     for rate in config.TIME_STRETCH_RATES:
         tag = f"ts{str(rate).replace('.', '')}"  # 0.85→ts085
@@ -120,6 +124,12 @@ def augment(paths: Paths) -> dict[str, int]:
     for row in train_rows:
         cls, stem = row["class"], row["stem"]
         y = audio_io.load_mono(Path(row["filepath"]))
+        if y.shape[0] < config.MIN_SAMPLES:  # 2차 방어(preprocess 가드 누락분 대비)
+            log.warning(
+                "SKIP augment %s (too_short samples=%d<%d) — preprocess 1차 가드 이후 잔여분",
+                stem, y.shape[0], config.MIN_SAMPLES,
+            )
+            continue
         for tag, aug in _augment_one(y, cls, stem).items():
             audio_io.save_wav(paths.augmented / cls / f"{stem}{AUG_SEP}{tag}.wav", aug)
             counts[cls] += 1
