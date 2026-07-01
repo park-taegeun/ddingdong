@@ -32,6 +32,14 @@ PEAK_NORMALIZE: bool = True
 TARGET_PEAK: float = 0.95  # linear (≈ -0.45 dBFS)
 FIXED_DURATION_SEC: float | None = None  # None = 원본 길이 유지
 
+# 최소 유효 길이 가드 (매직넘버 금지 — 상수화).
+#   근거: 01_clips 원본 중 길이 0.0초 빈 wav 6개(AI Hub S_103, fire_alarm)가
+#   preprocess를 무검증 통과 → augment 의 pink-noise FFT(np.fft.rfft, 길이 0)에서
+#   "Invalid number of FFT data points (0)" 크래시. 하류 전체를 방어하기 위해
+#   preprocess 단계에서 초단파/빈 클립을 skip 한다. 정상 클립(대다수 수 초)엔 무영향.
+MIN_DURATION_SEC: float = 0.1  # 이보다 짧은 클립은 학습에 무의미 → skip
+MIN_SAMPLES: int = int(round(MIN_DURATION_SEC * SAMPLE_RATE))  # 파생: 0.1s × 16k = 1600
+
 # --------------------------------------------------------------------------
 # 증강 파라미터 (카테고리 5 — 정확히 이 값. train split에만 적용)
 # --------------------------------------------------------------------------

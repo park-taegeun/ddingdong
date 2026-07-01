@@ -34,6 +34,15 @@ def preprocess(paths: Paths) -> dict[str, dict]:
                 skipped.append((src.name, f"channels={info.channels}≠mono"))
                 log.warning("SKIP %s (%s)", src.name, skipped[-1][1])
                 continue
+            # 빈·초단파 클립 가드: 하류 augment FFT(길이 0) 크래시 1차 차단.
+            # probe.frames 로 디코딩 없이 판정(빈 6개 = frames 0). 데이터 원본은 건드리지 않음.
+            if info.frames < config.MIN_SAMPLES:
+                skipped.append(
+                    (src.name, f"too_short frames={info.frames} "
+                               f"({info.duration_sec:.3f}s<{config.MIN_DURATION_SEC}s)")
+                )
+                log.warning("SKIP %s (%s)", src.name, skipped[-1][1])
+                continue
 
             y = audio_io.load_mono(src)
             if config.PEAK_NORMALIZE:
