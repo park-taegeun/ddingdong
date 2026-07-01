@@ -45,3 +45,15 @@ ml/data/
 ml/models/
 *.tflite
 *.h5
+
+# === ML 오디오 파일 (git 커밋 0 — 코드/config/manifest 스키마만 push) ===
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.ogg
+# 파이프라인 산출 스테이지 (실 데이터는 repo 밖이지만 방어적 차단)
+ml/**/02_preprocessed/
+ml/**/03_augmented/
+ml/**/05_final_dataset/
+ml/**/manifests/
