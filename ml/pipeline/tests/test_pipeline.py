@@ -123,6 +123,74 @@ def test_empty_and_ultrashort_clips_skipped():
         return stats, guard
 
 
+def test_stale_preprocessed_empty_cleaned_before_write():
+    """★ 회귀 가드 — 실측 크래시 근본원인: 02 stale 빈 클립이 05 로 부활.
+
+    실측 오진단 교정: split 은 이미 02 를 읽고 있었음(01 아님). 진짜 원인은 preprocess
+    가 02 를 auto-clean 하지 않아, 가드 도입 전(PR#10) 02 로 흘러든 빈 클립이 재실행에도
+    남아(02=1642 신규+6 stale=1648) split→05 로 부활 → data.py 빈 waveform 크래시.
+
+    시나리오 재현:
+      (1) 정상 더미 6개(01) + 01 에 빈 클립 1개(preprocess 가 skip).
+      (2) '가드 이전 실행' 모사 — 02_preprocessed/fire_alarm 에 빈 클립을 직접 심음(stale).
+      (3) preprocess(clean=True) 재실행 → 02 stale 이 지워지고 정상 6개만 남는지.
+      (4) 전관통 → 빈 stem 이 05 어디에도 없는지(부활 0) assert.
+    """
+    STALE = "S-211104_S_103_C_006_0001_0039000"  # 실측 크래시 파일 stem(빈 waveform)
+    with tempfile.TemporaryDirectory() as tmp:
+        root = make_dummy_dataset(Path(tmp), per_class=PER_CLASS, seed=1)
+        paths = config.resolve_paths(root)
+
+        # (1) 01_clips 에도 동일 빈 클립 존재(preprocess 가 frames<MIN 으로 skip) — 실측 모사
+        save_wav(paths.clips / "fire_alarm" / f"{STALE}.wav", np.zeros(0, dtype=np.float32))
+        # (2) '가드 이전 실행' 이 02 에 남긴 stale 빈 클립을 직접 심음(preprocess 우회)
+        save_wav(paths.preprocessed / "fire_alarm" / f"{STALE}.wav",
+                 np.zeros(0, dtype=np.float32))
+        # 다른 클래스에도 stale 산출물 하나 — clean 이 클래스별로 도는지 확인
+        save_wav(paths.preprocessed / "knock" / "knock_STALE.wav",
+                 np.zeros(0, dtype=np.float32))
+        assert (paths.preprocessed / "fire_alarm" / f"{STALE}.wav").exists()
+
+        # (3) preprocess 재실행(clean 기본 True) → 02 stale 제거 후 정상만 재기록
+        stats = preprocess.preprocess(paths)
+        assert stats["fire_alarm"]["ok"] == PER_CLASS, "정상 클립 손실(회귀)"
+        # 빈 클립은 01→02 write 에서 skip + 02 stale 은 auto-clean 으로 제거 = 02 엔 없음
+        assert f"{STALE}.wav" in {n for n, _ in stats["fire_alarm"]["skipped"]}
+        pre_stems = {p.stem for p in iter_audio_files(paths.preprocessed / "fire_alarm")}
+        assert STALE not in pre_stems, "02 stale 빈 클립이 auto-clean 되지 않음"
+        assert len(pre_stems) == PER_CLASS, f"02 개수 {len(pre_stems)}≠{PER_CLASS}(stale 잔존)"
+        assert "knock_STALE" not in {p.stem for p in iter_audio_files(paths.preprocessed / "knock")}
+
+        # (4) 전관통 → 빈 stem 이 05·manifest 어디에도 도달 못함(부활 0)
+        split.split_dataset(paths)
+        augment.augment(paths)
+        assemble.assemble(paths)
+        guard = assert_no_leakage(assemble.load_final_manifest(paths))
+
+        split_stems = {r["stem"] for r in split.load_split_manifest(paths)}
+        assert STALE not in split_stems, "빈 클립이 split manifest 로 부활"
+        final = assemble.load_final_manifest(paths)
+        assert STALE not in {r["source_stem"] for r in final}, "빈 클립이 05 manifest 로 부활"
+        for split_name in ("train", "val", "test"):
+            disk = {p.stem for c in config.CLASSES
+                    for p in iter_audio_files(paths.split_dir(split_name) / c)}
+            assert STALE not in disk, f"빈 클립이 05/{split_name} 물리 파일로 부활"
+        assert guard["train"] > 0
+        return stats, guard
+
+
+def test_no_clean_preserves_stale():
+    """--no-clean(clean=False) 는 stale 을 보존(opt-out 계약 명시). 기본 경로와 대비 고정."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = make_dummy_dataset(Path(tmp), per_class=PER_CLASS, seed=1)
+        paths = config.resolve_paths(root)
+        save_wav(paths.preprocessed / "doorbell" / "doorbell_STALE.wav",
+                 np.full(config.SAMPLE_RATE // 2, 0.1, dtype=np.float32))  # 유효 길이 stale
+        preprocess.preprocess(paths, clean=False)
+        stems = {p.stem for p in iter_audio_files(paths.preprocessed / "doorbell")}
+        assert "doorbell_STALE" in stems, "--no-clean 인데 stale 이 지워짐(계약 위반)"
+
+
 def _make_piece_dataset(
     root: Path, sources_per_class: int = 4, pieces_per_source: int = 3, seed: int = 7
 ) -> Path:
@@ -224,6 +292,11 @@ def _main() -> int:
     print("PASS — test_empty_and_ultrashort_clips_skipped")
     print(f"  fire_alarm: ok={fa['ok']} skipped={len(fa['skipped'])} "
           f"({', '.join(n for n, _ in fa['skipped'])})")
+    sstats, _ = test_stale_preprocessed_empty_cleaned_before_write()
+    print("PASS — test_stale_preprocessed_empty_cleaned_before_write")
+    print(f"  02 stale 빈클립 auto-clean → 05 부활 0 (fire_alarm ok={sstats['fire_alarm']['ok']})")
+    test_no_clean_preserves_stale()
+    print("PASS — test_no_clean_preserves_stale (--no-clean 는 stale 보존)")
     for split_name in ("train", "val", "test"):
         row = counts[split_name]
         print(f"  {split_name:<5} " + " ".join(f"{c}={row[c]}" for c in config.CLASSES)

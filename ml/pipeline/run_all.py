@@ -40,9 +40,11 @@ def run(paths: Paths, clean: bool = True) -> dict[str, dict[str, int]]:
             f"  → DDINGDONG_DATA_ROOT 를 '01_clips' 상위 폴더로 지정했는지 확인."
         )
 
-    preprocess.preprocess(paths)
+    # clean=True(기본): 각 스테이지가 write 전 자기 산출 폴더(02/03/05)를 비워 stale
+    # 잔재를 제거. 특히 02 stale(가드 도입 전 빈 클립)이 05 로 부활하던 회귀 차단.
+    preprocess.preprocess(paths, clean=clean)
     split.split_dataset(paths)
-    augment.augment(paths)
+    augment.augment(paths, clean=clean)
     if clean:
         # 05 재생성 전 기존 train/val/test 를 비워 stale 중첩 방지(--no-clean 로 opt-out).
         assemble.clean_final(paths)
@@ -61,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quiet", action="store_true", help="INFO 로그 억제")
     parser.add_argument(
         "--no-clean", action="store_true",
-        help="05_final_dataset 재생성 전 auto-clean 비활성(기본은 stale 방지 위해 clean).",
+        help="스테이지(02/03/05) 재생성 전 auto-clean 비활성(기본은 stale 방지 위해 clean).",
     )
     args = parser.parse_args(argv)
 

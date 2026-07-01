@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -163,3 +164,31 @@ def resolve_paths(data_root: str | os.PathLike | None = None) -> Paths:
         final=root / DIR_FINAL,
         manifests=root / DIR_MANIFESTS,
     )
+
+
+def clean_stage_class_dirs(stage_dir: Path, expected_name: str) -> list[Path]:
+    """스테이지(02/03) 재생성 전 클래스 하위폴더를 비운다(stale 잔재 제거).
+
+    배경: preprocess/augment 는 산출물을 save_wav 로 덮어쓸 뿐 기존 파일을 지우지 않는다.
+    → 가드 도입 이전(PR#10)에 02 로 흘러든 빈 클립 6개(AI Hub S_103)가 재실행해도
+    남아, split 이 02(=1642 신규 + 6 stale = 1648)를 읽어 05 로 부활 → data.py 빈 waveform
+    크래시. 05 의 clean_final 과 동일한 idiom 을 02/03 에도 적용해 stale 을 원천 제거한다.
+
+    ★ 안전 가드(카테고리 7: 상위/원본/manifest 절대 삭제 금지 — clean_final 과 동일):
+      - stage_dir 폴더명이 정확히 expected_name(02/03)일 때만 동작(오폴더 삭제 차단).
+      - 삭제 대상은 CLASSES 하위폴더뿐. 각 대상이 정말 stage_dir 직하위인지 resolve 로
+        재확인(심볼릭/트래버설 차단). 00_source_raw/01_clips/manifests 절대 불가.
+    반환: 실제로 제거된 클래스 폴더 목록.
+    """
+    if stage_dir.name != expected_name:
+        raise ValueError(f"clean 거부: 스테이지 경로명이 {expected_name!r} 아님 → {stage_dir}")
+    stage_resolved = stage_dir.resolve()
+    removed: list[Path] = []
+    for cls in CLASSES:
+        target = stage_dir / cls
+        if target.resolve().parent != stage_resolved:
+            raise ValueError(f"clean 거부: {target} 가 {stage_dir} 직하위가 아님")
+        if target.exists():
+            shutil.rmtree(target)
+            removed.append(target)
+    return removed

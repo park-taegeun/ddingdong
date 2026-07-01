@@ -106,8 +106,16 @@ def _augment_one(y: np.ndarray, cls: str, stem: str) -> dict[str, np.ndarray]:
     return out
 
 
-def augment(paths: Paths) -> dict[str, int]:
-    """train split 클립에만 증강 적용 → 03_augmented. 반환: {class: 증강본 개수}."""
+def augment(paths: Paths, clean: bool = True) -> dict[str, int]:
+    """train split 클립에만 증강 적용 → 03_augmented. 반환: {class: 증강본 개수}.
+
+    clean=True(기본): write 전 03_augmented/{class} 를 비워 이전 실행의 stale 증강본
+    (파라미터/split 변경 시 잔재)을 제거. 02 preprocess 와 동일 정합. --no-clean 로 opt-out.
+    """
+    if clean:
+        removed = config.clean_stage_class_dirs(paths.augmented, config.DIR_AUGMENTED)
+        if removed:
+            log.info("03 auto-clean: %s 제거(stale 방지)", [p.name for p in removed])
     manifest = load_split_manifest(paths)
     train_rows = [r for r in manifest if r["split"] == "train"]
     counts: dict[str, int] = {c: 0 for c in config.CLASSES}
