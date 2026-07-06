@@ -48,6 +48,8 @@ _SEED_SPECS = [
         "primary_sent": True,
         "enrich_status": "completed",
         "secondary_sent": True,
+        "primary_delay_s": 2.4,  # 1차 지연(초): detected_at + 2.4s
+        "secondary_delay_s": 8.5,  # 2차 지연(초): detected_at + 8.5s
         "skip_reason": None,
         "image_url": _IMG_DOORBELL,
         "stt_transcript": "택배 왔습니다. 문 앞에 두고 갈게요.",
@@ -67,6 +69,8 @@ _SEED_SPECS = [
         "primary_sent": True,
         "enrich_status": "completed",
         "secondary_sent": True,
+        "primary_delay_s": 2.8,  # 1차 지연(초): detected_at + 2.8s
+        "secondary_delay_s": 11.2,  # 2차 지연(초): detected_at + 11.2s
         "skip_reason": None,
         "image_url": _IMG_KNOCK,
         "stt_transcript": "계세요? 옆집인데요.",
@@ -87,6 +91,8 @@ _SEED_SPECS = [
         "primary_sent": True,
         "enrich_status": "skipped",
         "secondary_sent": False,
+        "primary_delay_s": 2.1,  # 1차만 발송(2차 skipped) → 2차 지연 집계 제외
+        "secondary_delay_s": None,
         "skip_reason": None,
         "image_url": None,
         "stt_transcript": None,
@@ -106,6 +112,8 @@ _SEED_SPECS = [
         "primary_sent": False,
         "enrich_status": "skipped",
         "secondary_sent": False,
+        "primary_delay_s": None,  # 미발송(신뢰도 부족) → 1·2차 지연 집계 제외
+        "secondary_delay_s": None,
         "skip_reason": "low_confidence",
         "image_url": None,
         "stt_transcript": None,
@@ -125,6 +133,8 @@ _SEED_SPECS = [
         "primary_sent": True,
         "enrich_status": "processing",
         "secondary_sent": False,
+        "primary_delay_s": 2.6,  # 1차 발송, 2차 처리중 → 2차 지연 집계 제외
+        "secondary_delay_s": None,
         "skip_reason": None,
         "image_url": None,
         "stt_transcript": None,
@@ -136,10 +146,17 @@ _SEED_SPECS = [
 def _build_notification(spec, now):
     """명세 dict → Notification. 시각/미디어/STT 파생 필드를 detected_at 기준으로 계산."""
     detected_at = now - timedelta(minutes=spec["minutes_ago"])
-    primary_sent_at = detected_at if spec["primary_sent"] else None
-    # 2차 발송 시각은 1차 직후(+2초)로 둔다 (실 파이프라인 1차→2차 순서 반영)
+    # 발송 시각 = detected_at + 명세 지연(초). 목표 1차 5초 / 2차 15초 이내를 만족하는
+    # 현실적 값을 spec 에 명시(결정론적). 미발송·2차 미완료건은 delay None → sent_at None.
+    primary_sent_at = (
+        detected_at + timedelta(seconds=spec["primary_delay_s"])
+        if spec["primary_sent"]
+        else None
+    )
     secondary_sent_at = (
-        detected_at + timedelta(seconds=2) if spec["secondary_sent"] else None
+        detected_at + timedelta(seconds=spec["secondary_delay_s"])
+        if spec["secondary_sent"]
+        else None
     )
 
     stt = None
