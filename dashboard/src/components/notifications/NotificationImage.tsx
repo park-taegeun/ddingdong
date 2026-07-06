@@ -1,6 +1,8 @@
 import { useState } from "react"
 import { ImageOff } from "lucide-react"
 
+import { ImageLightbox } from "./ImageLightbox"
+
 interface NotificationImageProps {
   src: string
   alt: string
@@ -20,12 +22,14 @@ export function NotificationImage({ src, alt }: NotificationImageProps) {
   }
 
   return (
-    <img
-      src={src}
-      alt={alt}
-      loading="lazy"
-      onError={() => setErrored(true)}
-      className="h-40 w-full rounded-xl object-cover"
-    />
+    <ImageLightbox src={src} alt={alt}>
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        onError={() => setErrored(true)}
+        className="h-40 w-full rounded-xl object-cover"
+      />
+    </ImageLightbox>
   )
 }
