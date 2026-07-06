@@ -1,8 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" role="img" aria-label="데모용 노크 방문자 예시 이미지">
-  <!-- 시연용 더미 placeholder — 직접 생성(저작권·초상권 무관). 실카메라 캡처는 11주차 -->
-  <rect width="400" height="300" fill="#FBF1E3"/>
-  <rect x="0" y="0" width="400" height="300" fill="none" stroke="#EAD3AC" stroke-width="4"/>
-  <text x="200" y="128" font-size="88" text-anchor="middle" dominant-baseline="central">🚪</text>
-  <text x="200" y="196" font-size="30" font-family="'Apple SD Gothic Neo','Malgun Gothic',sans-serif" font-weight="700" fill="#8A5A1E" text-anchor="middle">현관 방문자</text>
-  <text x="200" y="234" font-size="16" font-family="'Apple SD Gothic Neo','Malgun Gothic',sans-serif" fill="#9C8560" text-anchor="middle">시연용 예시 이미지</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 240" role="img" aria-label="데모용 노크 방문자 예시 이미지">
+  <!-- 시연용 더미 placeholder — 직접 생성(저작권·초상권 무관). 실카메라 캡처는 11주차.
+       가로 2:1 + 콘텐츠 세로중앙(safe zone) → 썸네일 object-cover 크롭에도 안 잘림. -->
+  <rect width="480" height="240" fill="#FBF1E3"/>
+  <rect x="2" y="2" width="476" height="236" fill="none" stroke="#EAD3AC" stroke-width="4"/>
+  <text x="240" y="92" font-size="72" text-anchor="middle" dominant-baseline="central">🚪</text>
+  <text x="240" y="154" font-size="30" font-family="'Apple SD Gothic Neo','Malgun Gothic',sans-serif" font-weight="700" fill="#8A5A1E" text-anchor="middle">현관 방문자</text>
+  <text x="240" y="186" font-size="16" font-family="'Apple SD Gothic Neo','Malgun Gothic',sans-serif" fill="#9C8560" text-anchor="middle">시연용 예시 이미지</text>
 </svg>
