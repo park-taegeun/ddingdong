@@ -42,6 +42,7 @@
   - 노크: ToF 사람 검증
   - 초인종: ToF + (등록 시) SP/DTW + cosine
 - **신뢰도 임계값**: 70% 미만 미전송
+  - 🔴 **코드 불일치 (2026-07-06 PoC-(22) catch, 미결/정정 예정)**: 본 SSoT=**0.70**인데 서버 `server/app/constants.py:15 CONFIDENCE_THRESHOLD = 0.6` → **코드가 SSoT 위반**. 단, 데모 시드(`server/seed.py`)는 confidence를 명시 세팅해 `/detect` 임계값 로직을 타지 않으므로 발표 데모는 무영향. **코드 정정(0.6→0.7)은 별도 fix PR 필요**(2026-07-06 미착수) → 다음 서버 코드 작업 시 우선. ※ 임계값 SSoT = 본 카테고리 3(seed.py 주석의 "6.1 계열" 표기와 무관).
 - **카메라 캡처**: Lokch777 패턴 멀티코어 (Core 1 병렬)
 - **1차 알림 목표**: ≤5초 (텍스트), **2차 알림 목표**: ≤15초 (사진+STT)
 
@@ -106,6 +107,8 @@
 - **HTTP Status 8종 + rate limit**: `device_id` 5초당 1회, 초과 시 `Retry-After` 헤더
 - **Idempotency**: `idempotency_keys` 테이블 (24시간 TTL) — `client_request_id` 기반 재시도 중복 차단
 - **stats period**: `today` 단일 (Phase 1, 코드 `stats.ts` `StatsPeriod`)
+- **stats 알림 속도(`timing_metrics`) 실계측 도입 (2026-07-06 PoC-(22), PR #18 `d57f3ae`)**: `_build_stats`의 `timing_metrics` 하드코딩 0 placeholder → **실 타임스탬프 집계**로 전환. 1차 지연 = `primary_sent_at − detected_at`(ms), 2차 지연 = `secondary_sent_at − detected_at`(ms), 달성률 = 1차 ≤5초 / 2차 ≤15초 이내 비율(목표 = 카테고리 3 연동). null 안전(`sent_at is not None` 필터로 미발송·2차 미완료건 자동 제외) + ZeroDivision 가드. `stats.ts` `TimingMetrics` 6키(avg/max ms ×2 + under-rate ×2)와 1:1 정합(신규 필드 발명 X, 학습 16). **의의**: 원래 11주차 실 계측 몫을 선작업 → 실 하드웨어 데이터 유입 시 그대로 실값 산출(데모 픽션 아님, 재사용 코드). **수정 2곳 한정**(routes.py timing 블록 + `seed.py`), 타 집계·프론트·타입 무변경.
+- **데모 시드 + 더미 이미지 인프라 (2026-07-06 PoC-(22), PR #16 `6b26bd6`)**: `server/seed.py` = 결정론적 5건(초인종 완료 / 노크 완료 / 노크 2차 처리중 / 화재 우회 / 초인종 미발송) DB 시드(delete→insert idempotent, `detected_at` 동적 오늘 → stats "오늘" 필터 통과, `idempotency_keys` 보존). 더미 이미지 = `dashboard/public/static/captures/*.svg`(가로 2:1, 직접 생성 → 저작권·초상권 무관, vite public 서빙 → 프록시·정적 라우트 0줄). PR #18에서 썸네일 `object-cover` 세로중앙 safe-zone 재작성으로 **잘림 수정**. mock random으로 재현 불가한 3클래스·상태 조합을 대체하는 발표용 완성 UX 확정 렌더 목적(8.3 연동).
 
 ---
 
@@ -276,10 +279,18 @@
   - 화재 텍스트 대비 보정(`#FF4444` 3.0:1 → `#CC0000` ~5.2:1, salience fill `#FF4444` 유지).
 
 **잔존(여전히 deferred — B-2~B-4로 미해소, 갱신)**:
-- 폴러 통합 — **카운트 갱신**: stats 3중 + announcer 1 + **건강카드 useDevice +1**. / Pretendard self-host / large-text 모드 / SR 실청취 실측. → 11주차 or 폴리시.
-- (신규) **화재 번호뱃지 대비** ~3:1(큰 글씨라 WCAG 1.4.3 large-text 3:1 충족 추정) → 발표 전 실측 권고. 과한 단정 금지.
+- 폴러 통합 — **카운트 갱신**: stats 3중 + announcer 1 + **건강카드 useDevice +1**. / Pretendard self-host / ~~large-text 모드~~ **[2026-07-06 정정 → shipped, B-5 참조]** / SR 실청취 실측. → 11주차 or 폴리시.
+- (신규) **화재 번호뱃지 대비** ~~~3:1(큰 글씨라 WCAG 1.4.3 large-text 3:1 충족 추정) → 발표 전 실측 권고. 과한 단정 금지.~~ **[2026-07-06 실측 확정 → B-5]**: white on `#FF4444` = **3.41:1** (large-text 3:1 충족 ✓ / normal-text 4.5:1 미달). 보정안 `#CC0000` = 5.89:1(미착수).
 
 **GitHub Flow**: 코드 PR #8/#9 = 8~9번째 사이클(feat 브랜치 + Squash 머지 + self-approve). 학습 18(웹 머지 후 pull) 2회 정상 fast-forward.
+
+**B-5 — 발표 데모 마무리 + Phase B 잔존 2건 정정 (2026-07-06 PoC-(22), PR #16·#17·#18)**:
+
+- **알림 사진 전체화면 라이트박스 + "크게 보기" 힌트 뱃지 (✅ PR #17 `c25f789`)**: radix Dialog(shadcn) 재사용 라이트박스 — 3경로 닫기(X 44px / 배경 / ESC) + 포커스 트랩·복원 + scroll-lock + `aria-modal`, 이미지 `object-contain`(확대 시 무크롭). 힌트 뱃지 = `Maximize2` 아이콘 + "크게 보기" 텍스트 병기(WCAG 1.4.1 색 단독 의존 해소), `bg-black/60` 흰텍스트 대비, caption 15px 노안 상향, `pointer-events-none`(히트영역 유지) + `aria-hidden`(SR 중복 방지). → 8.3 접근성 계열 확장.
+- **더미 이미지 썸네일 잘림 수정 (✅ PR #18 `d57f3ae`)**: `demo-*.svg`를 가로 2:1(480×240) + 콘텐츠 세로중앙 safe-zone으로 재작성 → 카드 썸네일 `object-cover h-40` 크롭에도 텍스트 안 잘림. (동 PR의 서버 timing 실계측 = 카테고리 6.1 참조.)
+- 🟢 **[정정] large-text 모드 = deferred → shipped 확정**: 위 잔존 리스트의 "large-text 모드 deferred"는 **stale**. 실측 = `dashboard/src/index.css:160 html.large-text{ zoom:1.15 }` + `SettingsContext`(largeText state + `<html>` 클래스 토글) + `SettingsPage` 토글 배선 전부 **shipped**. 문서만 정정(코드 무변경).
+- 🟡 **[정정] 화재 번호뱃지 대비 = "~3:1 추정" → 실측 3.41:1 확정**: white on `#FF4444`(`--danger`/`--status-failed`) = **3.41:1**. WCAG 1.4.3 large-text 3:1은 **충족**하나 normal-text 4.5:1은 **미달**. 보정안 = `bg-danger-deep #CC0000` = **5.89:1**(코드: `dashboard/src/index.css` `--danger-deep`). 보정 **미착수**(별도 소형 a11y PR 예정) → 발표는 large-text 3:1 충족으로 진행 가능. ※ 본문 텍스트 대비는 PR #9에서 이미 `#CC0000` 보정 완료(위 B-3·B-4), 본 건은 **번호뱃지 배경** 한정.
+- **데모 시드 인프라 (PR #16 `6b26bd6`)**: 상세 = 카테고리 6.1 seed 항목. 8.3 관점 = 발표용 완성 UX(사진/자막/2차 처리중/미발송) 한 화면 확정 렌더.
 
 ---
 
@@ -638,13 +649,15 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 
 클로드(의사결정 채팅방)가 학부생이 먼저 묻기 전에 능동적으로 채팅방 분리 제안.
 
-**무거움 신호 6가지:**
+**무거움 신호 8가지:**
 1. 응답 텀 길어짐
 2. 이전 결정 재확인 빈도 증가
 3. 동일 주제 반복 질문
 4. 컨텍스트 윈도우 한계 근접 추정
 5. 한 채팅방에 도메인 4개+ 누적
 6. 큰 의사결정 후 chunk 종료 시점 도래
+7. **일자 전환** (자정 넘어 작업 일자 바뀜 → 새 chunk 경계) *(2026-07-06 지침 싱크 append — 지침 8개 대비 decisions.md 6개 뒤처짐 정정)*
+8. **패턴 전환** (작업 도메인·모드 급전환 = 문서↔코드, ML↔대시보드 등) *(2026-07-06 지침 싱크 append)*
 
 **알림 형식:**
 ```
@@ -683,6 +696,12 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 - PoC 트래킹의 외부 링크에 Velog 시리즈 URL은 참고용으로 유지
 - 매일 밤 루틴의 노션 갱신 위임 프롬프트 작성 시 Velog 관련 갱신 (발행 사실, Entry 번호, URL) 포함 금지
 - PoC 트래킹은 개발 진행 트래킹 전용
+
+### 노션 plan 게이트 정정 (2026-07-06 PoC-(22) Set 3 실측)
+
+- **당초 우려**: 노션 워크스페이스가 Business plan API 게이트로 DB row 열람·갱신 차단 → hand-mirror(수기 반영) 필요 추정.
+- **실측 정정**: `notion-query-data-sources`(SQL 쿼리)만 Business plan 차단. **`notion-search` + `notion-fetch`(by-ID)로 DB row 실 열람·특정 갱신은 우회 가능** → hand-mirror 불필요. DB3(미결정 항목, `a319c04a-9201-417f-8552-7d6e99b2958f`) 3출처 오염 상태에서도 by-ID fetch로 특정 row 접근 확인.
+- ※ 갱신 후 `notion-update-content`는 old_str 불일치 시에도 silent success(no-op) 가능 → **편집 후 re-fetch 검증 필수**.
 
 ---
 

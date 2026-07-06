@@ -874,3 +874,33 @@
 
 **관련 카테고리**: 33 (33.2 체크포인트 정정 + 33.3-③ 클로즈) / 20 (docs-only main 직접 push)
 **관련 commit**: 코드 PR #15 `6d9411e` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
+
+---
+
+## 2026-07-06 (월) — PoC-(22) 발표 데모 마무리(대시보드 라이트박스 + 알림 속도 실계측 + 데모 시드) + 밀린 정정 5건 (카테고리 3/6.1/8.3/18/19 append)
+
+> PoC-(22) 후속 chunk. 코드 3 PR(#16·#17·#18) 머지 완료(2026-07-06) → 본 entry로 SSoT 반영 + 밀린 정정 5건 동시 회수. 문서 단독(코드 0), main 직접 push.
+
+**A. 신규 반영 (코드 3 PR 기 머지)**:
+- **PR #16 `6b26bd6` — 데모 시드 + 더미 이미지** (카테고리 6.1 append): `server/seed.py` 결정론적 5건(초인종 완료/노크 완료/노크 2차 처리중/화재 우회/초인종 미발송) delete→insert idempotent, `detected_at` 동적 오늘. 더미 이미지 = `dashboard/public/static/captures/*.svg`(직접 생성, 저작권·초상권 무관, vite public 서빙). 발표용 완성 UX 확정 렌더(mock random 재현 불가 대체).
+- **PR #17 `c25f789` — 알림 사진 라이트박스 + "크게 보기" 힌트 뱃지** (카테고리 8.3 B-5 append): radix Dialog 재사용, 3경로 닫기(X 44px/배경/ESC) + 포커스 트랩·복원 + scroll-lock + `aria-modal`, `object-contain` 무크롭. 힌트 뱃지 = `Maximize2` + "크게 보기" 텍스트 병기(WCAG 1.4.1), caption 15px 노안 상향, `aria-hidden`.
+- **PR #18 `d57f3ae` — 데모 마무리(이미지 잘림 수정 + 알림 속도 카드 실계측)**: ① 더미 SVG 가로 2:1 + 세로중앙 safe-zone 재작성 → `object-cover h-40` 무잘림(8.3). ② `_build_stats` `timing_metrics` 하드코딩 0 → **실 타임스탬프 집계**(1차=primary_sent_at−detected_at, 2차=secondary_sent_at−detected_at, 목표 5초/15초 달성률). null 안전(`is not None` 필터) + ZeroDivision 가드, `stats.ts` `TimingMetrics` 6키 1:1(카테고리 6.1). **수정 2곳 한정**(routes.py timing 블록 + seed.py), 타 집계·프론트·타입 무변경. **의의**: 11주차 실 계측 몫 선작업 → 실 하드웨어 유입 시 실값 산출(재사용 코드).
+
+**B. 밀린 정정 5건 회수**:
+- 🔴 **신뢰도 임계값 코드 불일치 (미결 등록, 카테고리 3)**: SSoT=0.70인데 `server/app/constants.py:15 CONFIDENCE_THRESHOLD = 0.6` → **코드가 SSoT 위반**. seed는 confidence 명시 세팅으로 `/detect` 임계값 로직 미경유(데모 무영향). 코드 정정(0.6→0.7) = **별도 fix PR 필요**(2026-07-06 미착수) → 다음 서버 코드 작업 우선.
+- 🟢 **large-text 실측 정정 (카테고리 8.3, stale→shipped)**: 8.3 잔존 리스트의 "large-text deferred"는 stale. `index.css:160 html.large-text{zoom:1.15}` + `SettingsContext` 토글 + `SettingsPage` 배선 전부 shipped. 문서만 정정(코드 무변경).
+- 🟡 **화재 번호뱃지 대비 실측 (카테고리 8.3)**: "~3:1 추정" → **실측 3.41:1**(white on `#FF4444`). WCAG large-text 3:1 충족 / normal-text 4.5:1 미달. 보정안 `#CC0000` = 5.89:1(미착수, 별도 소형 a11y PR 예정). ※ 본문 텍스트는 PR #9에서 이미 `#CC0000` 보정 완료 — 본 건은 번호뱃지 배경 한정.
+- **카테고리 18 무거움 신호 6→8 싱크**: decisions.md 카테고리 18에 신호 7(일자 전환)·8(패턴 전환) append(지침엔 이미 8개, decisions.md만 6개로 뒤처짐).
+- **카테고리 19 노션 plan 게이트 정정**: `query-data-sources`(SQL)만 Business plan 차단, `notion-search`+`notion-fetch`(by-ID)로 DB row 실 열람·특정 갱신 우회 가능(hand-mirror 불필요) — PoC-(22) Set 3 실측. + update-content old_str 불일치 silent no-op → re-fetch 검증 필수 명시.
+
+**학습 적용**:
+- 학습 14 (카테고리 번호·commit 사전 검증): 적용 — 8.3/6.1/3/18/19 실번호 `grep` 대조(프롬프트 추정 전부 일치) + PR #16/#17/#18 커밋 hash `git log` 실측 후 인용.
+- 학습 16 (기존 컨벤션·타입 우선): 적용 — `timing_metrics` `stats.ts` 6키 재사용(신규 필드 X), decisions.md append 컨벤션·strikethrough 정정 관용 준수.
+- 학습 19 (진단 재검증): 적용 — 문서화 주장(large-text shipped / 대비 3.41:1 / constants 0.6 / 무거움 신호 6개)을 전부 **코드·계산으로 재검증** 후 반영(추정 기재 금지).
+
+**비범위**: 코드 0 수정(위 3 PR은 기 머지, 본 entry는 docs-only). 카테고리 1/2/4/5/7/9~17/20~33 무수정. ML(33.3) 무변경. 신뢰도 코드 정정·화재 뱃지 보정 = 별도 fix PR 이월(미착수).
+
+**append 정합 확인 (자체검증 = 문서라 코드 3단계 N/A, 대신 훼손 0 확인)**: 기존 항목 삭제 0(정정은 strikethrough+주석으로 이력 보존, 학습 8) / 신규는 전부 append / 카테고리 번호 전부 Step 0 실측 기준.
+
+**관련 카테고리**: 3 (신뢰도 임계값 미결) / 6.1 (timing 실계측 + seed 인프라) / 8.3 (라이트박스 B-5 + large-text·화재뱃지 정정) / 18 (무거움 신호 7·8) / 19 (노션 plan 게이트 정정) / 20 (docs-only main 직접 push)
+**관련 commit**: 코드 PR #16 `6b26bd6` · #17 `c25f789` · #18 `d57f3ae` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
