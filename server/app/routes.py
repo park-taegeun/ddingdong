@@ -247,6 +247,42 @@ def _build_stats(rows, start_kst, end_kst):
 
     last_seen = max((n.detected_at for n in rows), default=None)
 
+    # 알림 지연 계측 (ms) — detected_at → 발송까지. 목표: 1차 5초 / 2차 15초 이내.
+    # 미발송(primary)·2차 미완료(secondary)건은 sent_at 이 None 이라 각 집계에서 자동
+    # 제외(None 연산·ZeroDivision 가드). detected_at·sent_at 모두 naive UTC → delta tz 무관.
+    primary_ms = [
+        (n.primary_sent_at - n.detected_at).total_seconds() * 1000
+        for n in rows
+        if n.primary_sent_at is not None
+    ]
+    secondary_ms = [
+        (n.secondary_sent_at - n.detected_at).total_seconds() * 1000
+        for n in rows
+        if n.secondary_sent_at is not None
+    ]
+    timing_metrics = {
+        "primary_notification_avg_ms": (
+            round(sum(primary_ms) / len(primary_ms)) if primary_ms else 0
+        ),
+        "primary_notification_max_ms": round(max(primary_ms)) if primary_ms else 0,
+        "secondary_notification_avg_ms": (
+            round(sum(secondary_ms) / len(secondary_ms)) if secondary_ms else 0
+        ),
+        "secondary_notification_max_ms": (
+            round(max(secondary_ms)) if secondary_ms else 0
+        ),
+        "primary_under_5s_rate": (
+            round(sum(1 for v in primary_ms if v <= 5000) / len(primary_ms), 2)
+            if primary_ms
+            else 0.0
+        ),
+        "secondary_under_15s_rate": (
+            round(sum(1 for v in secondary_ms if v <= 15000) / len(secondary_ms), 2)
+            if secondary_ms
+            else 0.0
+        ),
+    }
+
     return {
         "period": STATS_PERIOD,
         "period_start": start_kst.isoformat(),
@@ -259,15 +295,8 @@ def _build_stats(rows, start_kst, end_kst):
             "average_confidence": avg_conf,
         },
         "class_distribution": class_distribution,
-        # timing_metrics 는 실제 지연 계측 도입 전까지 placeholder (구조만 정확)
-        "timing_metrics": {
-            "primary_notification_avg_ms": 0,
-            "primary_notification_max_ms": 0,
-            "secondary_notification_avg_ms": 0,
-            "secondary_notification_max_ms": 0,
-            "primary_under_5s_rate": 0.0,
-            "secondary_under_15s_rate": 0.0,
-        },
+        # 발송 타임스탬프(detected_at↔primary/secondary_sent_at)에서 실계측 (위 집계)
+        "timing_metrics": timing_metrics,
         "skip_reasons": skip_reasons,
         # system_health: device_last_seen 만 실데이터, 외부 연동값은 11~14주차 전까지 mock
         # device_status/signal_strength = 기기 liveness·신호(센서 heartbeat) → 실연동 11주차.
