@@ -101,7 +101,7 @@ export function NotificationCard({
               <ol className="space-y-1.5">
                 {FIRE_ALARM_GUIDELINES.map((step, i) => (
                   <li key={step.text} className="flex gap-2 text-body">
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-danger text-caption font-bold text-white">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-danger-deep text-caption font-bold text-white">
                       {i + 1}
                     </span>
                     <div className="space-y-0.5">
