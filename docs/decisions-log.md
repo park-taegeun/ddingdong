@@ -904,3 +904,36 @@
 
 **관련 카테고리**: 3 (신뢰도 임계값 미결) / 6.1 (timing 실계측 + seed 인프라) / 8.3 (라이트박스 B-5 + large-text·화재뱃지 정정) / 18 (무거움 신호 7·8) / 19 (노션 plan 게이트 정정) / 20 (docs-only main 직접 push)
 **관련 commit**: 코드 PR #16 `6b26bd6` · #17 `c25f789` · #18 `d57f3ae` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
+
+---
+
+## 2026-07-07 (화) — PoC-(24) 결정 3건 코드 반영 클로즈 (신뢰도 임계값 + 화재뱃지 대비 + ML 미결 2건) → decisions.md 4곳 SSoT 정정
+
+> 2026-07-07 PoC-(24)에서 코드 fix 2건 + ML 미결 2건 결정 완료(PR #19/#20/#21 전부 머지). 본 entry로 상태 반영. 문서 단독(코드 0, 위 3 PR은 기 머지), main 직접 push.
+
+**A. 코드 3 PR 클로즈 (기 머지, decisions.md 상태 정정)**:
+- **PR #19 `d614370` — 신뢰도 임계값 SSoT 정합** (카테고리 3): `server/app/constants.py:15 CONFIDENCE_THRESHOLD` **0.6→0.7** 정정. 경계 = `utils.py:94 if top < CONFIDENCE_THRESHOLD`(strict) → 정확히 0.70 발송 = "70% 미만 미전송" SSoT(0.70) 정합. 🔴 코드 불일치 → ✅ 해결(strikethrough+append, 학습 8).
+- **PR #20 `4f563a2` — 화재 번호뱃지 대비 보정** (카테고리 8.3 B-5): 번호뱃지 배경 `bg-danger`(#FF4444, 3.41:1)→`bg-danger-deep`(#CC0000, **5.89:1**) = WCAG AA normal 4.5:1 충족. 대상 = `NotificationCard.tsx:104`/`HelpPage.tsx:87` 2곳. salience fill #FF4444(animate) 유지. 🟡 미착수 → ✅ 완료.
+- **PR #21 `2dd8f9c` — ML 증강 결정 코드 각인** (카테고리 33.3, B 방식=값 추측 0/주석 각인): pitch 대상=직접녹음(`direct_`)만/S_103 제외/실행 defer(마커 `()` 유지+결정 주석, 경고 `warning`→`info`), SpecAugment=embedding 유지/logmel 배선 defer(레이어 보존, `SPECAUG_MODE` 죽은 상수 회피 = 주석만).
+
+**B. decisions.md 정정 4곳**:
+- 카테고리 3: 🔴 코드 불일치 strikethrough + ✅ 해결(PR #19) append.
+- 카테고리 5: Augmentation pitch 항목에 "한국 환경음" 정의 확정(=`direct_` prefix 직접녹음, S_103 제외) note append → 33.3-① 링크.
+- 카테고리 8.3 B-5: 🟡 화재뱃지 "미착수" strikethrough + ✅ 보정 완료(PR #20) append.
+- 카테고리 33.3: 헤더 "미결 2건" → "**활성 미결 0건**"(①② 결정 확정·실행 defer / ③ 클로즈). (1)pitch·(2)SpecAugment 각 항목에 🟢 결정 확정 append(기존 미결 설명 보존, strikethrough 아님).
+
+**C. ML 활성 미결 2건 → 0건**: ① pitch + ② SpecAugment 결정 확정(실행 defer). 직접녹음 명명 규칙 = `direct_` prefix 확정. 8주차 직접녹음 유입 시 `config.py` 마커 `("direct_",)` 한 줄 교체로 pitch 활성화.
+
+**SSoT 정합 검증 (문서라 코드 3단계 N/A, 대신 머지 코드↔문서 1:1 실측)**: `constants.py:15 = 0.7` ✓ / `utils.py:94 if top < CONFIDENCE_THRESHOLD`(strict) ✓ / `--danger-deep: #CC0000` + 뱃지 2곳 `bg-danger-deep` ✓ / `config.py:75 KOREAN_SOURCE_MARKERS = ()` ✓ — 문서 기술 전부 실 머지 코드와 일치.
+
+**학습 적용**:
+- 학습 14 (카테고리 번호 사전 검증): 적용 — 3/5/8.3/33.3 실번호 `git show HEAD:docs/decisions.md | grep` 실측(36/61/249/1442, drift 0) + PR #19/#20/#21 hash `git log` 실측 후 인용.
+- 학습 16 (기존 컨벤션 우선): 적용 — strikethrough 이력보존 관용 준수, `SPECAUG_MODE` 신규 상수 미발명(죽은 상수 회피).
+- 학습 8 (원본 이력보존): 적용 — 🔴/🟡 정정 = 물리 삭제 0, strikethrough+append.
+
+**비범위**: 코드 0 수정(3 PR 기 머지, 본 entry docs-only). 카테고리 1/2/4/6~32/33.1/33.2/33.4 무수정. 노션/지침 동기화 = 별도 Set 이월.
+
+**append 정합 확인 (훼손 0)**: 기존 항목 삭제 0(정정=strikethrough+주석, 학습 8) / 신규 전부 append / 카테고리 번호 전부 grep 실측.
+
+**관련 카테고리**: 3 (신뢰도 임계값 클로즈) / 5 (한국 환경음 정의) / 8.3 (화재뱃지 클로즈) / 33.3 (ML 미결 2→0) / 20 (docs-only main 직접 push)
+**관련 commit**: 코드 PR #19 `d614370` · #20 `4f563a2` · #21 `2dd8f9c` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
