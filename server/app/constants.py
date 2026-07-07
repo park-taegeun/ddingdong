@@ -12,7 +12,7 @@ DEVICE_RATE_LIMIT_SECONDS = 5
 IDEMPOTENCY_TTL = timedelta(hours=24)
 
 # mock ML: 신뢰도 임계값 미만 시 1차 알림 skip (notification.ts skip_reason="low_confidence")
-CONFIDENCE_THRESHOLD = 0.6
+CONFIDENCE_THRESHOLD = 0.7
 
 # cursor pagination 기본/최대 페이지 크기
 DEFAULT_PAGE_LIMIT = 20
