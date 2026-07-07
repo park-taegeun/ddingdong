@@ -66,8 +66,12 @@ BG_NOISE_KIND: str = "pink"  # 합성 잡음 종류: "pink" | "white"
 #   "none"       : pitch shift 미적용.
 PITCH_SHIFT_SEMITONES: tuple[float, ...] = (-2.0, 2.0)
 PITCH_SHIFT_MODE: str = "korean_only"
-# 한국 환경음 소스를 나타내는 파일명 부분 문자열(예: AI Hub S_103 → "S_103").
-# 학부생이 실제 소스 명명 규칙 확인 후 채워야 pitch shift가 대상에 적용됨.
+# 한국 환경음 소스 = 직접녹음 클립만(파일명 부분 문자열 매칭). decisions.md 33.3-①(PoC-24) 확정:
+#   · 대상 = 직접녹음만, S_103(AI Hub 화재) 제외 — 최약 클래스 doorbell 수혜 + 규격 화재음 왜곡 회피.
+#   · 위상 = 보조 수단(doorbell 성능의 실제 지렛대는 직접녹음 절대량, 8주차 유입 후 실효).
+#   · 명명 규칙 = 직접녹음 파일명 `direct_` prefix(예: direct_doorbell_001) → 유입 시 아래를
+#     `("direct_",)` 한 줄로 교체하면 활성화. AI Hub 소스(S_103 등)는 prefix 없어 자동 미포함.
+#   · 현재 `()` = 의도적 비움(04_direct_recording=0, 직접녹음 유입 전) → pitch 대상 0, 완전 inert.
 KOREAN_SOURCE_MARKERS: tuple[str, ...] = ()
 
 # --------------------------------------------------------------------------
