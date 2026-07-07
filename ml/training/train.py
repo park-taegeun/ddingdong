@@ -75,6 +75,10 @@ def train(
         embed_fn = model.yamnet_embed_fn(yamnet)
 
     # 3) 데이터셋 (train 만 shuffle, val 은 증강·셔플 없음)
+    #    SpecAugment 모드 = "embedding" 유지(decisions.md 33.3-② / PoC-24). hub YAMNet 임베딩은
+    #    blackbox → SpecAugment(spec_augment.py) 도달 불가하여 embedding 경로엔 미적용.
+    #    "logmel" 모드(frontend.py log-mel → SpecAugment → local core)는 구현·검증 완료(레이어 보존),
+    #    배선은 직접녹음 유입 후 A/B 비교로 defer. 그때 이 make_embedding_dataset 를 분기 교체.
     train_ds = data.make_embedding_dataset(train_ex, embed_fn, training=True, batch_size=batch_size)
     val_ds = data.make_embedding_dataset(val_ex, embed_fn, training=False, batch_size=batch_size)
 

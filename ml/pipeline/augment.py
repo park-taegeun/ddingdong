@@ -122,10 +122,10 @@ def augment(paths: Paths, clean: bool = True) -> dict[str, int]:
 
     pitch_applicable = any(_pitch_targets(r["stem"]) for r in train_rows)
     if config.PITCH_SHIFT_MODE == "korean_only" and not pitch_applicable:
-        log.warning(
-            "pitch shift 적용 대상 0 (mode=korean_only, KOREAN_SOURCE_MARKERS=%r). "
-            "→ 한국 환경음 소스 명명 규칙 확인 후 config.KOREAN_SOURCE_MARKERS 설정 필요 "
-            "(막힘 트리거: 학부생 결정).",
+        log.info(
+            "pitch shift 대상 0 (mode=korean_only, KOREAN_SOURCE_MARKERS=%r). "
+            "직접녹음 유입 전 의도된 정상 상태(decisions.md 33.3-①) — `direct_` prefix 클립 "
+            "유입 후 config.KOREAN_SOURCE_MARKERS=(\"direct_\",) 세팅 시 활성화.",
             config.KOREAN_SOURCE_MARKERS,
         )
 
