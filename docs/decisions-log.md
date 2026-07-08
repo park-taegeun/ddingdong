@@ -937,3 +937,44 @@
 
 **관련 카테고리**: 3 (신뢰도 임계값 클로즈) / 5 (한국 환경음 정의) / 8.3 (화재뱃지 클로즈) / 33.3 (ML 미결 2→0) / 20 (docs-only main 직접 push)
 **관련 commit**: 코드 PR #19 `d614370` · #20 `4f563a2` · #21 `2dd8f9c` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
+
+---
+
+## 2026-07-08 (화) — PoC-(25) 서버 조기경보 + SP/DTW 개체구분 스파이크 + pretest 8.42 규명 → USP 정량 근거 재정립 (카테고리 6.2 + 33.5 신설)
+
+> 2026-07-08 오늘 완료 3건(A 서버 조기경보 실측 / B DTW 개체구분 스파이크 / C pretest 8.42 포렌식 규명)을 decisions.md에 각인. 코드는 PR #22·#23 기 머지 — 본 entry는 기록(코드 0). 문서 단독, main 직접 push.
+
+**A. 서버 ML 추론 서빙 조기경보 실측 (카테고리 6.2 신설, PR #22 `169a2fc`)**:
+- 메모리 peak RSS **489.1MB / 2048MB** 예산 OK(분해: baseline 35.8 → +TF import 375.8 → +YAMNet 51.9 → infer 489.1), **TFLite 불필요**(권고선 1740.8MB 미달).
+- 지연 p50 **4.26ms** / p95 **6.74ms** / 5000ms 예산 OK. **★ 1차 ≤5초 병목 = ML 아님** → 실 병목 = ESP32 업로드 + 카카오 왕복(14주차 튜닝 타겟 재조정).
+- gunicorn 2워커 preload COW = 1×모델 + 2×오버헤드(2×모델 아님), 2GB 안.
+- 🔴 **wire 계약 갭**: `/detect` 오디오 바이트 미수신(mock random) + transport 계약(multipart/base64/raw) 미정의 + int16 가정 firmware 미검증(INMP441 I2S 24/32bit) → **11주차 통합 체크포인트**.
+
+**B. SP/DTW 초인종 개체 구분 스파이크 (카테고리 33.5, PR #23 `086c6da`)**:
+- 분리 마진 **1.713**(Cohen's d류) → 권고선 2.0 미달 = **NO-GO/재검토**. intra 0.2601±0.1150 / inter 0.4263±0.0748, 정확도 83.6% / EER 17.5%, 182 원본그룹.
+- 🔴 캐비앗: intra=인접조각≠독립 재-누름 = **낙관 상한** → 직접녹음(04) 재검증 필수.
+
+**C. pretest "8.42" 정체 규명 (읽기전용 포렌식, 코드 무변경, 카테고리 33.5)**:
+- 8.42 출처 = pretest `step4_dtw_evaluate.py`(`907c950`) = **(B) 클래스 간 분리**(초인종 vs 노크/화재) = 2차 필터 변별력. **USP(개체 간=옆집 구분) 근거로 무효**('같은 집' 버킷도 실제 다른 FSD50K 클립 = 개체 개념 부재).
+- 8.42 vs 1.713 **직접 비교 무효**(측정대상·특징 64/128bin·정규화·마진정의 4중 상이 + pretest 마진 정의 부재). 확신도: 측정대상=클래스 간 **높음** / 8.42 산술 재현 **낮음**(repo·git 전체 "8.42" 부재).
+- 8.42 폐기 아님 — 위상만 "2차 필터 변별력"으로 재배치.
+
+**★ (B)+(C) 종합 = USP 정량 근거 재정립 (오늘 최대 발견)**: 초인종 개체 구분 = pretest 미검증 확정, 스파이크 1.713(낙관 상한) 권고선 미달 → 직접녹음 90클립 재-누름 intra로 재검증(스파이크 코드 `--clips-dir` 04, 11~12주차). 카테고리 26.3 진입점 2에 USP 정량 근거 상태 note append.
+
+**미결정 신규 등록 (33.5 미결 항목)**: ① USP 정량 근거 재정립(발표 슬라이드 8.42 인용 정정 대상, 개체 구분 재검증 대기) ② 인용 논문 Meliza 2013(PMC3745477) 위상 재검토 ③ **별도 코드 태스크**: `constants.py:25 PRETEST_MARGIN` 오도성 주석("카테고리 근거") → "클래스 간 변별, USP 근거 아님" 정정(본 태스크 문서단독 §7 코드 무수정 → 후속 등록만).
+
+**8.42 처리 방식 (catch 결과 명기)**: `git show HEAD:docs/decisions.md | grep "8.42"` = **0건** → decisions.md에 8.42 원래 부재 = **취소선 정정 대상 없음.** 8.42는 스파이크 코드 `constants.py:25`에만 존재(§7 수정금지) → **취소선 X, 순수 신설 note로 위상 명문화**(학습 19 = 위임 Step 4 "8.42 취소선" 전제가 실측과 불일치 → §9 정지 + AskUserQuestion pivot 승인 후 진행, 날조 회피).
+
+**703 태그 대조 (Step 7)**: decisions.md:703 "노션 plan 게이트 정정 (2026-07-06 **PoC-(22)** Set 3)" ↔ decisions-log 2026-07-06 entry = **PoC-(22)** 일관(894행 "PoC-(22) Set 3 실측") → 태그 정확, **현상 유지**(억지 수정 X).
+
+**SSoT 정합 검증 (문서라 코드 3단계 N/A, 대신 머지 코드↔문서 spot-check)**: `server/inference/constants.py`(`SAMPLE_RATE=16000` / `MEM_BUDGET_MB=2048` / `LATENCY_BUDGET_MS=5000` / `TFLITE_ADVISE_RATIO=0.85`) ✓ / `ml/experiments/dtw_doorbell/`(constants·distance·experiment·features·synth_smoke·README·__init__·tests) 존재 ✓ / 기록 숫자(489MB·6.74ms·1.713·8.42=클래스간)가 실 머지 산출물과 모순 없음 ✓.
+
+**학습 적용**:
+- 학습 19 (근본원인 진단 재검증): 적용 — 위임 Step 4 "8.42 decisions.md 취소선" 전제가 grep 0건으로 **실측과 불일치** → 맹목 적용(날조) 금지, §9 정지 + pivot 승인 후 신설 note로 전환.
+- 학습 14 (카테고리 번호 사전 검증): 적용 — 6·33 실번호 grep 실측 + PR #22/#23 hash `git log` 실측 후 인용.
+- 학습 8 (원본 이력보존): 적용 — 물리 삭제 0(신규 전부 append), 703 태그 억지 수정 X.
+
+**비범위**: 코드 0 수정(PR #22/#23 기 머지 + constants.py 주석은 후속 코드 태스크 등록만, 손대지 않음). docs 2파일(`decisions.md` + `decisions-log.md`)만. 카테고리 1~5/6.1/7~32/33.1~33.4 무수정. 노션 동기화 = 별도 Set 이월.
+
+**관련 카테고리**: 6.2 (서버 조기경보 신설) / 33.5 (DTW 스파이크 + 8.42 규명 + USP 재정립 신설) / 26.3 (진입점 2 USP 근거 상태 note) / 20 (docs-only main 직접 push)
+**관련 commit**: 코드 PR #22 `169a2fc` · #23 `086c6da` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
