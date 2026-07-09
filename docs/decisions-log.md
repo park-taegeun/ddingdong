@@ -978,3 +978,44 @@
 
 **관련 카테고리**: 6.2 (서버 조기경보 신설) / 33.5 (DTW 스파이크 + 8.42 규명 + USP 재정립 신설) / 26.3 (진입점 2 USP 근거 상태 note) / 20 (docs-only main 직접 push)
 **관련 commit**: 코드 PR #22 `169a2fc` · #23 `086c6da` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
+
+---
+
+## 2026-07-09 (수) — PoC-(26) transport A안 확정 + PR #24·#25 wire 하네스 + ToF Stage B(B)판정 + USP 2층 재정립 + 4유닛 프로토콜 (카테고리 6.2/9/26.3/33.5 append + 5.1 append)
+
+> 2026-07-09 오늘 확정 6건(transport A안 / PR #24 디코딩 실증 / PR #25 업로드 하네스[런타임 대기] / 서빙 3결정 / ToF Stage B(B)판정 / USP 2층 재정립 + 4유닛 프로토콜)을 decisions.md에 각인. 코드는 PR #24 `6ab693f` · PR #25 `f0e4163` 기 머지 — 본 entry는 기록(코드 0). 문서 단독, main 직접 push.
+
+**A. transport 계약 A안 확정 + PR #24·#25 wire 하네스 (카테고리 6.2 append)**:
+- **A안 확정**: multipart/form-data + int16 PCM raw bytes(64KB/2초). 근거 = 업로드가 1차 5초 병목 후보(6.2)라 페이로드 최소화(base64 +33% 오버헤드 회피) + `audio_decode.py` int16 계약 무수정 정합. → **wire 갭 transport 절반 CLOSE**(나머지 절반 = INMP441 I2S→int16 변환 검증, 마이크 결선 후).
+- **PR #24** (`6ab693f`): `/detect` JSON→multipart 교체 + `audio_decode.py`(frozen) 디코딩 실증 — 합성 440Hz 64KB → RMS **0.353528**(이론 0.3536 일치)/decode 0.038ms. curl 회귀 10종 0.
+- **PR #25** (`f0e4163`): ESP32 PSRAM 합성 PCM + multipart POST + 지연측정(N=14, ≥6초 간격) 하네스. **컴파일 성공**(RAM 13.5%/Flash 22.2%, Stage 2 트리거 미달). **⏳ 런타임 미실측**(보드 USB 미연결 → compile-only + prereq 체크리스트 핸드오프).
+- **서빙 연결 3결정**: (a) 모델 싱글턴 1회 로드 (b) TF venv RSS +375~490MB(6.2 실측) → 11주차 EC2 2GB 재확인+아키텍처 결정 (c) mock_prediction 딕셔너리 매핑. infer 103ms(콜드)≠6.2의 6.74ms(웜) 위상 구분 명시.
+
+**B. ToF Stage B Motion Indicator 노출 확정 (카테고리 9 append, 판정 B)**:
+- 래퍼 전용 메서드 0건 → 번들 ULD 함수(`vl53l5cx_motion_indicator_*`) `imager.Dev` 핸들 직접호출. RAM +156B. **⏳ 런타임 = 센서 대기**(브레드보드 결선 후, 학습 15 4단계 중 ③까지 확정). frozen 파일 0 수정.
+
+**C. USP 2층 재정립 (카테고리 26.3 + 33.5 append, ★ 발표 직결)**:
+- 옆집 구분 = **2층 구조**: 1차 ToF 사람 존재 검증(카테고리 9, VL53L5CX 단독) + 2차 보조 SP/DTW 오디오 지문(등록 시). 이전 "USP 붕괴"는 SP/DTW **단층 평가 아티팩트** — 8.42 폐기 아님(클래스 간 2차 필터 변별로서 유효), "옆집 구분 주력 근거" 위상만 mislabel이었음.
+- 26.3 진입점 2 라벨 정정: `"옆집 초인종 잘못 반응 X" (SP/DTW)` → `(ToF presence 1차 융합 + SP/DTW 보조 2차)`(strikethrough 이력보존).
+- **정직 표기**: 양층 런타임 미검증 — ToF presence 설계 견고하나 미측정(브레드보드 후), SP/DTW 1.713 낙관 상한(직접녹음 4유닛 재검증). 위상 = "2층 설계 확정 + 양층 검증 예정"(근거 없음 아님).
+- 데모 방향 = ToF presence 리드 시연(우리집=사람+소리→알림/옆집=스피커만·사람없음→억제/등록=SP/DTW 보너스), SP/DTW 4종 라이브 단독 시연 NO(1.713 약함 노출 회피).
+- 33.5 미결 항목 ①②를 strikethrough+화살표로 진화(이력보존, 학습 8): ① USP 2층 설계 확정으로 갱신, ② Meliza 2013 위상=보조층 근거로 조정 완료.
+
+**D. 직접녹음 4유닛 프로토콜 확정 (카테고리 5.1 append)**:
+- 파일명 확장 `direct_doorbell_{유닛}_{테이크}.wav` — 유닛 식별 없인 재-누름 intra 측정이 구조적으로 불가능(기존 `direct_doorbell_001`은 파일=원본그룹이라 전부 inter로 오분류)했던 문제 해소.
+- 4유닛(★ 같은 모델 ×2 필수) × 15~18테이크 ≈ 90클립, inter=C(4,2)=6쌍(같은모델 1쌍+다른모델 5쌍). 3유닛 검토 후 4유닛 확정(1.713 상한 교훈=오염 벤치 회피).
+
+**노션 미러 (Set 3)**: DB1 신규 row(PoC-(26)) + 페이지 상단 메타 콜아웃/오늘 작업/일정표 갱신(re-fetch 검증 통과) + DB3 신규 3건(ToF Stage B 런타임 / 업로드 런타임 / 서빙 3결정 실행) + 기존 "USP 정량 근거 재정립" row 코멘트로 진화(🟡 보류 유지, 트리거 7/27 > D+7).
+
+**학습 적용**:
+- 학습 13/14 (카테고리 번호·SSoT 문구 사전 실측): 적용 — 6.2/9/26.3/33.5/5.1 실번호 `git show HEAD:docs/decisions.md | grep` 실측(115/309/1027/1472/78) 후 편집, 26.3 "(SP/DTW)" 라벨 + 7/8 note 실물 grep 확인 후 진행(§9 정지 트리거 미발동).
+- 학습 18 (PR 웹 머지 후 로컬 main pull 필수): 무관(본 태스크는 문서 단독, 코드 PR 아님) — 단 PR #24/#25가 이미 머지된 HEAD(`f0e4163`) 위에서 편집 시작함을 `git log` 실측으로 확인.
+- 학습 8 (원본 이력보존): 적용 — 26.3 라벨 정정(strikethrough+신규 병기) + 33.5 미결 항목 ①② 진화(strikethrough+화살표), 물리 삭제 0.
+- github MCP 인증 이슈(카테고리 18) 참고: 본 entry는 문서 단독 push라 github MCP `create_pull_request` 자체를 호출하지 않음(PR 미생성) — Bad credentials 재현 여부 무관(직전 PR #25 생성 시 `gh` CLI 폴백으로 이미 재현·우회 완료).
+
+**SSoT 정합 검증 (문서라 코드 3단계 N/A, 대신 머지 코드↔문서 spot-check)**: `server/app/routes.py` multipart 파싱 + `AUDIO_FILE_FIELD`/`AUDIO_MAX_BYTES` 상수(PR #24) ✓ / `firmware/platformio.ini` `[env:upload_spike]` whitelist + `firmware/src/upload_spike_*.cpp`(PR #25) ✓ / 기록 숫자(RMS 0.353528·RAM 13.5%·Flash 22.2%·RAM+156B) 실 머지 산출물과 모순 없음 ✓.
+
+**비범위**: 코드 0 수정(PR #24/#25 기 머지, 본 entry docs-only). 카테고리 1~4/5(위 append 제외)/6.1/7/8/10~25/27~32/33.1~33.4(위 append 제외) 무수정. secrets/개인정보 실값 미기록.
+
+**관련 카테고리**: 6.2 (transport A안 + PR #24·#25 + 서빙 3결정 append) / 9 (ToF Stage B 판정 append) / 26.3 (진입점 2 라벨 정정 + USP 2층 note) / 33.5 (USP 2층 재정립 신설 + 미결 항목 진화) / 5.1 (direct_ 파일명 확장 + 4유닛 프로토콜 append) / 20 (docs-only main 직접 push)
+**관련 commit**: 코드 PR #24 `6ab693f` · #25 `f0e4163` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
