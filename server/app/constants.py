@@ -21,5 +21,12 @@ MAX_PAGE_LIMIT = 100
 # stats period 단일값 (카테고리 6.1, stats.ts StatsPeriod)
 STATS_PERIOD = "today"
 
+# 카테고리 6.2 A안 (2026-07-09 PoC-(26) transport 계약): /detect multipart 오디오 파트명
+AUDIO_FILE_FIELD = "audio"
+
+# 오디오 파트 최대 크기 — 10초 @ 16kHz mono int16 (2 bytes/sample) 상한 + 여유
+# (§0 기준치 64KB/2초 대비 5배 여유; PoC 단계 단발 발화 상한이라 충분)
+AUDIO_MAX_BYTES = 320_000
+
 # 한국 표준시 (KST, UTC+9). DB 는 naive UTC 저장, 응답 직렬화 시 KST 변환.
 KST = timezone(timedelta(hours=9))
