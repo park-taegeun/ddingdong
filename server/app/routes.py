@@ -1,19 +1,23 @@
 """API v1 엔드포인트 4종 (카테고리 6.1).
 
-  POST /api/v1/detect         ESP32 1차: mock 추론 + notification 저장 (Device Token)
+  POST /api/v1/detect         ESP32 1차: multipart 오디오 수신+디코딩 + mock 추론 + notification 저장 (Device Token)
   POST /api/v1/enrich         ESP32 2차: 사진/STT mock 채움 (Device Token)
   GET  /api/v1/notifications  대시보드 폴링: cursor pagination (Dashboard Token)
   GET  /api/v1/stats          대시보드 폴링: period=today 집계 (Dashboard Token)
 """
 
+import time
 from datetime import timedelta, timezone
 
-from flask import Blueprint, jsonify, request
+import numpy as np
+from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import select
 
 from . import rate_limit
 from .auth import dashboard_auth, device_auth
 from .constants import (
+    AUDIO_FILE_FIELD,
+    AUDIO_MAX_BYTES,
     DEFAULT_PAGE_LIMIT,
     DEVICE_RATE_LIMIT_SECONDS,
     KST,
@@ -33,6 +37,10 @@ from .utils import (
     utc_now,
 )
 
+# server/inference 는 app 과 분리된 sibling 패키지(frozen, 카테고리 6.2) — import 호출만.
+from inference.audio_decode import decode_pcm16
+from inference.constants import SAMPLE_RATE
+
 bp = Blueprint("api_v1", __name__, url_prefix="/api/v1")
 
 
@@ -40,15 +48,22 @@ bp = Blueprint("api_v1", __name__, url_prefix="/api/v1")
 @bp.post("/detect")
 @device_auth
 def detect():
-    payload = request.get_json(silent=True) or {}
-    client_request_id = payload.get("client_request_id")
-    device_id = payload.get("device_id")
+    # transport A안 (카테고리 6.2, 2026-07-09 PoC-(26)): multipart/form-data.
+    # 메타는 form field, 오디오는 raw int16 PCM 파일 파트(AUDIO_FILE_FIELD).
+    client_request_id = request.form.get("client_request_id")
+    device_id = request.form.get("device_id")
     if not client_request_id or not device_id:
         raise ApiError(400, "bad_request", "client_request_id 와 device_id 는 필수입니다.")
 
+    audio_file = request.files.get(AUDIO_FILE_FIELD)
+    if audio_file is None or audio_file.filename == "":
+        raise ApiError(
+            400, "bad_request", f"오디오 파일('{AUDIO_FILE_FIELD}' 파트)이 필요합니다."
+        )
+
     now = utc_now()
 
-    # 1) idempotency 우선 — 네트워크 재시도는 rate limit 소모 없이 캐시 응답 replay
+    # 1) idempotency 우선 — 네트워크 재시도는 rate limit·오디오 디코딩 소모 없이 캐시 응답 replay
     existing = db.session.get(IdempotencyKey, client_request_id)
     if existing is not None:
         if existing.is_valid(now):
@@ -59,7 +74,7 @@ def detect():
         db.session.delete(existing)  # TTL 만료 → 폐기 후 신규 처리
         db.session.flush()
 
-    # 2) rate limit (device_id 5초당 1회)
+    # 2) rate limit (device_id 5초당 1회) — 통과 전엔 오디오를 읽지 않아 스팸 요청의 디코딩 비용 회피
     retry_after = rate_limit.check_and_register(device_id)
     if retry_after is not None:
         raise ApiError(
@@ -69,7 +84,35 @@ def detect():
             headers={"Retry-After": str(retry_after)},
         )
 
-    # 3) mock 추론 → notification 저장 (실제 YAMNet 통합은 11주차)
+    # 3) 오디오 디코딩 (audio_decode.py 계약 호출, 카테고리 6.2 — 수정 금지·import 만)
+    audio_bytes = audio_file.read()
+    if len(audio_bytes) > AUDIO_MAX_BYTES:
+        raise ApiError(
+            400,
+            "bad_request",
+            f"오디오 크기 초과: {len(audio_bytes)} bytes (최대 {AUDIO_MAX_BYTES} bytes).",
+        )
+    decode_started = time.monotonic()
+    try:
+        waveform = decode_pcm16(audio_bytes)
+    except ValueError as exc:
+        raise ApiError(400, "bad_request", f"오디오 디코딩 실패: {exc}") from exc
+    decode_ms = (time.monotonic() - decode_started) * 1000
+
+    current_app.logger.info(
+        "detect audio decoded: samples=%d dtype=%s duration_s=%.3f min=%.4f max=%.4f "
+        "rms=%.4f decode_ms=%.2f",
+        waveform.shape[1],
+        waveform.dtype,
+        waveform.shape[1] / SAMPLE_RATE,
+        float(waveform.min()),
+        float(waveform.max()),
+        float(np.sqrt(np.mean(np.square(waveform)))),
+        decode_ms,
+    )
+
+    # 4) mock 추론 → notification 저장. waveform 은 디코딩까지만 준비(예측 미연결,
+    # 실 서빙 통합은 별도 위임 — Step 6 리포트 참조)
     pred = mock_prediction()
     request_id = new_request_id()
     notif = Notification(
@@ -98,7 +141,7 @@ def detect():
     db.session.flush()  # PK 확정
 
     body = notif.to_dict()
-    # 4) idempotency 키 기록 (동일 client_request_id 24h 내 재요청 → 위 replay)
+    # 5) idempotency 키 기록 (동일 client_request_id 24h 내 재요청 → 위 replay)
     db.session.add(
         IdempotencyKey(
             client_request_id=client_request_id,
