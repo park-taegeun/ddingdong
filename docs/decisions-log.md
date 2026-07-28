@@ -1019,3 +1019,26 @@
 
 **관련 카테고리**: 6.2 (transport A안 + PR #24·#25 + 서빙 3결정 append) / 9 (ToF Stage B 판정 append) / 26.3 (진입점 2 라벨 정정 + USP 2층 note) / 33.5 (USP 2층 재정립 신설 + 미결 항목 진화) / 5.1 (direct_ 파일명 확장 + 4유닛 프로토콜 append) / 20 (docs-only main 직접 push)
 **관련 commit**: 코드 PR #24 `6ab693f` · #25 `f0e4163` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
+
+---
+
+## 2026-07-28 (화) — PoC-(27) ESP32 업로드 지연 런타임 실측 (⏳→✅, 인계 미검증 2건 중 ①번 해소) → 카테고리 6.2 SSoT 반영
+
+### 결정 진화 (카테고리 6.2, PR #25 line 127)
+- **⏳ 런타임 미실측 → ✅ 런타임 실측 완료** (strikethrough+append, 학습 8 이력보존). PR #25 하네스(합성 int16 PCM multipart POST)를 실보드에서 구동.
+- 실측 환경: XIAO ESP32-S3 + iPhone 핫스팟(2.4GHz, RSSI -45dBm) + Flask 로컬(172.20.10.3:5000, M4), 서버=mock 추론, transport=multipart+int16 64KB.
+- 수치: Phase1 64KB×14 = min156/p50 305/p95 1043/max1879ms, 201 14/14. Phase2 스윕 32/64/128KB avg 95.7/318.3/358.0ms(크기 2배여도 미미=무선 오버헤드 지배). Phase3 분해 connect 270/post 279/total 549 = **TCP 연결이 지연 절반**. iter11~13 튐(1879/1043/640)=핫스팟 무선 간헐 스파이크.
+- **판정**: 1차 5초 예산 대비 p95 1043ms = 20%, 업로드 병목 아님. 인사이트: TCP connect가 지연 절반 → keep-alive 재사용 시 절감 여지(14주차 타이밍 튜닝 타겟).
+
+### prereq 배선 6단계 확립
+- 핫스팟 IPv6 off로 IP 정상화 / 2.4GHz 재방송 등 6단계로 런타임 실행 경로 확립.
+
+### 학습
+- **인계 IP 하드코딩 가변성 실증**: 랩실 192.168 → 핫스팟 172.20 전환으로 IP 하드코딩의 환경 의존성 실측 확인.
+
+**SSoT 정합 검증 (문서라 코드 3단계 N/A)**: 전제 문구 "⏳ 런타임 미실측"을 `git show HEAD:docs/decisions.md | grep` line 127 실측 hit 후 편집(§9 정지 트리거 미발동). 카테고리 6/20 실번호 실재 확인. 로그 원본 = repo 밖 `ddingdong-측정결과/upload_spike_2026-07-28.txt`(SSoT엔 요약만, 원본 미커밋).
+
+**비범위**: 코드 0 수정(PR #25 기 머지, frozen 하네스 import/read만). `docs/decisions.md`(line 127) + `docs/decisions-log.md`만 편집. 인계 미검증 2건 중 ②번(ToF Stage B 등)은 별도.
+
+**관련 카테고리**: 6.2 (업로드 지연 실측 append) / 20 (docs-only main 직접 push)
+**관련 commit**: 코드 PR #25 `f0e4163` (기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only)
