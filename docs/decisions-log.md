@@ -1067,3 +1067,27 @@
 
 **관련 카테고리**: 7.2 (카카오 왕복 실측 신설) / 6.2 (5초 체인 합산 판정 append + 병목 서술 정정) / 20 (docs-only main 직접 push)
 **관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)
+
+---
+
+## 2026-07-29 (수) — PoC-(29) HTTPS(TLS) 업로드 재실측 런타임 완료 (⏳→✅) + 서빙 b-1 확정 + core/pio 실측 정합 주석 (카테고리 6.2)
+
+### 실측 (카테고리 6.2 HTTPS 하네스 ⏳→✅)
+- **Δ_TLS(tls_handshake) p50 678 / p95 862ms**. secure_connect(TCP+TLS) p50 720/p95 882 vs 평문 TCP connect p50 48/p95 245. post(64KB) p50 917/p95 1105. **total(conn+post) p50 1677 / p95 1863ms**. 성공 14/14 + HTTP 200 14/14, heap 최저 워터마크 244,616B(리셋 0회).
+- **세션 재개 없음**: Phase 2 back-to-back tls_hs ~695ms = 콜드와 동일 → connect마다 fresh 핸드셰이크(context7 정합). cipher = `TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384`(F4 cert 실반영), 측정 = TLS 1.2/2-RTT(core 2.0.17 mbedTLS 2.28.7).
+- 조건: iPhone 핫스팟 RSSI -37 + 로컬 tls_probe_server.py(M4, ECDSA P-256 self-signed). 프로덕션 가산 = 2-RTT×EC2_RTT(~15ms)+DNS 1회 ≈ +50ms → 추정 total p95 ≈ 1.9초.
+- **★ 판정: TLS 켜도 1차 체인 총합 p95 ≈ 2.0초 = 예산 40% — 동기 발송 충분, keep-alive 필수 아님**(콜드 862ms 매 이벤트 물어도 예산 내). 7/28 HTTP total 1043 대비 Δ +820ms = TLS 핸드셰이크분. 로그 원본 = repo 밖 `ddingdong-측정결과/upload_spike_tls_2026-07-29.txt`. PR #26 `ca19230` 머지.
+
+### 결정 (카테고리 6.2 (b) 서빙 아키텍처)
+- **b-1 웹프로세스 상주 확정**: gunicorn preload + ModelRunner 싱글턴 상주(COW 공유). 근거 = 실측 RSS 489MB=2GB의 24%(분리 압박 없음) + 추론 웜 6.74ms(IPC 분리 이득 0) + 졸작 규모에 b-2 오버엔지니어링. ⚠️ 트리거 = 11주차 EC2(t3.small) 실측 RSS 예산 초과 시 b-2 재검토. chunk 2(/detect 실 서빙 통합) 선행 게이트 해소.
+
+### 정합 주석 (첫 턴 catch)
+- **core 버전**: firmware core = Arduino-ESP32 2.0.17 / mbedTLS 2.28.7 — "v3.20017"은 PIO 패키지 버전 문자열(3.20017.241212)이며 core 3.x 아님(레거시 driver/i2s.h 의존 = 2.0.x 확정).
+- **pio 경로**: `~/.platformio/penv/bin/pio` 절대경로 실행(PATH 미등록, 7/28·7/29 재현).
+
+**SSoT 정합 검증 (문서라 코드 3단계 N/A)**: 6.2 위치(117행) + "★ 1차 5초 체인 전 구간 실측 완성"(130행) + (b) 열린 문구 "웹프로세스 상주 vs 별도 서빙 프로세스"(129행) + "⏳ 런타임 미실측"(131행) 전건 `git show HEAD` grep 실존 hit 후 append(§9 정지 트리거 미발동, 학습 14).
+
+**비범위**: 코드 0 수정(docs 2파일만). 측정 로그 원본 repo 밖 유지(미커밋). 토큰/IP/비번 미기록. 이력보존 = 기존 ⏳ 문구 취소선 없이 ✅ append.
+
+**관련 카테고리**: 6.2 (HTTPS 실측 ⏳→✅ + b-1 확정 + core/pio 주석) / 20 (docs-only main 직접 push)
+**관련 commit**: 코드 PR #26 `ca19230`(기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)
