@@ -40,6 +40,9 @@ build/
 # === 펌웨어 자격증명 (실 파일은 절대 push 금지, template만 commit) ===
 firmware/include/secrets.h
 
+# === TLS 프로브 서버 self-signed cert/key (tls_probe_server.py 자동 생성물, push 금지) ===
+firmware/tools/certs/
+
 # === ML 데이터/모델 placeholder (8주차 진입 시 정책 재정의) ===
 ml/data/
 ml/models/
