@@ -120,12 +120,14 @@
 
 - **메모리 (peak RSS 489.1MB / 2048MB 예산 → OK)**: 분해 = baseline 35.8 → +TF import **375.8**(대부분 여기) → +YAMNet load **51.9** → infer 489.1. **TFLite 전환 불필요**(권고선 = 예산 85% ≈ 1740.8MB, 489.1은 한참 미달). 상수 = `server/inference/constants.py`(`MEM_BUDGET_MB=2048` / `TFLITE_ADVISE_RATIO=0.85`).
 - **지연 (p50 4.26ms / p95 6.74ms / 5000ms 예산 → OK)**: M4 하한값 — t3.small이 수 배 느려도 예산 여유. **★ 함의: 1차 ≤5초 병목은 ML 추론이 아님.** 실 병목 = ESP32 오디오 업로드(네트워크) + 카카오 발송 왕복 → 14주차 타이밍 튜닝 타겟을 ML에서 네트워크/외부 API로 재조정.
+  - ※ 7/29 카카오 실측으로 정정: 카카오 왕복 p95 84.1ms — 실 병목은 **업로드 단독**(카테고리 7.2 참조).
 - **gunicorn 2워커**: `preload_app=True` fork 후 모델 페이지 copy-on-write 공유 → 실메모리 ≈ 1×모델 + 2×워커 오버헤드(2×모델 아님). 워커 1개 하한 490MB → 2워커 최악 ~1.5GB, 2GB 안(11주차 EC2 최종 확인).
 - **🔴 wire 계약 갭 (통합 리스크, 11주차 통합 체크포인트로 못 박음)**: 현재 `/detect` = `client_request_id`+`device_id` JSON만 수신, **오디오 바이트 미수신**(`mock_prediction()` = random). byte→waveform **디코딩** 계약은 `audio_decode.py`에 정의(PCM int16 LE / 16kHz / mono / ÷32768 → [-1,1])되나, **transport 계약(multipart / base64 / raw body)은 미정의** = 11주차 통합 시 확정 필요. + **int16 가정은 firmware 미검증**(INMP441 I2S 24/32bit → ESP32 int16 변환 여부 미확인) → 포맷 불일치 잠복.
 - **transport 계약 A안 확정 (2026-07-09 PoC-(26))**: multipart/form-data + int16 PCM raw bytes(64KB/2초). 근거 = 업로드가 1차 5초 병목 후보(본 카테고리)라 페이로드 최소화(base64 +33% 오버헤드 회피) + `audio_decode.py` int16 계약 무수정 정합 + 메타(`client_request_id`/`device_id`) form field 동봉. → **wire 갭 transport 절반 CLOSE.** 나머지 절반(INMP441 I2S 24/32bit→ESP32 int16 변환 검증)은 마이크 결선 후.
 - **PR #24 (server, /detect 실 오디오 배선, `6ab693f`)**: JSON→multipart 교체 + `server/inference/audio_decode.py`(frozen) import 호출로 디코딩. 디코딩 계약 실증 — 합성 440Hz 사인톤 64KB → 32,000 샘플/float32/RMS **0.353528**(이론 0.5/√2=0.3536 일치)/decode 0.038ms. curl 회귀 10종 0(rate limit 429/idempotency 200 replay/auth 401/타 라우트 200·200·409 무변경). 게이트 순서 = idempotency→rate limit→decode→mock. `numpy==2.5.1` 라이브 venv 추가(TF 미유입, audio_decode는 numpy 전용). 상수 `AUDIO_FILE_FIELD="audio"`/`AUDIO_MAX_BYTES=320000`. 예측 = mock 유지(스코프 분리).
 - **PR #25 (firmware, ESP32 업로드 측정 하네스, `f0e4163`)**: 합성 int16 PCM(PSRAM) + multipart POST + 지연측정(N=14, ≥6초 간격, p50/p95). 컴파일 성공(RAM 13.5%/Flash 22.2%, Stage 2 트리거 미달). ~~**⏳ 런타임 미실측**(보드 USB 미연결 → compile-only + prereq 체크리스트 핸드오프)~~ **✅ 런타임 실측 완료 (2026-07-28 PoC-(27))**: iPhone 핫스팟(2.4GHz, RSSI -45) + Flask 로컬(172.20.10.3, M4). Phase1 64KB×14 = p50 305/p95 1043ms(min156/max1879), 201 14/14. 스윕 32/64/128KB avg 95.7/318.3/358.0(크기 2배여도 미미=무선 오버헤드 지배). 분해 connect 270/post 279/total 549 = **TCP 연결이 지연 절반**. 판정: 5초 예산 대비 p95 20%, 업로드 병목 아님. 인사이트: keep-alive 재사용 시 지연 절감 여지(14주차 튜닝 타겟). iter11~13 튐=핫스팟 간헐 스파이크. 로그 원본 = repo 밖 ddingdong-측정결과/upload_spike_2026-07-28.txt. whitelist env(env:poc blacklist 미접촉). secrets = gitignored blind-append 플레이스홀더(실 값 = 학부생 런타임 전 교체).
 - **서빙 연결 3결정 (2026-07-09 PoC-(26) Step 6 조사, frozen 수정 불요 = 전부 라이브 앱 신규코드)**: (a) 모델 **싱글턴 1회 로드**(요청당 3.66s 로드는 5초 예산 잠식) (b) **TF 라이브 venv 추가 = RSS +375~490MB(본 카테고리 실측) 실발생 → 11주차 EC2 2GB 재확인 + 아키텍처 결정**(웹프로세스 상주 vs 별도 서빙 프로세스) (c) (1,3) softmax → `mock_prediction` 딕셔너리 매핑 신규. ※ **infer 103ms(콜드 첫 호출, 그래프 트레이싱/워밍업 포함) ≠ 위 6.74ms(웜 추론)** — 위상 구분(혼동 방지).
+- **★ 1차 5초 체인 전 구간 실측 완성 (2026-07-29)**: 업로드 p95 1043ms(7/28, 본 카테고리 PR #25) + 디코딩 0.04ms(PR #24) + 추론 웜 p95 6.74ms(PR #22, 콜드 첫 호출 시 103ms) + 카카오 왕복 p95 84.1ms(7/29, 카테고리 7.2) = **합산 p95 ≈ 1134ms = 5초 예산의 23%**(콜드 추론 가정 시 ≈1230ms = 25%). 잔여 여유 ≈ 3.87초. **판정: 동기 발송으로 충분 — 비동기 발송 아키텍처 불필요.** 실질 병목 = 업로드 단독(체인의 92%). "카카오 왕복 = 유일 미측정 구간" **CLOSE**. (실측 상세 = 카테고리 7.2)
 
 ---
 
@@ -188,6 +190,15 @@
 - S5 korea.kr "청각·언어장애인 119 직접 신고" 2025.4.17 개통 — 보조.
 
 **잔존 유보 1건**: "손전등·밝은 천 흔들기" = 1차 출처(S1~S6) 직접 근거 없는 **일반 시각 구조신호** → 발표 전 시·도 소방본부 청각장애인 자료에서 직접 근거 추가 확인 권고. 과한 구체화 금지.
+
+### 7.2 카카오 memo(나에게 보내기) 왕복 지연 실측 (2026-07-29 신설)
+
+> 1차 5초 예산의 **마지막 미측정 구간**이던 카카오 발송 왕복을 실측. 하네스 = repo 밖 커스텀 스크립트(N=10 실발송 + 메시지 미발송 소켓 프로브로 연결분해 — 카톡 도배 없이 DNS/TCP/TLS 수치 확보), 컨벤션 = 7/28 upload_spike(p50/p95 + TCP 분해) 재사용.
+
+- **실측 (memo default/send 왕복)**: **p95 84.1ms / p50 69.2 / min 51.4 / max 93.0 / avg 67.8**, 성공 **10/10**(전 요청 http 200 + result_code 0). 웜(keep-alive 재사용, iter2~10) p50 67.8/p95 72.8ms, 콜드(iter1, 신규 연결 포함) 93.0ms → **keep-alive 절감 25.2ms**. 연결분해(콜드 avg) dns 38.4 / tcp 7.1 / tls 20.8 = conn 66.3ms.
+- **조건**: 학부생 로컬 M4 → 카카오 kapi.kakao.com(서울), 텍스트 memo, N=10, 간격 2s(도배/rate limit 회피 상한). **하한 성격** — 단, EC2 서울 리전은 지리적으로 유사 조건이라 대표성 있음. 2차 이미지 memo(이미지 업로드 API 경유)는 별개·미측정.
+- **★ 함의: 1차 5초 예산에서 카카오는 병목 아님** (p95 84.1ms = 예산의 1.7%). 전 구간 합산 판정은 카테고리 6.2 참조.
+- 측정 로그 원본 = repo 밖 `ddingdong-측정결과/kakao_memo_2026-07-29.txt` (SSoT엔 요약만, 원본 미커밋). PR 없음(문서 단독, 측정 스크립트도 repo 밖). 토큰은 env `KAKAO_ACCESS_TOKEN` 경유만 — 코드·로그·문서 어디에도 값 미기록.
 
 ---
 
