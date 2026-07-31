@@ -28,5 +28,11 @@ AUDIO_FILE_FIELD = "audio"
 # (§0 기준치 64KB/2초 대비 5배 여유; PoC 단계 단발 발화 상한이라 충분)
 AUDIO_MAX_BYTES = 320_000
 
+# 카테고리 6.2 A안 (transport 계약 동형): /enrich multipart 이미지 파트명
+IMAGE_FILE_FIELD = "image"
+
+# 이미지 파트 최대 크기 — abuse/메모리 가드 전용, 캡처 해상도와 무관(해상도 확정 = 11주차)
+IMAGE_MAX_BYTES = 512_000
+
 # 한국 표준시 (KST, UTC+9). DB 는 naive UTC 저장, 응답 직렬화 시 KST 변환.
 KST = timezone(timedelta(hours=9))

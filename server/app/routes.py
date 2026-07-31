@@ -20,6 +20,8 @@ from .constants import (
     AUDIO_MAX_BYTES,
     DEFAULT_PAGE_LIMIT,
     DEVICE_RATE_LIMIT_SECONDS,
+    IMAGE_FILE_FIELD,
+    IMAGE_MAX_BYTES,
     KST,
     MAX_PAGE_LIMIT,
     PREDICTED_CLASSES,
@@ -158,16 +160,31 @@ def detect():
 @bp.post("/enrich")
 @device_auth
 def enrich():
-    payload = request.get_json(silent=True) or {}
-    request_id = payload.get("request_id")
-    if not request_id:
-        raise ApiError(400, "bad_request", "request_id 는 필수입니다.")
+    # transport A안 동형 (카테고리 6.2): multipart/form-data.
+    # correlation = client_request_id form field(detect 계약 재사용), 이미지+오디오 파트 required.
+    client_request_id = request.form.get("client_request_id")
+    if not client_request_id:
+        raise ApiError(400, "bad_request", "client_request_id 는 필수입니다.")
 
+    image_file = request.files.get(IMAGE_FILE_FIELD)
+    if image_file is None or image_file.filename == "":
+        raise ApiError(
+            400, "bad_request", f"이미지 파일('{IMAGE_FILE_FIELD}' 파트)이 필요합니다."
+        )
+    audio_file = request.files.get(AUDIO_FILE_FIELD)
+    if audio_file is None or audio_file.filename == "":
+        raise ApiError(
+            400, "bad_request", f"오디오 파일('{AUDIO_FILE_FIELD}' 파트)이 필요합니다."
+        )
+
+    # idempotency 기존 보존 — enrich_status 재처리 가드. detect IdempotencyKey 테이블은
+    # 미접촉(그 키는 detect 가 client_request_id 로 이미 소비). 게이트 통과 전엔 파트를
+    # 읽지 않아 이미 처리된 재요청의 디코딩 비용 회피(detect 컨벤션 동형).
     notif = db.session.scalar(
-        select(Notification).where(Notification.request_id == request_id)
+        select(Notification).where(Notification.client_request_id == client_request_id)
     )
     if notif is None:
-        raise ApiError(404, "not_found", "해당 request_id 의 알림을 찾을 수 없습니다.")
+        raise ApiError(404, "not_found", "해당 client_request_id 의 알림을 찾을 수 없습니다.")
     if notif.enrich_status in ("completed", "skipped"):
         raise ApiError(
             409,
@@ -175,6 +192,34 @@ def enrich():
             f"이미 처리된 알림입니다 (enrich_status={notif.enrich_status}).",
         )
 
+    # 이미지 파트 검증 (크기 가드 + JPEG SOI sanity) — 실 카카오 업로드는 mock 유지
+    _validate_image_part(image_file)
+
+    # 오디오 파트 디코딩 실증 (audio_decode.py 계약 호출, frozen — import 만).
+    # enrich 오디오 = 트리거 기점 [0,5s] 단독(스티칭 X, 카테고리 6.2).
+    audio_bytes = audio_file.read()
+    if len(audio_bytes) > AUDIO_MAX_BYTES:
+        raise ApiError(
+            400,
+            "bad_request",
+            f"오디오 크기 초과: {len(audio_bytes)} bytes (최대 {AUDIO_MAX_BYTES} bytes).",
+        )
+    decode_started = time.monotonic()
+    try:
+        waveform = decode_pcm16(audio_bytes)
+    except ValueError as exc:
+        raise ApiError(400, "bad_request", f"오디오 디코딩 실패: {exc}") from exc
+    decode_ms = (time.monotonic() - decode_started) * 1000
+    current_app.logger.info(
+        "enrich audio decoded: samples=%d dtype=%s duration_s=%.3f rms=%.4f decode_ms=%.2f",
+        waveform.shape[1],
+        waveform.dtype,
+        waveform.shape[1] / SAMPLE_RATE,
+        float(np.sqrt(np.mean(np.square(waveform)))),
+        decode_ms,
+    )
+
+    # enrich 실처리(카카오 이미지 업로드 / Clova STT / DB append)는 mock 유지 — wire 계약 절반만.
     enr = mock_enrichment(notif.request_id)
     notif.image_url = enr["media"]["image_url"]
     notif.image_thumbnail_url = enr["media"]["image_thumbnail_url"]
@@ -185,6 +230,26 @@ def enrich():
     notif.secondary_sent_at = utc_now()
     db.session.commit()
     return jsonify(notif.to_dict()), 200
+
+
+def _validate_image_part(image_file):
+    """multipart 이미지 파트 wire sanity: 크기 가드 + JPEG SOI(0xFFD8) 2바이트.
+
+    실 처리(카카오 업로드/리사이즈)는 mock 유지 — 여기선 abuse/오배선 조기 차단만.
+    실패 시 detect 컨벤션과 동일 status(400 bad_request)로 거부.
+    """
+    image_bytes = image_file.read()
+    if len(image_bytes) > IMAGE_MAX_BYTES:
+        raise ApiError(
+            400,
+            "bad_request",
+            f"이미지 크기 초과: {len(image_bytes)} bytes (최대 {IMAGE_MAX_BYTES} bytes).",
+        )
+    # JPEG SOI(Start Of Image) 매직바이트 0xFFD8 — base64 X, raw JPEG bytes 전제(카테고리 6.2)
+    if image_bytes[:2] != b"\xff\xd8":
+        raise ApiError(
+            400, "bad_request", "이미지가 JPEG 형식이 아닙니다 (SOI 0xFFD8 불일치)."
+        )
 
 
 # ── GET /api/v1/notifications ────────────────────────────────────────────
