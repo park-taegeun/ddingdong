@@ -1091,3 +1091,25 @@
 
 **관련 카테고리**: 6.2 (HTTPS 실측 ⏳→✅ + b-1 확정 + core/pio 주석) / 20 (docs-only main 직접 push)
 **관련 commit**: 코드 PR #26 `ca19230`(기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)
+
+---
+
+## 2026-07-31 (금) — PoC-(30) 2차 enrich wire 계약 서버 절반 + /detect 실추론 배선(pivot) + detected_at 정의 확정 (카테고리 6.2/6.1)
+
+### 구현 (카테고리 6.2 append)
+- **2차 /enrich wire 계약 서버 절반 착수 (PR #27 `fccde75`)**: JSON→multipart 교체, 이미지·오디오 파트 둘 다 required. `IMAGE_FILE_FIELD="image"`/`IMAGE_MAX_BYTES=512000`(abuse/메모리 가드 전용, 해상도 무관) 신설 + `AUDIO_*` 재사용. 이미지 검증 = 크기+SOI 매직바이트(0xFFD8), 오디오 = 프로즌 `audio_decode.py` 재사용 디코딩. curl 15종 회귀 0. mock 상태전이 커밋(image_url/stt/enrich_status/secondary_sent_at) — 실 카카오 업로드/Clova STT는 11주차 defer. → 2차 15초 체인 계약 토대, 나머지 절반(ESP32 이미지/오디오 전송 펌웨어)은 마이크·카메라 결선 후.
+- **/detect 실추론 배선 (PR #28 `a0b87a2`)**: `mock_prediction()` → `ModelRunner` 싱글턴(프로즌 `model_runner.py` import) 실추론 교체. env 게이트 `DDINGDONG_MODEL_PATH`(부재 시 mock 유지) + TF lazy import + 실추론 모드 TF 부재 시 fail-fast. warmup = app factory 기동 1회(요청당 3.66s 로드 회피) — gunicorn preload+COW 최적화는 11주차 배포 defer(dev 단일프로세스라 검증 불가).
+
+### ★ pivot (§9 정지 후 승인)
+- 위임 초기 가정("threshold 게이트가 routes.py 예측 뒤")이 실측으로 반박됨 — 판정 로직(threshold 비교/fire_alarm 우회/ToF mock/primary_sent·enrich_status·skip_reason 결정)이 `mock_prediction()`(utils.py) 안에 랜덤 생성과 응집돼 "예측값만 교체" 불가 확인. → `_apply_prediction_policy()` 순수 추출(로직 무변경, 리팩토링 전후 500시드 mock 반환 dict 바이트 동일 증명)로 mock/real 경로 공유하는 pivot 승인. `CONFIDENCE_THRESHOLD=0.7`·strict 경계 불변. 학습 19 사례(위임 근본원인 진단도 코드 재검증) 추가.
+- **⏳ real 모드 미검증**: 로컬 TF 미설치 환경이라 로직만 검증(합성 (1,3) 점수 3종 → pending/skipped 분기 + fail-fast 실증). 실 SavedModel warmup 로그 + real curl = 학부생 로컬 M4 venv 검증 대기.
+
+### 결정 (카테고리 6.1 append — detected_at 정의)
+- **detected_at 시작점 = ESP32 트리거 시각 확정**: `timing_metrics` 1차 지연(`primary_sent_at − detected_at`)의 detected_at = 소리 감지(ESP32 트리거) 시각, 서버 수신 시각 아님. ※ decisions.md SSoT에 미결로 등록된 적이 없어(114행은 기존 완료 서술) **취소선 위상이동이 아닌 순수 신규 결정으로 append**(§9 정지 사유, 학부생 승인 후 진행). 근거 = 청각장애인 체감 정직 반영 + HTTPS 포함 전체 체인 p95 ≈2.0초(카테고리 6.2)라 5초 예산에 3초 여유 = 달성률 손실 0. 구현(ESP32 타임스탬프 동봉 + NTP 시계 동기화)은 11주차 defer, 현재는 정의만 확정.
+
+**SSoT 정합 검증 (문서라 코드 3단계 N/A)**: 6.2 실번호(117행)·append 지점(133행, HTTPS/실추론 정합 주석 마지막 줄) `git show HEAD` grep 실측 확정. detected_at은 `grep "detected_at"`/`grep "미결"` 전건 확인 결과 미결 문구 부재 확인 → §9 정지 트리거 ② 발동, AskUserQuestion으로 학부생 승인(옵션: 취소선 없이 순수 신규 결정 append) 받은 뒤 진행. decisions-log 포맷 = 직전 2개 엔트리(PoC-(28)/(29)) 동형 확인 후 작성. PR #27/#28 번호 = `git log --oneline -10`으로 커밋 해시 대조 실측.
+
+**비범위**: 코드 0 수정(docs 2파일만, server/firmware frozen 미접촉). PR #27/#28은 기 머지된 코드 변경 인용일 뿐 본 entry에서 재수정 없음.
+
+**관련 카테고리**: 6.2 (enrich 계약 + 실추론 배선 append) / 6.1 (detected_at 정의 신규 결정) / 20 (docs-only main 직접 push)
+**관련 commit**: 코드 PR #27 `fccde75` + PR #28 `a0b87a2`(기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)
