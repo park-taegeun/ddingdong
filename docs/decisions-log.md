@@ -1113,3 +1113,23 @@
 
 **관련 카테고리**: 6.2 (enrich 계약 + 실추론 배선 append) / 6.1 (detected_at 정의 신규 결정) / 20 (docs-only main 직접 push)
 **관련 commit**: 코드 PR #27 `fccde75` + PR #28 `a0b87a2`(기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)
+
+---
+
+## 2026-07-31 (금) — PoC-(30) 후속: D real 검증 완료 + E 이미지 memo 실측 + 카테고리 7 정정 + 7.3 신설 + numpy 규명 (카테고리 6.2/7)
+
+### 실측 (카테고리 6.2 real 검증 ⏳→✅)
+- **`/detect` real 모드 로컬 검증 완료**: 학부생 로컬 M4, Python 3.11 별도 venv(`server/venv_real`, 기존 `server/venv`=3.14는 TF wheel 부재로 real 불가)에서 `make_dummy_savedmodel` 더미 SavedModel + `DDINGDONG_MODEL_PATH` 기동 → real 추론 경로 실증. curl `/detect`(합성 int16 64KB) → HTTP 201 + `all_scores` 합=1.00(doorbell 0.37/knock 0.46/fire_alarm 0.17) + confidence 0.46<0.7 → `skip_reason=low_confidence`+`primary_sent=false`(`_apply_prediction_policy` threshold 게이트 real 경로 작동 확인) + `enrich_status=skipped`. "로직 검증 + real 런타임 대기" → "**real 경로 로컬 검증 완료**"로 정직 승격(학습 19).
+- **`model_serving.py` frozen 등록 확정**: real 검증 통과로 후보 → 확정(라이브 앱 import 호출만, 파일 무수정 대상 편입).
+- **numpy 버전 규명**: `numpy==2.5.1` 핀(PR #24 `6ab693f`) = `server/venv`(Python 3.14) 당시 최신 안정값을 그대로 하드핀한 **우연값**(버전 근거 커밋 없음). 라이브+프로즌 numpy 사용처 전수 = 2.0 breaking API 의존 0. `venv_real`(numpy 1.26.4)에서 프로즌 4종 실행 + `audio_decode` RMS 0.353528 비트 일치 실증(학습 15) → **1.26.4 안전 확정**. `requirements.txt`는 이번 미수정(무수정 원칙) — `numpy>=1.26,<3` 완화는 [미결] 11주차/소액 PR로 등록.
+
+### 실측 (카테고리 7 이미지 memo — 신설 7.3)
+- **카카오 이미지 업로드 API 부재 확인**: 카카오톡 메시지 API(나에게 보내기)엔 이미지 파일 업로드 엔드포인트가 **없다**. memo 3종 전부 이미지를 `content.image_url`(사전 호스팅 public URL 문자열)로만 수신 — 바이트 미통과, 스코프는 `talk_message` 단일(텍스트와 동일, 추가 동의 불필요). 카테고리 7 "이미지: 카카오 이미지 업로드 API (S3 불필요)" 서술을 **취소선 + 정정 append**로 이력보존(학습 8) — 진실 = 서버(11주차 EC2)가 이미지를 스스로 public 호스팅해야 함.
+- **7.3 신설 — 이미지 memo 왕복 실측**: `feed/default/send` × image_url 3스윕(40.5/97.3/200.4KB) × N=10, 성공 30/30. p95 = 487.9/461.3/485.3ms, **크기 민감도 없음**(스프레드 26.6ms) → 카카오 발송 시점 동기 fetch 안 함. 절대값(텍스트 84.1ms 대비 5~6배)은 로컬 WiFi 노이즈 섞인 근사치로 정직 표기(학습 19). **함의: 2차 15초 체인에서 카카오는 병목 아님** — 남은 리스크 = ① 이미지 public 호스팅(11주차 arch) ② Clova STT 왕복(미측정) ③ ESP32 2차 페이로드 업로드(미측정).
+
+**SSoT 정합 검증 (문서라 코드 3단계 N/A)**: 정정 대상 문구(카테고리 7 "카카오 이미지 업로드 API" line 146 / 6.2 "real 모드 미검증" line 138) `git show HEAD:docs/decisions.md | grep` 실존 hit 확인 후에만 취소선 처리(§9 트리거 미발동, 학습 8/14). 카테고리 6/6.2/7/7.2 실번호 = `grep -nE "^## 카테고리|^### "`로 실측 확정 후 편집. 인용 수치(real curl 응답값·이미지 memo p95·numpy RMS) = 선행 세션(D-후속/E) 산출값 그대로 인용, 재측정 없음.
+
+**비범위**: 코드 0 수정(`server/*`/`firmware/*`/`ml/*` 전부 read only). `docs/decisions.md`(카테고리 7 정정 + 7.3 신설 + 6.2 append 4건) + `docs/decisions-log.md`만 편집. 브랜치 없이 main 직 push(카테고리 20, 문서 단독). 토큰/시크릿 미기록. 지침·노션 갱신 없음(Set 2·3 별도).
+
+**관련 카테고리**: 7 (이미지 업로드 API 정정) / 7.3 (이미지 memo 왕복 신설) / 6.2 (real 검증 완료 + frozen 확정 + numpy 규명 + 미결 등록)
+**관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)

@@ -135,7 +135,11 @@
 - **2차 /enrich wire 계약 서버 절반 착수 (2026-07-31 PoC-(30), PR #27)**: transport = multipart/form-data(1차 A안 동형) + 이미지·오디오 파트 **둘 다 required**(ESP32 항상 둘 다 전송). 상수 = `IMAGE_FILE_FIELD="image"` / `IMAGE_MAX_BYTES=512000`(★ abuse/메모리 가드 전용, 캡처 해상도 무관 — 해상도 확정 11주차) 신설 / `AUDIO_*` 재사용. 이미지 검증 = 크기 + SOI 매직바이트(0xFFD8). 오디오 = 프로즌 `audio_decode.py` import 디코딩(합성 사인톤 RMS 0.3535 실증). curl 15종 회귀 0. **mock 상태전이 커밋**(mock_enrichment로 image_url/stt/enrich_status/secondary_sent_at 세팅 + db.commit) — 실 카카오 이미지 업로드/Clova STT는 11주차(스코프 분리, detect mock 동형). `enrich_status` 재처리 가드(409). → 2차 15초 체인 계약 토대. **나머지 절반 = ESP32측 이미지/오디오 전송 펌웨어**(마이크·카메라 결선 후).
 - **/detect 실추론 배선 = 1차 5초 체인 마지막 mock 조각 실코드화 (2026-07-31 PoC-(30), PR #28)**: `mock_prediction()` → `ModelRunner` 싱글턴(프로즌 `server/inference/model_runner.py` import, 파일 무수정) 실추론 교체. env 게이트 `DDINGDONG_MODEL_PATH`(부재 시 mock 유지 = CI·문서환경 안 깨짐, 실 외부 API 미통합). TF **lazy import**(요청경로 밖) + 실추론 모드 TF 부재 시 fail-fast(조용한 mock 폴백 방지). warmup = **app factory 기동 1회**(요청당 3.66s 로드 회피, 본 카테고리 (a)) — ⚠️ **gunicorn preload+post_worker_init COW 최적화는 11주차 배포 defer**(현 dev=flask 단일프로세스라 검증 불가, 학습 15). 콜드스타트 = "제거"가 아닌 "**요청경로 밖 이동 + 서버 기동 후 첫 준비 ~4s = 시연 전 예열 필수**"(학습 19 정직표기).
   - **★ pivot 기록**: 위임 초기 가정("threshold 게이트가 routes.py 예측 뒤")은 **실측 반박** — 판정 로직(threshold 비교 / fire_alarm 우회 / ToF mock / primary_sent·enrich_status·skip_reason 결정)이 **`mock_prediction()`(utils.py) 안에 랜덤 생성과 응집**돼 있어 "예측값만 교체" 불가. → §9 정지 후 pivot 승인: `_apply_prediction_policy()` **순수 추출**(로직 무변경, 리팩토링 전후 500시드 mock 반환 dict **바이트 동일** 증명) → mock/real 경로 공유. `CONFIDENCE_THRESHOLD=0.7` 값·strict 경계(`if top < 0.7`) 불변. `utils.py`는 프로즌 아님(라이브 앱). 학습 19 사례 추가(위임 근본원인 진단도 코드 재검증).
-  - **⏳ real 모드 미검증**: 이 배선은 로컬 TF 미설치 환경이라 **로직만 검증**(합성 (1,3) 점수 3종 → pending/skipped 분기 정상 + fail-fast 실증). 실 SavedModel warmup 로그(load_ms/warmup_ms) + real curl = **학부생 로컬 M4 venv 검증 대기**(`make_dummy_savedmodel` 더미 + `DDINGDONG_MODEL_PATH` 기동). "완료" 아닌 "로직 검증 + real 런타임 대기"로 표기.
+  - ~~**⏳ real 모드 미검증**: 이 배선은 로컬 TF 미설치 환경이라 **로직만 검증**(합성 (1,3) 점수 3종 → pending/skipped 분기 정상 + fail-fast 실증). 실 SavedModel warmup 로그(load_ms/warmup_ms) + real curl = **학부생 로컬 M4 venv 검증 대기**(`make_dummy_savedmodel` 더미 + `DDINGDONG_MODEL_PATH` 기동). "완료" 아닌 "로직 검증 + real 런타임 대기"로 표기.~~ **✅ real 로컬 검증 완료 (2026-07-31 PoC-(30))**: 학부생 로컬 M4, Python 3.11 별도 venv(`server/venv_real` — 기존 `server/venv`=3.14는 TF wheel 부재로 real 불가)에서 `make_dummy_savedmodel` 더미 SavedModel(서빙 시그니처 (1,None)f32→(1,3)f32 정합, random-init 스텁 배너) + `DDINGDONG_MODEL_PATH` 기동 → real 추론 경로 실증. curl `/detect`(합성 int16 64KB) → HTTP 201 + `all_scores` 합=1.00(doorbell 0.37/knock 0.46/fire_alarm 0.17) + confidence 0.46 < 0.7 → `skip_reason=low_confidence` + `primary_sent=false`(=`_apply_prediction_policy` threshold 게이트가 real 경로에서도 작동) + `enrich_status=skipped`(상태전이 일관). "로직 검증 + real 런타임 대기" → "**real 경로 로컬 검증 완료**"로 승격(학습 19 정직 표기 — 미검증을 완료로 오기 안 했기에 실측 후 정직 승격).
+- **`model_serving.py` frozen 등록 확정**: 위 real 검증 통과로 `server/app/model_serving.py`가 **frozen 등록 확정**(라이브 앱 import 호출만, 파일 무수정 대상 편입). ※ "real 검증 후 frozen 등록 후보" → 확정.
+- **numpy 버전 규명 (2026-07-31)**: `requirements.txt` `numpy==2.5.1` 핀 = PR #24(`6ab693f`)에서 `server/venv`(Python 3.14) 최신 안정값을 그대로 하드핀한 **우연값**(`audio_decode.py` 요구 하한 아님 — 커밋/주석에 버전 근거 없음, "PyPI 최신 안정 2026-06-14 확인" 명시). 라이브+프로즌 numpy 사용처 전수 = numpy 2.0 breaking API 의존 0(전부 1.17 이전 불변 코어 API), `venv_real`(numpy 1.26.4)에서 프로즌 4종 실행 + `audio_decode` RMS 0.353528 비트 일치 실증(학습 15). → **numpy 1.26.4 안전 확정**.
+- **[미결 신규] `requirements.txt` numpy==2.5.1 핀 완화**: 위 규명(3.14 우연값) → `numpy>=1.26,<3` 류 완화 합당(TF 2.16 = numpy 1.26 요구, py3.12+에선 2.x). 처리 = 11주차 EC2 배포 시 python/numpy 정식 확정 or 소액 PR. 이번 태스크 미수정(requirements 무수정 원칙).
+- **[소액 정정 후속] `server/inference/README.md` + `__init__.py` stale 문구**: PR #22(`169a2fc`) 시점 "server/app이 이 패키지를 import하지 않는다" 서술 = PR #28(`a0b87a2`) 이후 거짓(`routes.py`가 `model_serving`/`model_runner` import). 코드가 SSoT라 당장 무해, 소액 문서 PR 후보(H 묶음: 노션 오타 + `constants.py:25` 주석 + DTW 유닛 그룹핑 모드와 함께).
 
 ---
 
@@ -143,7 +147,7 @@
 
 - **STT**: Naver Clova Speech (CSR) — 인터폰 노이즈 CER 6.49%
 - **카카오톡**: '나에게 보내기' (memo) — 비즈 앱 심사 회피
-- **이미지**: 카카오 이미지 업로드 API (S3 불필요)
+- **이미지**: ~~카카오 이미지 업로드 API (S3 불필요)~~ **memo엔 이미지 업로드 API 부재 — image_url=서버 자체 public 호스팅 필수 (2026-07-31 PoC-(30) E 실사)**: 카카오톡 메시지 API(나에게 보내기)엔 이미지 파일 업로드 엔드포인트 부재. memo 3종(default/custom/scrap) 전부 이미지를 `content.image_url`(사전 호스팅된 public URL 문자열)로만 수신 — 이미지 바이트 미통과. mud-kage CDN을 뱉는 카카오 이미지 업로드 API는 **비즈메시지/친구톡** 계열(비즈채널+심사 필요)이라 memo 경로(비즈앱 심사 회피 목적, 본 카테고리)와 배치. ∴ 진실 = 서버(11주차 EC2)가 ESP32 캡처 이미지를 스스로 public URL로 호스팅(EC2 static route 등, "S3 제품"은 회피 가능하나 public 호스팅 자체는 필수) 후 그 URL을 `image_url`에 실어 `memo/default/send` 호출. 이미지 feed 스코프 = `talk_message` 단일(텍스트와 동일, 추가 동의 불필요). ⚠️ 11주차 2차 체인 아키텍처(이미지 호스팅 방식 = EC2 static route vs 오브젝트 스토리지) 확정 필요.
 - **토큰**: 액세스 6시간 + 리프레시 60일, SQLite 저장
 - **토큰 상태 API (2026-05-28 확정)**: 대시보드 응답은 절대 만료시각 대신 **상대값** `kakao_token_expires_in_minutes` + `status` enum(`valid`/`expiring`/`expired`) 노출 — 클라이언트 시계 오차 무관 + 대시보드 "토큰 만료 임박" 경고 UI 직결 (코드: `dashboard/src/types/stats.ts` `SystemHealth`)
 - **2차 알림**: best-effort + 1회 재시도
@@ -207,6 +211,15 @@
 - **조건**: 학부생 로컬 M4 → 카카오 kapi.kakao.com(서울), 텍스트 memo, N=10, 간격 2s(도배/rate limit 회피 상한). **하한 성격** — 단, EC2 서울 리전은 지리적으로 유사 조건이라 대표성 있음. 2차 이미지 memo(이미지 업로드 API 경유)는 별개·미측정.
 - **★ 함의: 1차 5초 예산에서 카카오는 병목 아님** (p95 84.1ms = 예산의 1.7%). 전 구간 합산 판정은 카테고리 6.2 참조.
 - 측정 로그 원본 = repo 밖 `ddingdong-측정결과/kakao_memo_2026-07-29.txt` (SSoT엔 요약만, 원본 미커밋). PR 없음(문서 단독, 측정 스크립트도 repo 밖). 토큰은 env `KAKAO_ACCESS_TOKEN` 경유만 — 코드·로그·문서 어디에도 값 미기록.
+
+### 7.3 카카오 2차 이미지 memo 왕복 실측 (2026-07-31 PoC-(30) 신설)
+
+> 1차 텍스트 memo(7.2)에 이어, 2차 15초 체인의 마지막 미측정 카카오 구간(이미지 memo)을 실측. 하네스 = 7.2 컨벤션 재사용(repo 밖 커스텀 스크립트, N=10, p50/p95 + 연결분해) + `content.image_url` 크기 스윕 추가.
+
+- **실측 (feed/default/send 왕복, image_url 크기 3스윕)**: 실측 40.5/97.3/200.4KB × N=10, 성공 **30/30**. **p95 = 487.9 / 461.3 / 485.3ms**(크기순). **크기 민감도 = 없음**(p95 스프레드 26.6ms) → 카카오가 발송 시점에 `image_url`을 동기 fetch하지 않음(URL 문자열만 전송, lazy 로딩 추정) — 이미지 크기가 카카오 왕복을 늘리지 않음.
+- **★ 정직 표기**: 절대값(수백 ms, 텍스트 memo 84.1ms 대비 5~6배)은 feed `object_type` 서버 처리 비용 + **로컬 WiFi/핫스팟 노이즈**(60KB 변형 tcp 1008ms 스파이크, 7/29 텍스트 측정의 핫스팟 튐과 동류)가 섞인 하한/근사 — "정밀 수치"가 아닌 "**크기 민감 없음 + 15초 예산 여유(p95 490ms ≈ 예산 3.3%)**"로 위상 구분. 조건 = 학부생 로컬 M4 → kapi.kakao.com(서울).
+- **함의**: 2차 15초 체인에서 **카카오는 병목 아님**. 실 리스크 3곳으로 좁혀짐 — ① 이미지 public 호스팅(11주차 아키텍처, 카테고리 7 정정 연동) ② Naver Clova STT 왕복(미측정) ③ ESP32 2차 페이로드 업로드(이미지+5초 오디오, 1차보다 큼, 미측정).
+- 측정 로그 원본 = repo 밖 `~/ddingdong-측정결과/kakao_image_memo_2026-07-31.txt`. 하네스도 repo 밖(7.2 정책 동일). PR 없음(문서 단독). 토큰은 env 경유만, 미기록.
 
 ---
 
