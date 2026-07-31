@@ -63,14 +63,50 @@ _MOCK_TRANSCRIPTS = (
 )
 
 
-def mock_prediction():
-    """detect 용 mock 추론 결과. 카테고리 4 enum + notification.ts 분기 의미 준수.
+def _apply_prediction_policy(predicted_class, confidence, all_scores):
+    """예측(mock/real 공통) → 알림 판정 dict. 카테고리 4 enum + notification.ts 분기 의미 준수.
+
+    mock_prediction() 에서 순수 추출(로직 변경 없음, 2026-07-31 카테고리 6.2 실추론 배선
+    pivot) — 랜덤 생성이든 ModelRunner 실추론이든 이 함수를 거치면 동일 판정을 받는다.
 
     분기:
       - fire_alarm → ToF 우회, 1차 알림만(enrich skipped) (카테고리 7 화재경보)
       - 신뢰도 < 임계값 → 1차 알림 skip (skip_reason="low_confidence")
       - 그 외 → 1차 알림 발송, enrich 대기(pending)
     """
+    if predicted_class == "fire_alarm":
+        return {
+            "predicted_class": predicted_class,
+            "confidence": confidence,
+            "all_scores": all_scores,
+            "tof": {"applied": False, "passed": None, "reason": "fire_alarm_bypass"},
+            "primary_sent": True,
+            "enrich_status": "skipped",
+            "skip_reason": None,
+        }
+    if confidence < CONFIDENCE_THRESHOLD:
+        return {
+            "predicted_class": predicted_class,
+            "confidence": confidence,
+            "all_scores": all_scores,
+            "tof": {"applied": True, "passed": True, "reason": "zone_count=9 >= 8 + motion=true"},
+            "primary_sent": False,
+            "enrich_status": "skipped",
+            "skip_reason": "low_confidence",
+        }
+    return {
+        "predicted_class": predicted_class,
+        "confidence": confidence,
+        "all_scores": all_scores,
+        "tof": {"applied": True, "passed": True, "reason": "zone_count=11 >= 8 + motion=true"},
+        "primary_sent": True,
+        "enrich_status": "pending",
+        "skip_reason": None,
+    }
+
+
+def mock_prediction():
+    """detect 용 mock 추론 결과. 랜덤 예측 생성 후 _apply_prediction_policy 로 판정."""
     predicted = random.choice(PREDICTED_CLASSES)
     top = round(random.uniform(0.45, 0.97), 2)
     others = [c for c in PREDICTED_CLASSES if c != predicted]
@@ -80,36 +116,7 @@ def mock_prediction():
     raw = {predicted: top, others[0]: a, others[1]: b}
     # 출력 키 순서를 enum 순서(doorbell/knock/fire_alarm)로 고정 (AllScores 타입 일치)
     all_scores = {c: raw[c] for c in PREDICTED_CLASSES}
-
-    if predicted == "fire_alarm":
-        return {
-            "predicted_class": predicted,
-            "confidence": top,
-            "all_scores": all_scores,
-            "tof": {"applied": False, "passed": None, "reason": "fire_alarm_bypass"},
-            "primary_sent": True,
-            "enrich_status": "skipped",
-            "skip_reason": None,
-        }
-    if top < CONFIDENCE_THRESHOLD:
-        return {
-            "predicted_class": predicted,
-            "confidence": top,
-            "all_scores": all_scores,
-            "tof": {"applied": True, "passed": True, "reason": "zone_count=9 >= 8 + motion=true"},
-            "primary_sent": False,
-            "enrich_status": "skipped",
-            "skip_reason": "low_confidence",
-        }
-    return {
-        "predicted_class": predicted,
-        "confidence": top,
-        "all_scores": all_scores,
-        "tof": {"applied": True, "passed": True, "reason": "zone_count=11 >= 8 + motion=true"},
-        "primary_sent": True,
-        "enrich_status": "pending",
-        "skip_reason": None,
-    }
+    return _apply_prediction_policy(predicted, top, all_scores)
 
 
 def mock_enrichment(request_id):

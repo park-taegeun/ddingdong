@@ -28,6 +28,11 @@ def create_app(config_class=Config):
     app.register_blueprint(api_v1_bp)
     register_error_handlers(app)
 
+    # 실추론 모델 싱글턴 로드 + warmup (카테고리 6.2, env 게이트 DDINGDONG_MODEL_PATH)
+    from .model_serving import init_app as init_model_serving
+
+    init_model_serving(app)
+
     @app.get("/health")
     def health():
         return jsonify({"status": "ok"}), 200
