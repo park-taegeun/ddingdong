@@ -17,6 +17,9 @@ class Config:
     DEVICE_TOKEN = os.environ.get("DEVICE_TOKEN", "")
     DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "")
 
+    # 카테고리 6.2: 실추론 env 게이트. 미설정 = mock 유지, 설정 = ModelRunner 싱글턴 로드.
+    MODEL_PATH = os.environ.get("DDINGDONG_MODEL_PATH", "")
+
     # 카테고리 6: SQLite + Flask-SQLAlchemy. 미설정 시 server/ddingdong.db (*.db = gitignore)
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         "DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'ddingdong.db')}"

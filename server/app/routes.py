@@ -13,7 +13,7 @@ import numpy as np
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import select
 
-from . import rate_limit
+from . import model_serving, rate_limit
 from .auth import dashboard_auth, device_auth
 from .constants import (
     AUDIO_FILE_FIELD,
@@ -31,6 +31,7 @@ from .errors import ApiError
 from .extensions import db
 from .models import IdempotencyKey, Notification
 from .utils import (
+    _apply_prediction_policy,
     kst_now_iso,
     mock_enrichment,
     mock_prediction,
@@ -113,9 +114,23 @@ def detect():
         decode_ms,
     )
 
-    # 4) mock 추론 → notification 저장. waveform 은 디코딩까지만 준비(예측 미연결,
-    # 실 서빙 통합은 별도 위임 — Step 6 리포트 참조)
-    pred = mock_prediction()
+    # 4) 예측: env 게이트(DDINGDONG_MODEL_PATH) — 실추론 모드면 ModelRunner 싱글턴,
+    # 아니면 기존 mock (카테고리 6.2 서빙 3결정). 임계값/ToF/전송 판정은 두 경로 공통
+    # 헬퍼(_apply_prediction_policy)를 거쳐 동일 dict 구조로 수렴한다.
+    if model_serving.is_real_mode():
+        infer_started = time.monotonic()
+        scores = model_serving.predict(waveform)
+        infer_ms = (time.monotonic() - infer_started) * 1000
+        predicted_class, confidence, all_scores = model_serving.scores_to_prediction(scores)
+        pred = _apply_prediction_policy(predicted_class, confidence, all_scores)
+        current_app.logger.info(
+            "detect real inference: predicted_class=%s confidence=%.2f infer_ms=%.2f",
+            predicted_class,
+            confidence,
+            infer_ms,
+        )
+    else:
+        pred = mock_prediction()
     request_id = new_request_id()
     notif = Notification(
         client_request_id=client_request_id,
