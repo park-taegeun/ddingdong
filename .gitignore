@@ -64,3 +64,8 @@ ml/**/03_augmented/
 ml/**/05_final_dataset/
 ml/**/manifests/
 venv_real/
+
+# === 캡처 이미지 스토어 (방문자 사진 = 개인정보, 절대 push 금지, 카테고리 7) ===
+# Flask instance 폴더(server/instance/captures 기본) + 캡처 JPEG. image_store 스켈레톤이
+# 로컬에 저장하는 방문자 사진은 개인정보라 어떤 경우에도 커밋 금지.
+instance/

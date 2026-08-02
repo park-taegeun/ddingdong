@@ -13,7 +13,7 @@ import numpy as np
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import select
 
-from . import model_serving, rate_limit
+from . import image_store, model_serving, rate_limit
 from .auth import dashboard_auth, device_auth
 from .constants import (
     AUDIO_FILE_FIELD,
@@ -207,8 +207,8 @@ def enrich():
             f"이미 처리된 알림입니다 (enrich_status={notif.enrich_status}).",
         )
 
-    # 이미지 파트 검증 (크기 가드 + JPEG SOI sanity) — 실 카카오 업로드는 mock 유지
-    _validate_image_part(image_file)
+    # 이미지 파트 검증 (크기 가드 + JPEG SOI sanity) → 검증된 바이트 확보(아래 실 저장에 재사용)
+    image_bytes = _validate_image_part(image_file)
 
     # 오디오 파트 디코딩 실증 (audio_decode.py 계약 호출, frozen — import 만).
     # enrich 오디오 = 트리거 기점 [0,5s] 단독(스티칭 X, 카테고리 6.2).
@@ -234,9 +234,13 @@ def enrich():
         decode_ms,
     )
 
-    # enrich 실처리(카카오 이미지 업로드 / Clova STT / DB append)는 mock 유지 — wire 계약 절반만.
+    # enrich 실처리 중 STT(Clova)·오디오 호스팅은 mock 유지 — wire 계약 절반만(11주차).
     enr = mock_enrichment(notif.request_id)
-    notif.image_url = enr["media"]["image_url"]
+    # 이미지 = 실 로컬 저장 + opaque public URL 로 실코드화(카테고리 7, image_store 스켈레톤).
+    # 카카오 memo 는 image_url(public URL)만 수신하므로 서버가 스스로 호스팅한 URL 을 싣는다.
+    # thumbnail_url/audio_url/stt 는 mock 유지(리사이즈·오디오 호스팅·Clova STT = 11주차).
+    opaque_id = image_store.store_image(image_bytes)
+    notif.image_url = image_store.public_url(opaque_id)
     notif.image_thumbnail_url = enr["media"]["image_thumbnail_url"]
     notif.audio_url = enr["media"]["audio_url"]
     notif.stt = enr["stt"]
@@ -252,6 +256,7 @@ def _validate_image_part(image_file):
 
     실 처리(카카오 업로드/리사이즈)는 mock 유지 — 여기선 abuse/오배선 조기 차단만.
     실패 시 detect 컨벤션과 동일 status(400 bad_request)로 거부.
+    검증 통과 시 읽은 바이트를 반환 — 호출부가 store_image 로 재사용(스트림 이중 read 회피).
     """
     image_bytes = image_file.read()
     if len(image_bytes) > IMAGE_MAX_BYTES:
@@ -265,6 +270,7 @@ def _validate_image_part(image_file):
         raise ApiError(
             400, "bad_request", "이미지가 JPEG 형식이 아닙니다 (SOI 0xFFD8 불일치)."
         )
+    return image_bytes
 
 
 # ── GET /api/v1/notifications ────────────────────────────────────────────
