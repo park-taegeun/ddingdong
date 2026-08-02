@@ -63,3 +63,4 @@ ml/**/02_preprocessed/
 ml/**/03_augmented/
 ml/**/05_final_dataset/
 ml/**/manifests/
+venv_real/
