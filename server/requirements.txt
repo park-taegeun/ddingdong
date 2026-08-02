@@ -5,4 +5,4 @@ Flask-SQLAlchemy==3.1.1
 python-dotenv==1.2.2
 # 카테고리 6.2: /detect 가 server/inference/audio_decode.py(sibling, frozen)를 import 호출
 # → 그 모듈의 유일한 의존성인 numpy 를 라이브 서버 venv 에도 설치 (TF 는 여기서 끌려오지 않음).
-numpy==2.5.1
+numpy>=1.26,<3
