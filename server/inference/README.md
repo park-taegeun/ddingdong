@@ -1,7 +1,9 @@
 # server/inference — 추론 서빙 조기경보 하네스
 
 서버 ML 추론(YAMNet+TF)이 **t3.small(2GB)에 메모리 fit** 되는지 + **추론 지연이 5초
-예산** 안인지를 8주차에 미리 죽이기 위한 standalone 번들. 라이브 `/detect`(mock) 무수정.
+예산** 안인지를 8주차에 미리 죽이기 위해 시작된 번들. ※ 최초 작성 시점엔 standalone·라이브
+`/detect` 무수정이었으나, PR #28(`a0b87a2`)부터 `server/app/routes.py`·`server/app/model_serving.py`가
+이 패키지를 실제로 import한다(카테고리 6.2, 상세 = `__init__.py`) — 더 이상 standalone 아님.
 
 > ⚠️ **스코프 3층** — 이 PR은 **1층**(합성 더미로 코드 경로만 검증, 숫자 무의미)만 한다.
 > - **1층 (이 PR, 지금)**: 합성 더미 SavedModel → 코드 경로 검증.

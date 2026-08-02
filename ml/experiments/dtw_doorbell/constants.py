@@ -22,7 +22,7 @@ FASTDTW_RADIUS: int = 10  # fastdtw 백엔드 사용 시 근사 반경(설치 �
 MAX_TEMPLATE_FRAMES: int = 400  # 가정(런타임 가드): 10ms hop 기준 ≈4초
 
 # ── 분리 지표 / 판정 ──
-PRETEST_MARGIN: float = 8.42  # pretest 분리 마진(카테고리 근거) — 실측 정합 비교 기준
+PRETEST_MARGIN: float = 8.42  # 클래스 간 변별(pretest), USP 개체구분 근거 아님 — 실측 정합 비교 기준
 # GO 권고 임계(Cohen's d류). 0.8=large. 강한 분리 확신선을 보수적으로 2.0.
 # ★ 이건 권고 가이드지 확정 임계 아님 — 실 임계 스윕/튜닝은 11~12주차.
 GO_MARGIN_MIN: float = 2.0  # 가정(권고): margin ≥ 2.0 → 알고리즘 GO 신호
