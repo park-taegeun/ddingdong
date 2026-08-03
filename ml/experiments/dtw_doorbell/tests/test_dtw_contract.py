@@ -8,13 +8,24 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
 from ..constants import MAX_TEMPLATE_FRAMES, N_MELS
 from ..distance import _clip_frames, dtw_cosine
-from ..experiment import separation_margin, source_id, threshold_sweep
+from ..experiment import (
+    group_by_source,
+    group_key,
+    resolve_doorbell_dir,
+    separation_margin,
+    source_id,
+    threshold_sweep,
+    unit_id,
+)
 
 try:
     import librosa  # noqa: F401
@@ -78,6 +89,85 @@ class TestStats(unittest.TestCase):
     def test_threshold_sweep_empty_safe(self) -> None:
         s = threshold_sweep([], [])
         self.assertEqual(s["best_accuracy"], 0.0)
+
+
+class TestUnitGrouping(unittest.TestCase):
+    """직접녹음 `direct_{클래스}_{유닛}_{테이크}.wav` 유닛 그룹핑 (decisions.md 5.1)."""
+
+    def test_unit_id_strips_only_take(self) -> None:
+        # 끝 테이크만 제거 → 유닛 키
+        self.assertEqual(unit_id("direct_doorbell_A_01.wav"), "direct_doorbell_A")
+        self.assertEqual(unit_id("direct_doorbell_A_02.wav"), "direct_doorbell_A")
+        self.assertEqual(unit_id("direct_doorbell_B_01.wav"), "direct_doorbell_B")
+        # 클래스명 underscore(fire_alarm) 포함해도 견고 — 끝 테이크만 strip
+        self.assertEqual(unit_id("direct_fire_alarm_C_10.wav"), "direct_fire_alarm_C")
+
+    def test_unit_id_take_absent_strips_ext(self) -> None:
+        # 테이크 없는 파일 → 확장자만 제거(자체 그룹)
+        self.assertEqual(unit_id("direct_doorbell_A.wav"), "direct_doorbell_A")
+
+    def test_group_key_dispatch(self) -> None:
+        # direct_ prefix → 유닛 경로, 그 외 → 원본ID 경로(기존과 동일)
+        self.assertEqual(group_key("direct_doorbell_A_01.wav"), "direct_doorbell_A")
+        self.assertEqual(group_key("125967_0009000.wav"), source_id("125967_0009000.wav"))
+        self.assertEqual(
+            group_key("-9ek6eO0RtI_260.0_270.0_0003000.wav"),
+            source_id("-9ek6eO0RtI_260.0_270.0_0003000.wav"),
+        )
+
+    def test_unit_case_sensitive(self) -> None:
+        # 대소문자 유닛은 별개 그룹(A ≠ a)
+        self.assertNotEqual(unit_id("direct_doorbell_A_01.wav"), unit_id("direct_doorbell_a_01.wav"))
+
+    def test_synthetic_dir_groups_by_unit(self) -> None:
+        # 합성 파일명 A_01/A_02/B_01/C_01 → A=2·B=1·C=1 = 3그룹, A쌍(intra 후보) 존재
+        names = [
+            "direct_doorbell_A_01.wav",
+            "direct_doorbell_A_02.wav",
+            "direct_doorbell_B_01.wav",
+            "direct_doorbell_C_01.wav",
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            for n in names:
+                (d / n).touch()
+            groups = group_by_source(d)
+        self.assertEqual(len(groups), 3)
+        self.assertEqual({k: len(v) for k, v in groups.items()}, {
+            "direct_doorbell_A": 2,
+            "direct_doorbell_B": 1,
+            "direct_doorbell_C": 1,
+        })
+        # 유닛 1개(A)만 다-테이크 → intra 후보 존재(재-누름 측정 가능)
+        multi = [k for k, v in groups.items() if len(v) >= 2]
+        self.assertEqual(multi, ["direct_doorbell_A"])
+
+    def test_empty_dir_no_groups(self) -> None:
+        # 빈 04 디렉토리 → 그룹 0(예외 없이)
+        with tempfile.TemporaryDirectory() as td:
+            self.assertEqual(group_by_source(Path(td)), {})
+
+
+@unittest.skipUnless(
+    os.environ.get("DDINGDONG_DATA_ROOT")
+    and (Path(os.environ["DDINGDONG_DATA_ROOT"]) / "01_clips" / "doorbell").is_dir(),
+    "DDINGDONG_DATA_ROOT 실데이터 부재 — 01_clips 그룹핑 회귀 skip(학부생 로컬 전용)",
+)
+class TestClipsGroupingRegression(unittest.TestCase):
+    """공개데이터(01_clips) 그룹핑 불변 회귀 — prefix 분기 추가가 기존 경로를 바꾸지 않음(decisions.md 33.5)."""
+
+    def test_source_grouping_unchanged(self) -> None:
+        root = Path(os.environ["DDINGDONG_DATA_ROOT"])
+        doorbell = resolve_doorbell_dir(root / "01_clips")
+        groups = group_by_source(doorbell)
+        n_files = sum(len(v) for v in groups.values())
+        # 436→182(33.5) 불변 + 모든 키가 원본ID 경로와 동일(direct_ 미포함)
+        self.assertEqual(n_files, 436)
+        self.assertEqual(len(groups), 182)
+        for k, members in groups.items():
+            for p in members:
+                self.assertEqual(group_key(p.name), source_id(p.name))
+                self.assertEqual(k, source_id(p.name))
 
 
 @unittest.skipUnless(_HAS_LIBROSA, "librosa 미설치 — 특징추출 테스트 skip(§9 대체)")

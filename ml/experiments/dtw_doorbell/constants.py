@@ -34,3 +34,8 @@ RANDOM_SEED: int = 0  # 결정적 샘플링(재현 가능)
 
 # ── 라벨 (카테고리 4 predicted_class enum과 정합; 이 스파이크는 doorbell 전용) ──
 TARGET_CLASS: str = "doorbell"  # 01_clips 하위 폴더명 = 실험 대상 클래스
+
+# ── 직접녹음 유닛 그룹핑 (decisions.md 5.1 / ml.pipeline KOREAN_SOURCE_MARKERS `direct_` 컨벤션 정합) ──
+# `direct_{클래스}_{유닛}_{테이크}.wav`(예: direct_doorbell_A_01.wav) → 유닛 기준 그룹(재-누름 intra).
+# 이 prefix 없는 공개데이터(01_clips = `{원본ID}_{조각7자리}.wav`)는 기존 원본ID 그룹핑 경로로 통과(무변경).
+DIRECT_RECORDING_PREFIX: str = "direct_"
