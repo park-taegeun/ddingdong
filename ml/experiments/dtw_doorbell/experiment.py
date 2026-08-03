@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from .constants import (
+    DIRECT_RECORDING_PREFIX,
     GO_MARGIN_MIN,
     MAX_INTER_PAIRS,
     MAX_INTRA_PAIRS_PER_GROUP,
@@ -38,12 +39,34 @@ from .features import wav_to_template
 log = logging.getLogger("ml.experiments.dtw_doorbell")
 
 _SRC_ID_RE = re.compile(r"^(.*)_(\d{7})\.wav$")
+_UNIT_TAKE_RE = re.compile(r"^(.*)_(\d+)\.wav$")
 
 
 def source_id(filename: str) -> str:
     """`{원본ID}_{7자리offset}.wav` → 원본ID. 규칙 밖이면 확장자만 제거."""
     m = _SRC_ID_RE.match(filename)
     return m.group(1) if m else filename[:-4] if filename.endswith(".wav") else filename
+
+
+def unit_id(filename: str) -> str:
+    """직접녹음 `direct_{클래스}_{유닛}_{테이크}.wav` → 유닛 그룹키.
+
+    끝 `_{테이크}`(마지막 `_\\d+`)만 제거 → 클래스명 underscore(`fire_alarm` 등) 포함해도 견고.
+    예: `direct_doorbell_A_01.wav` → `direct_doorbell_A`. 테이크 없으면 확장자만 제거.
+    """
+    m = _UNIT_TAKE_RE.match(filename)
+    return m.group(1) if m else filename[:-4] if filename.endswith(".wav") else filename
+
+
+def group_key(filename: str) -> str:
+    """파일명 prefix 자동 분기(ml.pipeline `direct_` 컨벤션 정합, decisions.md 5.1).
+
+    `direct_` 직접녹음 → 유닛 그룹키(재-누름 intra 측정), 그 외(01_clips 공개데이터)
+    → 기존 원본ID 그룹핑 경로 그대로 통과(01 동작 무변경).
+    """
+    if filename.startswith(DIRECT_RECORDING_PREFIX):
+        return unit_id(filename)
+    return source_id(filename)
 
 
 def resolve_doorbell_dir(clips_dir: Path) -> Path:
@@ -54,10 +77,10 @@ def resolve_doorbell_dir(clips_dir: Path) -> Path:
 
 
 def group_by_source(doorbell_dir: Path) -> dict[str, list[Path]]:
-    """doorbell wav → 원본ID별 그룹."""
+    """doorbell wav → 그룹. `direct_` 직접녹음은 유닛별, 그 외는 원본ID별(prefix 자동 분기)."""
     groups: dict[str, list[Path]] = {}
     for p in sorted(doorbell_dir.glob("*.wav")):
-        groups.setdefault(source_id(p.name), []).append(p)
+        groups.setdefault(group_key(p.name), []).append(p)
     return groups
 
 
@@ -247,7 +270,10 @@ def main(argv: list[str] | None = None) -> int:
         "--clips-dir",
         required=True,
         type=Path,
-        help="01_clips 또는 01_clips/doorbell 경로 (실데이터, repo 밖 홈)",
+        help=(
+            "01_clips[/doorbell] 또는 04_direct_recording[/doorbell] 경로 (실데이터, repo 밖 홈). "
+            "`direct_` 파일명은 유닛 그룹핑, 그 외는 원본ID 그룹핑으로 자동 분기."
+        ),
     )
     parser.add_argument("--backend", default="auto", choices=("auto", "exact", "fastdtw"))
     parser.add_argument("--max-groups", type=int, default=None, help="빠른 확인용 그룹 제한")
