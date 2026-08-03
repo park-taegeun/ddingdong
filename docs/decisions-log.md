@@ -1133,3 +1133,24 @@
 
 **관련 카테고리**: 7 (이미지 업로드 API 정정) / 7.3 (이미지 memo 왕복 신설) / 6.2 (real 검증 완료 + frozen 확정 + numpy 규명 + 미결 등록)
 **관련 commit**: 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)
+
+---
+
+## 2026-08-02 (일) — PoC-(31) A-2 이미지 호스팅 스켈레톤 + numpy/stale 미결 해소 + STT 제품 통합 발견 (카테고리 6.2/7)
+
+### 반영 (카테고리 7 — A-2 이미지 public 호스팅 스켈레톤)
+- **서버측 스켈레톤 실코드화 완료 (PR #29 `c30e728`)**: 기존 "서버 자체 public 호스팅 필수(image_url)" 정정에 이어, opaque capability URL(추측불가 랜덤 키, `notification_id` 미유래) + 비인증 서빙 라우트(카카오 lazy fetch가 비인증이라 인증 붙이면 깨짐, 유일 게이트 = opaque 키 + traversal 화이트리스트) + TTL 72h(lazy fetch라 짧게 못 잡음, cleanup 헬퍼 미스케줄) + 로컬 FS 단일 concrete(11주차 EC2 static/오브젝트 스토리지 교체 지점)로 실코드화. 로컬 라운드트립 실증(enrich→image_url→GET 200 바이트 일치). ★ 실 public 호스팅 제품(EC2 static vs 오브젝트 스토리지) 확정은 여전히 11주차 미결 — 스켈레톤 완료지 호스팅 방식 확정 아님.
+
+### 해소 (카테고리 6.2 — 미결 2건, PR #30 `50995ba`)
+- **numpy 핀 완화**: `[미결 신규] numpy==2.5.1 핀 완화` 문구를 취소선 처리하고 해소 append. `numpy==2.5.1` → `numpy>=1.26,<3` 완화 반영. 임시 venv install 검증(해석 버전 회귀 0 + `audio_decode` RMS 0.353539 재현) 통과.
+- **inference stale 정정**: `[소액 정정 후속] server/inference/README.md + __init__.py stale 문구` 문구를 취소선 처리하고 해소 append. `routes.py`/`model_serving.py` 실 import 근거로 "더 이상 standalone 아님" 현행 정정 완료.
+
+### 발견, 결정 아님 (카테고리 7 — STT 제품 통합)
+- **note append (취소선 없음)**: 2026-08-02 콘솔 화면 catch + 공식 안내 확인 — 네이버가 CSR 기능을 CLOVA Speech로 통합 제공 안내. CSR 문서(User Guide 14/FAQ 6)는 잔존하나 신규 이용이 CLOVA Speech로 유도되는지 불명. ∴ STT 제품 선택(CSR 유지 가능 여부 vs CLOVA Speech 전환) 재검토 필요 — 11주차 서버 연동 전 확정. A-1 STT 왕복 실측은 제품 결정 후 defer. **제품 전환·확정 결정은 이번 태스크 범위 아님**(미결정 상태 그대로 기록만).
+
+**SSoT 정합 검증 (문서라 코드 3단계 N/A)**: 취소선 대상 2건(numpy 미결/stale 미결) `git show HEAD:docs/decisions.md | grep` 실존 hit 확인 후 처리(학습 19, 없는 문구 취소선=날조 회피). 카테고리 6/6.2/7 실번호 = `grep -nE "^## 카테고리|^### "`로 실측 확정. PR 해시(#29 `c30e728`/#30 `50995ba`) = `git log --oneline -5` 대조 실측. STT는 결정 아닌 발견으로만 표기(제품 확정 문구 금지).
+
+**비범위**: 코드 0 수정(`server/*`/`firmware/*`/`ml/*` 전부 read only, PR #29/#30은 기 머지된 코드 변경 인용). `docs/decisions.md`(카테고리 7 append 2건 + 6.2 취소선+해소 2건) + `docs/decisions-log.md`만 편집. 브랜치 없이 main 직 push(카테고리 20, 문서 단독). 토큰/시크릿 미기록.
+
+**관련 카테고리**: 7 (A-2 이미지 호스팅 스켈레톤 완료 + STT 제품 통합 발견 note) / 6.2 (numpy 핀 완화 + inference stale 미결 해소)
+**관련 commit**: 코드 PR #29 `c30e728` + PR #30 `50995ba` + venv_real gitignore `5e8da96`(기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)
