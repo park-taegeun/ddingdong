@@ -1179,3 +1179,35 @@
 
 **관련 카테고리**: 7 (STT CSR 유지 확정 + 요금 정정) / 5.1 (DTW 유닛 그룹핑 PR #31 해소)
 **관련 commit**: 코드 PR #31 `a332343`(기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)
+
+---
+
+## 2026-08-07 (금) — PoC-(34) ToF 브레드보드 브링업 **성공** + 근본원인 규명 + 실측 핀맵 SSoT 반영 (카테고리 2/9.1)
+
+### 결정 (카테고리 9.1 — 브레드보드 브링업 실측 확정, 신설)
+- **2026-08-06~07 이틀 브링업이 2026-08-07 성공**: `env:tof_dummy` 런타임 로그로 `VL53L5CX ready (8x8, 15Hz, continuous)` + `frame #1/#31 (64 zones)` + heap 실측 확정. 카테고리 9에 **9.1 절 신설**로 전문 기록(성공 로그 verbatim / 근본원인 / 실측 핀맵 / 결선 6가닥 / 하네스 2종 / 소거 표 / 미결 2건).
+- **★ 근본원인 = PWREN/LPn 미구동**: 두 핀이 HIGH로 구동되지 않으면 센서가 셧다운 상태로 남아 **SDA를 LOW 고착** → I2C START 불성립 → 어떤 핀 조합으로도 0x29 ACK 부재. 단일 원인 확정. 근거 = DS13754("LPn logic1 → I2C comms") / AN5717(PWR_EN=레귤레이터 enable) / UM2884 §4.1(LPn=High, I2C_RST=0), 각 15단어 이내 인용.
+- **SATEL 실측 핀맵 정정**: `B30=SDA/B31=SCL/B33=PWREN/B34=LPn/B35=IOVDD/B36=GND`(삼각형 마커=36). 뒷면 실크 단일 열 판독은 오독 — AN5717 Table 1 = **9핀 커넥터 2개** 구조로 정정. 최종 결선 6가닥 표를 재현용 SSoT로 기록.
+- **카테고리 2 핀 표 확장**: 기존 SDA/SCL 2행 무수정(실측 일치=SSoT 유지) + **PWREN/LPn 2행 추가** + PWREN/LPn HIGH 미구동 시 SDA LOW 고착 note 추가.
+
+### 방법론 산출 (진단 하네스 2종 — 기 머지 코드 인용)
+- **PR #32 `env:tof_pinscan`(`06e671f`)**: GPIO 순서쌍 110개 전수 I2C ACK 스캔(수동 순회 대체).
+- **PR #33 `env:tof_lineprobe`(`601937d`)**: **멀티미터 없이 전원·배선 실측**하는 수단 확립. ★ 2회 대조 실험(SATEL 연결/분리)이 "LOW 출처=SATEL측" 격리의 결정타 → XIAO·브레드보드 결백 증명.
+
+### 해소 (33.5-③ — constants.py:25 오도성 주석)
+- **`constants.py:25` `PRETEST_MARGIN` 주석 정정 미결 취소선+✅ 해소**: `git show HEAD:ml/experiments/dtw_doorbell/constants.py` 실측 = 주석이 이미 "클래스 간 변별(pretest), USP 개체구분 근거 아님"으로 정정 완료 상태. 코드는 이미 SSoT 정합, **문서만 미표기였던 stale** — 본 커밋으로 해소(별도 코드 PR 불필요).
+
+### 정정 (1MHz 서술 — 취소선 없이 cross-ref append)
+- **카테고리 12①/14-2/16.1의 "I2C 1MHz" 3곳에 실측 cross-ref append**(원문 보존): 브레드보드+20cm 점퍼 환경 **400kHz로 15Hz 프레임 정상 동작**, 1MHz 실환경 미검증. 1MHz는 datasheet 상한으로 여전히 유효라 취소선 없이 append만. 카테고리 17.1 "I2C max 1 Mbits/s(datasheet)"는 **스펙 상한 서술이지 동작 클럭 주장 아님 → 무수정**(과잉 정정 회피).
+
+### 미결 (defer)
+- **I2C 클럭 정책**: `tof_common.h TOF_I2C_FREQ_HZ` 1000000→400000 **미커밋 수정** 상태(400kHz 실동작 확인). 본 문서 태스크는 코드 무변경 → 클럭 정책 확정(1MHz 복원 or 400kHz 정식)은 별도 코드 PR로 defer. **본 커밋에 firmware/ 미포함**(무접촉 유지).
+- **Stage A/B 구현**: `tof_test.cpp`는 프레임 카운트 로그만 — zone 순회/`target_status` 필터/임계값은 TODO 주석 상태(별도 코드 태스크).
+- **Motion Indicator 런타임**: 브링업 로그는 `tof_dummy`(기본 프레임)라 `.motion_indicator` 필드 런타임은 미측정 — 해당 env 재빌드로 별도 재확인 대기(카테고리 9.1 Stage B 절 cross-ref).
+
+**SSoT 정합 검증 (문서라 코드 3단계 N/A)**: 취소선/정정 대상 문구 전건 `git show HEAD:docs/decisions.md | grep`/`sed` 실존 확인 후 처리 — 1MHz 3곳(401/437/501)/33.5-③(1550) 실측. constants.py:25 정정 완료 상태 = `git show HEAD:` 실측(해소 판정의 근거). 카테고리 2·9 실번호·9.1 미존재 = `grep -nE "^## 카테고리|^### "`로 확정. PR 해시(#32 `06e671f`/#33 `601937d`) = `git log --oneline` 대조 실측. 카테고리 17.1(datasheet 상한)은 동작 주장 아니라 의도적 무수정(학습 16/19 판단). 미측정 항목(Motion Indicator 런타임 / Stage A·B / 1MHz 실환경)은 defer로 정직 표기.
+
+**비범위**: 코드 0 수정(`server/*`/`firmware/*`/`ml/*` 전부 read only — PR #32/#33은 기 머지된 코드 인용). **firmware/ 무접촉**: `tof_common.h`(400kHz 미커밋)·`firmware/logs/`(untracked)는 커밋 제외, `git add`는 `docs/` 경로만 명시. `docs/decisions.md`(카테고리 2 핀 표 확장 + 9.1 신설 + 9 Stage B cross-ref + 12①/14/16.1 1MHz cross-ref + 33.5-③ 취소선+해소) + `docs/decisions-log.md`(본 entry)만 편집. 브랜치 없이 main 직 push(카테고리 20, 문서 단독). 토큰/시크릿/계정 개인정보 미기록.
+
+**관련 카테고리**: 2 (핀 표 PWREN/LPn 확장) / 9.1 (브레드보드 브링업 실측 확정 신설) / 12①·14·16.1 (1MHz cross-ref) / 33.5-③ (constants.py 주석 해소)
+**관련 commit**: 진단 하네스 코드 PR #32 `06e671f` + PR #33 `601937d`(기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)

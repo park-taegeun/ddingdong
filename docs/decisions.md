@@ -30,6 +30,10 @@
 | INMP441 | VDD/GND/L_R | 3V3/GND/GND | - | - |
 | VL53L5CX | SDA | D4 | 5 | I2C |
 | VL53L5CX | SCL | D5 | 6 | I2C |
+| VL53L5CX | PWREN | 3V3 직결 | - | (전원 enable) |
+| VL53L5CX | LPn   | 3V3 직결 | - | (I2C enable) |
+
+★ **PWREN/LPn을 HIGH로 구동하지 않으면 센서 셧다운 상태로 SDA를 LOW 고착 → I2C 전면 불통** (2026-08-07 실측 확정, 카테고리 9.1 참조). SDA=D4(GPIO5)/SCL=D5(GPIO6)는 실측 일치 = SSoT 유지.
 
 ---
 
@@ -357,6 +361,61 @@
 ### Stage B Motion Indicator 노출 확정 (2026-07-09 PoC-(26), 판정 B)
 - 래퍼(`SparkFun_VL53L5CX`) 전용 메서드 0건 — **번들 ULD 함수**(`vl53l5cx_motion_indicator_init`/`_set_distance_motion`/`_set_resolution`)를 `imager.Dev` public 핸들로 직접 호출. `VL53L5CX_DISABLE_MOTION_INDICATOR` 매크로 주석처리(platform.h)로 컴파일 활성. `.motion_indicator` 필드 ResultsData 상주. RAM 순증 **+156B**(Motion_Configuration, 무거운 모션 머신러리는 현 footprint 기지불).
 - **학습 15 4단계 중 ③컴파일까지 확정 / ④런타임 = 센서 대기**(브레드보드 결선 후). frozen 파일 0 수정(import 검증만). 스크래치 프로브는 repo 밖.
+- ※ **2026-08-07 갱신(카테고리 9.1)**: 브레드보드 브링업 성공으로 센서 자체 런타임(`tof_dummy` 기본 8x8/15Hz 프레임)은 실동작 확정. 단 **Motion Indicator 전용 런타임(본 절 대상)은 해당 env 재빌드로 별도 재확인 대기** — 브링업 로그는 `tof_dummy`(프레임 카운트)라 `.motion_indicator` 필드 런타임은 미측정.
+
+### 9.1 브레드보드 브링업 실측 확정 (2026-08-07 PoC-(34) 신설)
+
+2026-08-06~07 이틀에 걸친 VL53L5CX-SATEL 브레드보드 브링업이 **2026-08-07 성공**. `env:tof_dummy` 런타임 로그로 확정.
+
+**(a) 성공 로그 (verbatim 실측)**
+```
+[tof] VL53L5CX ready (8x8, 15Hz, continuous)
+[BOOT] tofTask started on Core 0 priority 3
+[tof] frame #1 (8x8, 64 zones)
+[tof] frame #31 (8x8, 64 zones)
+[MEM:tofTask-entry] Heap free=359108 min=354320 / PSRAM 8386295 free
+```
+
+**(b) ★ 근본원인 = PWREN/LPn 미구동 (오늘 최대 발견)**
+PWREN·LPn 두 핀이 HIGH로 구동되지 않으면 VL53L5CX가 셧다운 상태로 남고, 그 상태에서 **SDA 라인을 LOW로 물어** I2C START 컨디션 자체가 성립 불가 → 어떤 핀 조합으로도 0x29 ACK가 안 나오던 현상의 단일 원인. 근거(외부 문서, 각 15단어 이내 인용):
+- DS13754: "drive LPn to logic1 to enable I2C comms" (LPn HIGH = I2C 활성).
+- AN5717: PWR_EN = 온보드 5V→3V3 레귤레이터 enable 게이트.
+- UM2884 §4.1 초기화 시퀀스: LPn=High, I2C_RST=0(LOW).
+
+**(c) SATEL 실측 핀맵 (브레드보드 세로줄 번호 기준)**
+SATEL 배치 = E행, 삼각형(▶) 마커 = 36번. `B30=SDA / B31=SCL / B33=PWREN / B34=LPn / B35=IOVDD / B36=GND`.
+※ 뒷면 실크를 **단일 열로 읽은 기존 가정은 오독** — AN5717 Table 1 = SATEL은 **9핀 커넥터 2개**(전원/아날로그 열 + 디지털 열) 구조.
+
+**(d) 최종 결선 6가닥 (재현용 SSoT — 다음 세션이 이 표만으로 복원 가능)**
+
+| 색 | XIAO | SATEL |
+|---|---|---|
+| 빨강 | B7 (3V3) | B35 (IOVDD) |
+| 검정 | B6 (GND) | B36 (GND) |
+| 주황 | J9 (D4) | B30 (SDA) |
+| 카키 | J10 (D5) | B31 (SCL) |
+| 추가① | A7 (3V3) | B33 (PWREN) |
+| 추가② | C7 (3V3) | B34 (LPn) |
+
+XIAO 배치 = D행/H행 5~11번(3V3 = D행 7열). 카테고리 2 핀 표의 SDA=D4(GPIO5)/SCL=D5(GPIO6)는 실측 일치 = SSoT 유지.
+
+**(e) 진단 하네스 2종 (오늘의 방법론 산출)**
+- **PR #32 `env:tof_pinscan`** (`06e671f`): XIAO GPIO 11개 × 순서쌍 110개 순회로 0x29 ACK 소프트웨어 탐색. 배선 1회 고정 + 플래시 1회로 수동 순회 대체.
+- **PR #33 `env:tof_lineprobe`** (`601937d`): INPUT_PULLDOWN/PULLUP 5회 다수결로 외부 pull-up 검출 = **멀티미터 없이 전원·배선을 실측하는 수단** 확립. ★ **2회 대조 실험(SATEL 연결/분리) 설계가 "LOW 출처 = SATEL측" 격리의 결정타** → XIAO·브레드보드 결백 증명.
+
+**(f) 소거된 원인 (전부 실측 기반)**
+
+| 후보 | 판정 근거 |
+|---|---|
+| I2C 클럭 (1M/400k/100k) | 전 구간 동일 증상 |
+| 센서 개체 불량 | 예비 센서(2장 중 2번째)도 동일 |
+| 신호선 배선 | pinscan 110 순서쌍 전수 NONE FOUND |
+| XIAO GPIO 점유(카메라/SD) | lineprobe 분리 대조로 반증. Seeed wiki상 D4/D5 자유핀 |
+| SATEL 보드 결함 | 2장 동일 → 계통 원인(개체 결함 아님) |
+
+**(g) ⚠️ 미결 — I2C 클럭 정책**: `firmware/include/tof_common.h` `TOF_I2C_FREQ_HZ`가 8/06 실험으로 1000000→400000 **미커밋 수정** 상태이며, 400kHz에서 15Hz 프레임 정상 동작 실측 확인. **본 문서 태스크는 코드 무변경** — 클럭 정책 확정(1MHz 복원 or 400kHz 정식 채택)은 **별도 코드 PR로 defer**.
+
+**(h) ⚠️ 미결 — Stage A/B 구현**: `tof_test.cpp`는 현재 프레임 카운트 로그만. 64 zone 순회 / `target_status` 5·9 valid 필터 / center 4 zone / zone count 임계값(카테고리 9 Stage A)은 TODO 주석 상태 — 별도 코드 태스크.
 
 ---
 
@@ -399,6 +458,7 @@
 
 ### ① VL53L5CX SparkFun lib + ESP32-S3 — 조건부 GO
 - **4가지 워크어라운드**: I2C 1MHz / SATEL 모듈 / 단일 센서 / Adafruit_VL53L5 폴백
+  - ※ 2026-08-07 실측: 브레드보드+20cm 점퍼 환경에서 **400kHz로 15Hz 프레임 정상 동작**. 1MHz 실환경 검증은 미수행 — 클럭 정책 확정은 별도 코드 PR (카테고리 9.1(g) 참조).
 - **참고 코드**: https://github.com/susesKaninchen/OnlyFeet (XIAO Sense + 8x8/15Hz, 2026-05 활성)
 - Arduino-ESP32 core 3.x + SparkFun lib 1.0.3 호환성 확인됨 (monorepo 셋업 시 자동 검증, 카테고리 16 참조)
 - 시간 영향: +1h (5/11 ToF 코드)
@@ -435,6 +495,7 @@
    - `sparkfun/SparkFun VL53L5CX Arduino Library` (메인)
    - `https://github.com/adafruit/Adafruit_VL53L5.git` (폴백)
 2. `setup()`에 `Wire.setClock(1000000)` 명시
+   - ※ 2026-08-07 실측: 브레드보드 환경 **400kHz로 15Hz 프레임 정상 동작**. 1MHz 실환경 미검증 — 클럭 정책 확정은 별도 코드 PR (카테고리 9.1(g) 참조).
 3. 단일 센서 구성 (issue #5 회피)
 4. SATEL 모듈 사용 (제네릭 모듈 init fail 회피)
 5. 빌드 단계 즉시 검증: Arduino-ESP32 core 3.x 호환성 (이미 확인됨)
@@ -499,6 +560,7 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 - 라이브러리: SparkFun_VL53L5CX_Arduino_Library 1.0.3 (1차) + Adafruit_VL53L5 master (폴백, lib_deps만 등록 dead code elimination)
 - 메모리: mic 대비 RAM ↓ (I2S DMA 4 KiB 부재) / Flash ↑ (VL53L5CX FW upload buffer ~86KB 포함)
 - I2C 1MHz / 8x8 64 zones / 15Hz (datasheet 8x8 mode max, SparkFun Example3 검증 패턴)
+  - ※ 2026-08-07 실측: 브레드보드+20cm 점퍼 환경 **400kHz로 15Hz 프레임 정상 동작**. 1MHz 실환경 미검증 — 클럭 정책 확정은 별도 코드 PR (카테고리 9.1(g) 참조).
 - graceful: `initToF()` 실패 시 task spawn 생략 → `loop()` idle 진단만 (mic_test 패턴 100% 일치)
 - 학습 13 catch 33개 / 학습 14 mic 컨벤션 100% 일치 / 학습 15 단계 4 (런타임) 5/15+ 보류
 
@@ -1547,6 +1609,6 @@ Claude가 학부생에게 코드 관련 제안 시 사전 자가검증 3단계 �
 **미결 항목 (발표/통합 전)**:
 1. ~~**USP 정량 근거 재정립** (발표 전): 8.42 = 클래스 간(2차 필터)로 위상 정정, 개체 구분은 직접녹음 재검증 대기(11~12주차). **발표 슬라이드의 8.42 "옆집 구분 근거" 인용 = 정정 대상.**~~ → **(2026-07-09 PoC-(26) 진화) USP 2층 설계 확정**(ToF presence 1차 융합 + SP/DTW 보조 2차). 양층 런타임 검증 대기(ToF=브레드보드 후 / SP/DTW=직접녹음 4유닛). 발표 슬라이드 = ToF 융합 서사로 재작성, 8.42는 2차 필터 변별로 재배치(폐기 아님).
 2. ~~**인용 논문 위상 재검토** (발표 전): Meliza 2013 (PMC3745477) = 개체 구분 근거로 인용됐으나 개체 구분 자체가 미검증 → 논문 위상 재검토 필요(decisions-log 2025-04 SP/DTW 근거 항목 연동).~~ → **(2026-07-09 PoC-(26) 진화)** Meliza 2013(PMC3745477) 위상 = SP/DTW **보조층** 근거로 조정 완료(주력 근거 아님).
-3. **★ 별도 코드 태스크** (문서 아님, 본 태스크 §7 코드 무수정): `ml/experiments/dtw_doorbell/constants.py:25` `PRETEST_MARGIN = 8.42` 주석 "**pretest 분리 마진(카테고리 근거)**" = 존재하지 않는 SSoT 근거를 가리키는 **오도성 주석** → "**클래스 간 변별(pretest), USP 개체구분 근거 아님**"으로 정정 필요. 별도 코드 PR로 처리.
+3. ~~**★ 별도 코드 태스크** (문서 아님, 본 태스크 §7 코드 무수정): `ml/experiments/dtw_doorbell/constants.py:25` `PRETEST_MARGIN = 8.42` 주석 "**pretest 분리 마진(카테고리 근거)**" = 존재하지 않는 SSoT 근거를 가리키는 **오도성 주석** → "**클래스 간 변별(pretest), USP 개체구분 근거 아님**"으로 정정 필요. 별도 코드 PR로 처리.~~ **✅ 해소 확인 (2026-08-07 PoC-(34))**: `git show HEAD:ml/experiments/dtw_doorbell/constants.py` 실측 = 주석이 이미 "`클래스 간 변별(pretest), USP 개체구분 근거 아님 — 실측 정합 비교 기준`"으로 정정 완료 상태. 코드는 이미 SSoT 정합, **문서만 미표기였던 stale** — 본 커밋으로 해소.
 
 ---
