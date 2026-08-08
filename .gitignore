@@ -69,3 +69,9 @@ venv_real/
 # Flask instance 폴더(server/instance/captures 기본) + 캡처 JPEG. image_store 스켈레톤이
 # 로컬에 저장하는 방문자 사진은 개인정보라 어떤 경우에도 커밋 금지.
 instance/
+
+# === PlatformIO device monitor 로그 (실측 로그 원본은 repo 밖 ~/ddingdong-측정결과/ 보관) ===
+# pio device monitor 부산물. 브링업/실측 로그는 repo 밖 컨벤션이라 커밋 0.
+# device-monitor-*.log = leading slash 없음 → 모든 하위 디렉토리 매칭 (line 7 규약 동일).
+firmware/logs/
+device-monitor-*.log
