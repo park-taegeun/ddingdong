@@ -18,7 +18,8 @@ void logToFMemoryDiagnostics(const char* tag) {
 bool initToF() {
   logToFMemoryDiagnostics("pre-init");
 
-  // ESP32-S3 GPIO 매핑 + 1MHz 워크어라운드 (사전 검증 ①).
+  // ESP32-S3 GPIO 매핑 + I2C 클럭(TOF_I2C_FREQ_HZ = 400kHz, 2026-08-07 실측 정식 채택).
+  // 정정: 구 "1MHz 워크어라운드" 주석은 8/07 브링업 실측(카테고리 9.1)으로 무효 — 상수 단일 출처 참조.
   Wire.begin(TOF_SDA_PIN, TOF_SCL_PIN);
   Wire.setClock(TOF_I2C_FREQ_HZ);
   Serial.printf("[tof] I2C ready (SDA=GPIO%d/SCL=GPIO%d, clock=%uHz)\n",
