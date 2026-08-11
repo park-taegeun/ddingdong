@@ -65,6 +65,18 @@ constexpr int TOF_INIT_RETRY_MAX = 2;
 
 // === Stage A 사람 존재 판정 (decisions.md 카테고리 9 Stage A) ===
 // SSoT 규정 = "1m 이내 ≥8 zone". 아래 두 값이 그 규정의 코드 표현.
+//
+// ★ 2026-08-08 ④런타임 실측 — 임계값 8의 타당성 근거 (사람 1명 접근, 8x8/15Hz/400kHz)
+//   center 2953mm → near 0   | center 869mm → near 29
+//   center 1240mm → near 0   | center 756mm → near 30
+//   center 1196mm → near 0   | center 634mm → near 40
+//   center 1011mm → near 10 ★| center 529mm → near 51
+//   center  995mm → near 9   | center 431mm → near 56
+//   center  972mm → near 13
+//   무인 기준선 = near 0~2 (시야 내 물체 제거 상태)
+//   ∴ 1m 지점 사람 = 9~13 / 무인 = 0~2 → 임계값 8이 양측에서 분리됨. 상향 시 1m 사람 미검출 위험.
+//   ※ 세션 중 제기된 "8→20 상향" 안은 근거 수치(near 37~55)가 실제로는 center 410~562mm
+//     (0.4~0.6m) 값이었음이 판명되어 폐기됨(학습 19).
 constexpr uint16_t TOF_PRESENCE_DIST_MM = 1000;
 constexpr uint8_t TOF_PRESENCE_MIN_ZONES = 8;
 
@@ -76,8 +88,14 @@ constexpr uint8_t TOF_STATUS_VALID_LARGE = 9;
 // center 4 zones (8x8 그리드 중앙) — 침입자 거리 메트릭용. OnlyFeet 패턴.
 constexpr uint16_t TOF_CENTER_ZONES[4] = {27, 28, 35, 36};
 
-// ※ 디바운스(연속 N프레임 유지 요구)는 SSoT 미규정 → 본 PR 미구현.
-// 상태 전환 로그로 깜빡임 유무를 실측한 뒤 필요성을 판정한다.
+// === 디바운스 (2026-08-08 ④런타임 실측 기반 도입) ===
+// PR #34 실측에서 임계 경계 플리커 확인 — 1~2프레임 단위로 near가 7↔8을 왕복하며
+// presence가 반전됨(center 722→727mm, 5mm 변화로 전환). 원인 = 1m 부근에서
+// near_count가 임계값(8) 언저리를 오르내리는 물리적 특성.
+// N=3 근거: 15Hz이므로 3프레임 = 약 200ms. 실측 플리커는 전부 1~2프레임 폭이라
+//   3프레임 연속 조건으로 소거되고, 200ms는 사람 인지 지연으로 무시 가능.
+// 진입/이탈 대칭 적용 — 비대칭은 실측 근거가 없어 도입하지 않음.
+constexpr uint8_t TOF_PRESENCE_DEBOUNCE_FRAMES = 3;
 
 // === FreeRTOS 태스크 설정 (decisions.md 카테고리 14 5/21 PoC 분배 잠정안) ===
 // micTask priority 4 (Core 0)와 분리: tofTask priority 3 (Core 0).
