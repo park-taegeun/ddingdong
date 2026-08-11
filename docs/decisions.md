@@ -355,6 +355,7 @@
 ## 카테고리 9: VL53L5CX 사람 검증 단계
 
 - **Stage A (필수)**: zone count 임계값 (1m 이내 ≥8 zone)
+  - ※ **2026-08-08 PoC-(35) ④런타임 검증 완료** (PR #34 `ecfe5a0` 실코드화 + PR #35 `af1fbf9` 디바운스): 임계값 8 실측 타당성 확인(무인 near 0~2 / 1m 사람 9~13) — 상세 = 9.2. **Stage B는 여전히 ④런타임 미검증**(Motion Indicator, 아래 Stage B 절).
 - **Stage B (필수)**: Motion Indicator + per-zone threshold
 - **Stage C/D (선택)**: NanoEdge AI / Passing-by filter
 
@@ -414,8 +415,43 @@ XIAO 배치 = D행/H행 5~11번(3V3 = D행 7열). 카테고리 2 핀 표의 SDA=
 | SATEL 보드 결함 | 2장 동일 → 계통 원인(개체 결함 아님) |
 
 **(g) ⚠️ 미결 — I2C 클럭 정책**: `firmware/include/tof_common.h` `TOF_I2C_FREQ_HZ`가 8/06 실험으로 1000000→400000 **미커밋 수정** 상태이며, 400kHz에서 15Hz 프레임 정상 동작 실측 확인. **본 문서 태스크는 코드 무변경** — 클럭 정책 확정(1MHz 복원 or 400kHz 정식 채택)은 **별도 코드 PR로 defer**.
+  - ✅ **해소 (2026-08-08 PoC-(35), PR #34 `ecfe5a0`)**: `TOF_I2C_FREQ_HZ` 400000을 정식 커밋으로 확정. 근거 = 15Hz는 datasheet 8x8 mode 상한이라 1MHz 상향 시 프레임레이트 이득 0, 참조 구현 OnlyFeet도 400kHz 사용, 1MHz 실환경 검증은 실익 부재로 미수행. ※ 12①·14-2·16.1의 400kHz cross-ref는 2026-08-07 append 완료분(재수정 불요), 17.1 "I2C max 1 Mbits/s"는 datasheet 상한 서술이라 무접촉.
 
 **(h) ⚠️ 미결 — Stage A/B 구현**: `tof_test.cpp`는 현재 프레임 카운트 로그만. 64 zone 순회 / `target_status` 5·9 valid 필터 / center 4 zone / zone count 임계값(카테고리 9 Stage A)은 TODO 주석 상태 — 별도 코드 태스크.
+  - ✅ **Stage A 해소 (2026-08-08 PoC-(35), PR #34 `ecfe5a0` + PR #35 `af1fbf9`)**: 64 zone 순회 / `target_status` 5·9 valid 필터 / center 4 zone 평균(div-by-zero 가드) / zone count 임계값(8) 실코드화 + 연속 3프레임 대칭 디바운스 도입, ④런타임 검증 통과. 상세 = 9.2.
+  - ⚠️ **Stage B 미결 유지**: Motion Indicator(`vl53l5cx_motion_indicator_init` 등) 실구현·④런타임 미착수. `VL53L5CX_DISABLE_MOTION_INDICATOR` 매크로가 `.pio/libdeps/` 내부라 클린 빌드 시 원복되는 문제(재현 방법 확정 선행)는 `tof_test.cpp` 주석에 각인된 상태로 존치.
+
+### 9.2 Stage A ④런타임 검증 완료 (2026-08-08 PoC-(35) 신설)
+
+PR #34(`ecfe5a0`, Stage A 실코드화 + I2C 400kHz 정식) → PR #35(`af1fbf9`, 연속 3프레임 대칭 디바운스)로 Stage A가 실코드화되고, 2026-08-08 학부생 로컬 ④런타임 실측을 통과했다.
+
+**(a) 검증 결과**: 사람 1명 접근(2.9m→5.6cm) 전 구간에서 presence 상태 전환이 **정확히 1회**만 발생. 무인 기준선 near 0~2에서 전환 로그 0건. Stage A(zone count 임계) 로직 실효 확정.
+
+**(b) 성공 로그 (verbatim 실측)**
+```
+presence: NONE -> DETECTED (near=13/64, center=1015mm, streak=3)
+```
+전환 직후 near가 13→9로 하락했음에도 DETECTED 유지 = **디바운스 실효 실증**(단일 프레임 하락으로 반전되지 않음).
+
+**(c) 거리-near_count 실측 곡선** (사람 1명 접근, 8x8/15Hz/400kHz) — 본 문서 내 단일 수록 지점
+
+| center | near |  | center | near |
+|---|---|---|---|---|
+| 2953mm | 0 |  | 869mm | 29 |
+| 2918mm | 2 |  | 756mm | 30 |
+| 1240mm | 0 |  | 634mm | 40 |
+| 1196mm | 0 |  | 529mm | 51 |
+| 1011mm | 10 |  | 431mm | 56 |
+| 995mm | 9 |  |  |  |
+| 972mm | 13 |  |  |  |
+
+무인 기준선 = near 0~2 (시야 내 물체 제거 상태).
+
+**(d) 임계값 8 타당성 (실측 근거 신설, 값 변경 없음)**: 1m 지점 사람 = near 9~13 / 무인 = 0~2 → 임계값 8이 양측에서 분리됨. ★ 세션 중 "8→20 상향" 안이 제기됐으나 근거 수치(near 37~55)가 실제로는 center 410~562mm(0.4~0.6m) 값이었음이 판명되어 **폐기** — 20 적용 시 1m 사람(near 9~13) 미검출 위험(**학습 19 실증 사례**).
+
+**(e) 디바운스 N=3 결정 (PR #35)**: 확정 상태와 다른 raw 판정이 연속 3프레임이어야 전환(진입/이탈 **대칭**). 근거 = 15Hz에서 3프레임 ≈ 200ms, 실측 플리커는 전부 1~2프레임 폭이라 소거되고 200ms는 사람 인지 지연으로 무시 가능. 비대칭은 실측 근거 부재로 미도입. 임계 경계(약 1m 정지)에서 near가 7↔8 왕복하며 presence가 매 프레임 반전되던 플리커(PR #34 실측)를 소거.
+
+**(f) ⚠️ Stage B는 여전히 ④런타임 미검증**: 본 절은 **Stage A 전용** 완료 보고. Motion Indicator(Stage B, 위 Stage B 절 + 9.1(h))는 실구현·런타임 미착수 — **"Stage A 완료"가 "ToF 사람 검증 완료"를 의미하지 않음**. Stage C/D(NanoEdge AI / Passing-by)도 미착수.
 
 ---
 
@@ -820,7 +856,8 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 ### 노션 plan 게이트 정정 (2026-07-06 PoC-(22) Set 3 실측)
 
 - **당초 우려**: 노션 워크스페이스가 Business plan API 게이트로 DB row 열람·갱신 차단 → hand-mirror(수기 반영) 필요 추정.
-- **실측 정정**: `notion-query-data-sources`(SQL 쿼리)만 Business plan 차단. **`notion-search` + `notion-fetch`(by-ID)로 DB row 실 열람·특정 갱신은 우회 가능** → hand-mirror 불필요. DB3(미결정 항목, `a319c04a-9201-417f-8552-7d6e99b2958f`) 3출처 오염 상태에서도 by-ID fetch로 특정 row 접근 확인.
+- **실측 정정**: ~~`notion-query-data-sources`(SQL 쿼리)만 Business plan 차단.~~ **`notion-search` + `notion-fetch`(by-ID)로 DB row 실 열람·특정 갱신은 우회 가능** → hand-mirror 불필요. DB3(미결정 항목, `a319c04a-9201-417f-8552-7d6e99b2958f`) 3출처 오염 상태에서도 by-ID fetch로 특정 row 접근 확인.
+  - ✅ **정정 (2026-08-07 PoC-(34) Set 3 실측 발견 → 2026-08-08 PoC-(35) 문서 반영)**: 단일 data source 대상 `notion-query-data-sources` SQL 전수 스캔이 **정상 작동**함을 실측(DB3 42행 전수 조회, `has_more:false`) → "SQL만 Business plan 차단" 서술은 해소. **멀티 data source 조인 쿼리만 잔여 제약**. ★ 발견일(2026-08-07 실측 — 당시 프로젝트 지침·인계 패키지엔 반영됐으나 decisions.md만 미반영 = SSoT 역방향 stale) ≠ 문서 반영일(2026-08-08 세션 초 3소스 대조에서 catch).
 - ※ 갱신 후 `notion-update-content`는 old_str 불일치 시에도 silent success(no-op) 가능 → **편집 후 re-fetch 검증 필수**.
 
 ---
@@ -1157,7 +1194,7 @@ ID 참조:
 ### 26.4 시연 메시지 3가지 (부스 마무리 시점)
 
 1. 누가 와서 뭐라고 했는지 사진 + 자막으로 한 번에 알림 (USP 1 + 2)
-2. 우리집과 옆집 초인종 구분 (SP/DTW)
+2. 우리집과 옆집 초인종 구분 ~~(SP/DTW)~~ **(ToF presence 1차 융합 + SP/DTW 보조 2차, 2026-07-09 PoC-(26) 정정 — 26.3 진입점 2엔 반영됐으나 26.4 누락분을 2026-08-08 catch)**
 3. 화재 시 안전 최우선 + 대응 가이드 동시 전달
 
 ### 26.5 부스 외 보완 (시연 백업 영상)

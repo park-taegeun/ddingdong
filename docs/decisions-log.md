@@ -1211,3 +1211,31 @@
 
 **관련 카테고리**: 2 (핀 표 PWREN/LPn 확장) / 9.1 (브레드보드 브링업 실측 확정 신설) / 12①·14·16.1 (1MHz cross-ref) / 33.5-③ (constants.py 주석 해소)
 **관련 commit**: 진단 하네스 코드 PR #32 `06e671f` + PR #33 `601937d`(기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)
+
+---
+
+## 2026-08-08 (토) — PoC-(35) ToF Stage A ④런타임 검증 완료 + 미결 2건 해소 + 별건 stale 2건 catch (카테고리 9/19/26)
+
+### 결정 (카테고리 9.2 — Stage A ④런타임 검증 완료, 신설)
+- **2026-08-08 학부생 로컬 ④런타임 통과**: PR #34(`ecfe5a0`, Stage A 실코드화 + I2C 400kHz 정식) → PR #35(`af1fbf9`, 연속 3프레임 대칭 디바운스)로 실코드화된 Stage A가 실측 검증됨. 성공 로그 `presence: NONE -> DETECTED (near=13/64, center=1015mm, streak=3)` verbatim 수록. 사람 접근(2.9m→5.6cm) 전 구간 전환 1회만 발생, 무인 near 0~2에서 전환 0건. 카테고리 9에 **9.2 절 신설**로 전문 기록(검증 결과 / 성공 로그 / 거리-near 곡선 표 / 임계값 8 타당성 / 디바운스 N=3 / Stage B 미검증 병기).
+- **★ 임계값 8 타당성 실측 근거 신설(값 변경 없음)**: 1m 지점 사람 near 9~13 / 무인 0~2 → 8이 양측 분리. 세션 중 "8→20 상향" 안은 근거 수치(near 37~55)가 실제로는 center 0.4~0.6m 값이었음이 판명되어 **폐기**(20 적용 시 1m 사람 미검출 위험, 학습 19 실증).
+- **디바운스 N=3 실증**: 전환 직후 near 13→9 하락에도 DETECTED 유지 = 단일 프레임 하락 불반전 확인. 15Hz×3≈200ms, 진입/이탈 대칭.
+
+### 해소 (카테고리 9.1(g)(h) 미결 → ✅)
+- **(g) I2C 클럭 정책 해소**: `TOF_I2C_FREQ_HZ` 400000 정식 채택(PR #34 `ecfe5a0`). 근거 = 15Hz는 8x8 datasheet 상한이라 1MHz 이득 0, OnlyFeet도 400kHz, 1MHz 실환경 미검증(실익 부재). 원문 취소선 없이 ✅ append(미결→해소). 12①·14-2·16.1 cross-ref는 8/07 append 완료분(재수정 불요), 17.1 datasheet 상한 서술 무접촉(과잉 정정 회피).
+- **(h) Stage A 구현 해소 / Stage B 미결 유지**: Stage A(64 zone 순회 / status 5·9 필터 / center div-by-zero 가드 / 임계 8 + 디바운스) = 해소. **Stage B(Motion Indicator)는 실구현·④런타임 미착수로 미결 유지** — 매크로 gitignore 원복 문제 존치.
+
+### 정정 (별건 stale 2건 — 오늘 catch, 원인은 이전 세션)
+- **gap F — 카테고리 19 노션 서술**: ~~`notion-query-data-sources`(SQL 쿼리)만 Business plan 차단~~ 취소선 + ✅ 정정. 단일 data source SQL 전수 스캔 정상 작동 실측(DB3 42행, `has_more:false`), 멀티 소스 조인만 잔여 제약. ★ 발견일(2026-08-07 PoC-(34) Set 3 실측 — 프로젝트 지침·인계 패키지엔 반영됐으나 decisions.md만 미반영 = SSoT 역방향 stale) ≠ 문서 반영일(2026-08-08 3소스 대조 catch) 분리 표기. `notion-update-content` re-fetch 검증 필수 서술은 유효라 보존.
+- **gap G — 카테고리 26.4 시연 메시지 2**: `우리집과 옆집 초인종 구분 ~~(SP/DTW)~~` → **ToF presence 1차 융합 + SP/DTW 보조 2차** 정정. 26.3 진입점 2는 2026-07-09 PoC-(26)에서 정정됐으나 26.4 반영 누락분을 2026-08-08 catch. 26.3 정정 형식과 동일 스타일 적용, 26.4 나머지 항목·26.5~ 무접촉.
+
+### 미결 (defer)
+- **Stage B Motion Indicator ④런타임**: 실구현·런타임 미착수(9.1(h)/9.2(f)/9 Stage B 절). Stage C/D도 미착수. "Stage A 완료 ≠ ToF 사람 검증 완료" 병기 강제.
+- **DB3 노션 오염(3출처)**: by-ID fetch로 우회 접근은 가능하나 오염 자체는 Set 3(노션) 소관 미결.
+
+**SSoT 정합 검증 (문서라 코드 3단계 N/A)**: 취소선/정정 대상 문구 전건 `git show HEAD:docs/decisions.md | grep`/`sed` 실존 확인 후 처리 — gap F("Business plan" 822-823)/gap G("우리집과 옆집 초인종 구분 (SP/DTW)" 1160)/9.1(g)(h)(416/418) 실측 O. 신설 절 번호 9.2 = `grep -nE "^## 카테고리|^### "`로 9.1만 존재 확인(충돌 없음). PR 해시(#34 `ecfe5a0`/#35 `af1fbf9`) = `git log --oneline` 대조 실측. 26.3 정정 형식(1147) 대조로 gap G 스타일 정합. 17.1 datasheet 상한은 동작 주장 아니라 의도적 무접촉(학습 16/19). 미측정 항목(Stage B/C/D 런타임)은 defer로 정직 표기.
+
+**비범위**: 코드 0 수정(`firmware/*`/`server/*`/`ml/*`/`dashboard/*`/`.gitignore` 전부 read only — PR #34/#35는 기 머지된 코드 인용). 노션 미수정(Set 3 소관) / 프로젝트 지침 미수정(Set 2 소관) / 시연 스크립트 세부 미수정(데모 재설정 chunk 소관). `docs/decisions.md`(9 Stage A cross-ref + 9.1(g)(h) 해소 + 9.2 신설 + 19 gap F 취소선+정정 + 26.4 gap G 취소선+정정) + `docs/decisions-log.md`(본 entry)만 편집. 브랜치 없이 main 직 push(카테고리 20, 문서 단독). 토큰/시크릿/계정 개인정보 미기록.
+
+**관련 카테고리**: 9 (Stage A cross-ref) / 9.1 (g·h 해소) / 9.2 (Stage A ④런타임 검증 완료 신설) / 19 (노션 게이트 서술 정정 gap F) / 26.4 (시연 메시지 정정 gap G)
+**관련 commit**: 코드 PR #34 `ecfe5a0` + PR #35 `af1fbf9`(기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)
