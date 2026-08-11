@@ -2,6 +2,7 @@
 //
 // tofTask 단독: isDataReady 폴링 + 64 zone 거리 추출 + Stage A 사람 존재 판정.
 // 2026-08-07 브레드보드 브링업 성공(카테고리 9.1)으로 실측 단계 진입.
+// 2026-08-08 ④런타임 실측에서 임계 경계 플리커 확인 → presence에 N=3 대칭 디바운스 도입.
 // Stage B(Motion Indicator)는 본 파일 범위 밖 — 별도 태스크.
 // 5/21 PoC 통합 시 cameraTask(Core 1) + micTask(Core 0, prio 4) + tofTask(Core 0, prio 3)
 // 병행 검증 (decisions.md 카테고리 14).
@@ -25,8 +26,12 @@ static void tofTask(void* parameter) {
   uint32_t frame_count = 0;
   uint32_t err_count   = 0;
 
-  // presence 상태는 tofTask 내 static (BSS) — 전역 변수 신설 없이 상태 전환 검출.
-  static bool presence_prev = false;
+  // presence 디바운스 상태는 tofTask 내 static (BSS) — 전역 변수 신설 없이 유지.
+  //   presence_state  = 디바운스 통과한 "확정" 상태 (로그·요약이 참조하는 값)
+  //   presence_streak = 확정 상태와 다른 raw 판정이 몇 프레임 연속됐는지 카운터
+  // 초기값: NONE(false) / 0. 부팅 직후 물체가 있으면 3프레임 뒤 DETECTED로 전환됨(정상).
+  static bool    presence_state  = false;
+  static uint8_t presence_streak = 0;
 
   for (;;) {
     if (tofImager.isDataReady()) {
@@ -47,8 +52,23 @@ static void tofTask(void* parameter) {
             near_count++;
           }
         }
-        // valid zone 0개 프레임(센서 시야 전체 무효)이어도 near_count=0 → presence=false로 정상 처리.
-        const bool presence = (near_count >= TOF_PRESENCE_MIN_ZONES);
+        // valid zone 0개 프레임(센서 시야 전체 무효)이어도 near_count=0 → raw=false로 정상 처리.
+        // ★ raw 판정 로직은 PR #34 원형 그대로(변경 금지). 아래 디바운스는 그 위에 얹는 안정화 계층.
+        const bool raw_presence = (near_count >= TOF_PRESENCE_MIN_ZONES);
+
+        // ── 디바운스: raw가 확정 상태와 "다른" 프레임이 N회 연속돼야 확정 상태를 전환(진입/이탈 대칭) ──
+        // 오버플로 안전: presence_streak는 이 if 분기에서만 +1 되고, N에 "도달"하는 즉시 0으로 리셋.
+        //   → 프레임 종료 시 값은 항상 {0,1,2} 중 하나(N=3). else 분기도 0으로 리셋. uint8_t 상한과 무관.
+        bool transitioned = false;
+        if (raw_presence != presence_state) {
+          if (++presence_streak >= TOF_PRESENCE_DEBOUNCE_FRAMES) {
+            presence_state  = raw_presence;   // 확정 상태 전환
+            presence_streak = 0;              // 전환 즉시 리셋
+            transitioned    = true;
+          }
+        } else {
+          presence_streak = 0;                // 확정 상태 유지 프레임 → 카운터 리셋
+        }
 
         // center 4 zones: valid(status 5/9) 且 거리 유효(>0)한 것만 평균 → 침입자 거리 메트릭.
         for (uint8_t k = 0; k < 4; k++) {
@@ -69,17 +89,19 @@ static void tofTask(void* parameter) {
           snprintf(center_str, sizeof(center_str), "n/a");
         }
 
-        // 로그 정책: presence 전환 시 즉시 1줄(우선), 그 외엔 30프레임 주기 요약(매 프레임 출력 금지).
-        if (presence != presence_prev) {
-          Serial.printf("[tof][StageA] presence: %s -> %s (near=%u/%u, center=%s)\n",
-                        presence_prev ? "DETECTED" : "NONE",
-                        presence ? "DETECTED" : "NONE",
-                        (unsigned)near_count, (unsigned)TOF_ZONE_COUNT, center_str);
-          presence_prev = presence;
+        // 로그 정책: 확정 상태가 "실제로 전환"될 때만 1줄(raw 변동으로는 출력 안 함),
+        //            그 외엔 30프레임 주기 요약(확정 상태 표시, 매 프레임 출력 금지).
+        // streak=N은 전환을 성립시킨 연속 프레임 수(전환 직후 카운터는 0으로 리셋됨).
+        if (transitioned) {
+          Serial.printf("[tof][StageA] presence: %s -> %s (near=%u/%u, center=%s, streak=%u)\n",
+                        presence_state ? "NONE" : "DETECTED",   // 전환 전 = !presence_state
+                        presence_state ? "DETECTED" : "NONE",
+                        (unsigned)near_count, (unsigned)TOF_ZONE_COUNT, center_str,
+                        (unsigned)TOF_PRESENCE_DEBOUNCE_FRAMES);
         } else if ((frame_count % TOF_LOG_EVERY_N_FRAMES) == 1) {
           Serial.printf("[tof][StageA] frame #%u near=%u/%u presence=%s center=%s\n",
                         (unsigned)frame_count, (unsigned)near_count, (unsigned)TOF_ZONE_COUNT,
-                        presence ? "DETECTED" : "NONE", center_str);
+                        presence_state ? "DETECTED" : "NONE", center_str);
         }
 
         // ── Stage B (별도 태스크, 본 PR 범위 밖) ──
