@@ -3,7 +3,8 @@
 // tofTask 단독: isDataReady 폴링 + 64 zone 거리 추출 + Stage A 사람 존재 판정.
 // 2026-08-07 브레드보드 브링업 성공(카테고리 9.1)으로 실측 단계 진입.
 // 2026-08-08 ④런타임 실측에서 임계 경계 플리커 확인 → presence에 N=3 대칭 디바운스 도입.
-// Stage B(Motion Indicator)는 본 파일 범위 밖 — 별도 태스크.
+// Stage B-1(Motion Indicator 계측 계층): motion 값을 관측·로그로만 노출(presence 판정 무변경).
+//   B-2(임계값 확정 + presence 융합)는 실측 곡선 확보 후 별도 태스크 — 본 파일 하단 defer 주석 참조.
 // 5/21 PoC 통합 시 cameraTask(Core 1) + micTask(Core 0, prio 4) + tofTask(Core 0, prio 3)
 // 병행 검증 (decisions.md 카테고리 14).
 
@@ -104,12 +105,39 @@ static void tofTask(void* parameter) {
                         presence_state ? "DETECTED" : "NONE", center_str);
         }
 
-        // ── Stage B (별도 태스크, 본 PR 범위 밖) ──
-        // Motion Indicator = SparkFun 번들 ULD 함수(vl53l5cx_motion_indicator_init /
-        //   _set_distance_motion / _set_resolution)를 imager.Dev public 핸들로 직접 호출.
-        //   Adafruit 경유 아님 (decisions.md 카테고리 9 Stage B 판정 B, 2026-07-09).
-        //   VL53L5CX_DISABLE_MOTION_INDICATOR 매크로는 .pio/libdeps/ 내부라 클린 빌드 시 원복 —
-        //   재현 방법 확정이 선행 결정 사안.
+        // ── Stage B-1 계측 계층: Motion Indicator 관측 (★ presence 판정 무변경, 관측 전용) ──
+        // motion 초기화 = tof_common.cpp initToFMotionIndicator()가 begin 직후 프로그래밍.
+        //   VL53L5CX_DISABLE_MOTION_INDICATOR 매크로는 platform.h에서 주석 상태(=활성)로 배포되어
+        //   .motion_indicator 필드가 상주한다(2026-08-12 sha256 확인, 매크로 패치 불필요).
+        // ★ 관측 통계 선정 근거: device-native 전역값(global_indicator_1 = 전역 motion 크기,
+        //   nb_of_detected_aggregates = device 자체 공간 검출 수, status = 결과 유효성)이 B-2 임계값의
+        //   1차 후보이고, 여기에 활성 aggregate 16개의 피크(aggmax)를 더해 공간 국소성을 본다.
+        //   로그에 near_count·center를 반드시 동반시켜 측정 조건이 수치와 함께 이동한다(9.2(d) 8→20 교훈).
+        // serial flood 방지: 매 프레임이 아니라 TOF_MOTION_LOG_EVERY_N_FRAMES 주기로만 출력.
+        if ((frame_count % TOF_MOTION_LOG_EVERY_N_FRAMES) == 0) {
+          const auto& mi = measurementData.motion_indicator;
+          // motion[]은 aggregate 단위(8x8 = 16개, motion[16..31] 미사용). max는 합이 아니라 피크라 오버플로 불가.
+          uint32_t agg_motion_max = 0;
+          for (uint8_t a = 0; a < TOF_MOTION_AGG_COUNT_8X8; a++) {
+            if (mi.motion[a] > agg_motion_max) agg_motion_max = mi.motion[a];
+          }
+          Serial.printf("[tof][StageB-1] mi: g1=%lu ndet=%u/%u st=%u aggmax=%lu | near=%u/%u center=%s\n",
+                        (unsigned long)mi.global_indicator_1,
+                        (unsigned)mi.nb_of_detected_aggregates, (unsigned)mi.nb_of_aggregates,
+                        (unsigned)mi.status, (unsigned long)agg_motion_max,
+                        (unsigned)near_count, (unsigned)TOF_ZONE_COUNT, center_str);
+        }
+
+        // ── Stage B-2 (임계값 확정 + presence 융합) — 본 PR 범위 밖, ④런타임 실측 대기 ──
+        // B-1은 위처럼 motion을 관측·로그로만 노출한다. presence 상태 전환(Stage A)에 motion을 넣지 않는다.
+        // 임계값(global_indicator_1 / nb_of_detected_aggregates / aggmax 중 무엇을, 경계값 얼마)은
+        //   아래 4종 대조 실험으로 곡선을 확보한 뒤 B-2에서 확정한다(★ 하드코딩 금지 — 9.2(d) 8→20 오판 재발 방지):
+        //   ① 무자극 기준선            : 시야 비움 → motion noise floor 분포
+        //   ② 정지 사물(택배상자) 1m    : near는 뜨지만 motion은 낮아야 함 → 오탐 억제 근거
+        //   ③ 정지한 사람 1m           : ★ motion이 뜨지 않으면 Stage B 설계 재검토(호흡/미동만으로 분리 가능한지)
+        //   ④ 사람 스윕 접근(2.9m→5.6cm): near_count 곡선과 motion 곡선의 동반 상승 구간 확인
+        // 판정: ② < 임계 ≤ ③④ 를 만족하는 경계가 존재하면 그 값으로 B-2 확정.
+        //       ③에서 motion ≈ ② 이면 Stage C(NanoEdge AI) 승격 검토.
       } else {
         if ((++err_count % 10) == 1) {
           Serial.printf("[tof] getRangingData failed #%u\n", (unsigned)err_count);

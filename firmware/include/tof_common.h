@@ -97,6 +97,27 @@ constexpr uint16_t TOF_CENTER_ZONES[4] = {27, 28, 35, 36};
 // 진입/이탈 대칭 적용 — 비대칭은 실측 근거가 없어 도입하지 않음.
 constexpr uint8_t TOF_PRESENCE_DEBOUNCE_FRAMES = 3;
 
+// === Stage B-1 계측 계층 (Motion Indicator 관측 전용, decisions.md 카테고리 9 Stage B 판정 B) ===
+// ★ 본 계층은 motion 값을 "관측·로그로만" 노출한다. presence 판정(Stage A)에 융합하지 않는다.
+//   판정 임계값은 여기에 두지 않는다 — 실측 곡선 확보 후 B-2에서 확정(decisions.md 9.2(d) 8→20 오판 재발 방지).
+//
+// motion 감시 거리창(sensor 설정값, 판정 임계값 아님).
+//   출처 = ST ULD vl53l5cx_plugin_motion_indicator.h:96,112-119 문서화 기본값(400~1500mm).
+//   근거 = 기본값이 Stage A presence 거리(≤1000mm)를 마진 포함 전부 감싼다. 하드웨어 하한 400mm,
+//          span(max-min) ≤ 1500mm 제약(motion_indicator.cpp:107-109)을 기본값이 이미 만족.
+constexpr uint16_t TOF_MOTION_DIST_MIN_MM = 400;
+constexpr uint16_t TOF_MOTION_DIST_MAX_MM = 1500;
+
+// 8x8 활성 aggregate 개수. motion[]은 zone(64)당이 아니라 aggregate 단위.
+//   출처 = map_id 매핑식 vl53l5cx_plugin_motion_indicator.cpp:150-155
+//          8x8: map_id[i] = (i%8)/2 + 4*(i/16) → aggregate id 0..15 (각 2x2 super-zone), motion[16..31] 미사용.
+constexpr uint8_t TOF_MOTION_AGG_COUNT_8X8 = 16;
+
+// motion 관측 로그 주기(프레임). 판정 임계값 아님 — serial flood 방지용 cadence.
+//   근거 = 15Hz에서 15프레임 ≈ 1초. Stage A 요약(2초, TOF_LOG_EVERY_N_FRAMES=30)보다 촘촘한 것은
+//          B-1 목적이 곡선 측정이라 시간 해상도가 더 필요하기 때문.
+constexpr uint32_t TOF_MOTION_LOG_EVERY_N_FRAMES = 15;
+
 // === FreeRTOS 태스크 설정 (decisions.md 카테고리 14 5/21 PoC 분배 잠정안) ===
 // micTask priority 4 (Core 0)와 분리: tofTask priority 3 (Core 0).
 // Stack 6144 (OnlyFeet 참고치, ResultsData ~1356B + 64 zone 처리 여유).
@@ -109,4 +130,7 @@ constexpr uint32_t    TOF_LOG_EVERY_N_FRAMES  = 30;     // 15Hz × 2초
 
 // === API ===
 bool initToF();
+// Stage B-1: Motion Indicator 초기화(번들 ULD 함수 imager.Dev 직접 호출). best-effort —
+//   실패해도 Stage A(presence)는 계속 동작해야 하므로 initToF()의 반환을 게이트하지 않는다.
+bool initToFMotionIndicator();
 void logToFMemoryDiagnostics(const char* tag);
