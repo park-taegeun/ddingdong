@@ -355,8 +355,11 @@
 ## 카테고리 9: VL53L5CX 사람 검증 단계
 
 - **Stage A (필수)**: zone count 임계값 (1m 이내 ≥8 zone)
-  - ※ **2026-08-08 PoC-(35) ④런타임 검증 완료** (PR #34 `ecfe5a0` 실코드화 + PR #35 `af1fbf9` 디바운스): 임계값 8 실측 타당성 확인(무인 near 0~2 / 1m 사람 9~13) — 상세 = 9.2. **Stage B는 여전히 ④런타임 미검증**(Motion Indicator, 아래 Stage B 절).
-- **Stage B (필수)**: Motion Indicator + per-zone threshold
+  - ※ **2026-08-08 PoC-(35) ④런타임 검증 완료** (PR #34 `ecfe5a0` 실코드화 + PR #35 `af1fbf9` 디바운스): 임계값 8 실측 타당성 확인(무인 near 0~2 / 1m 사람 9~13) — 상세 = 9.2. **Stage B는 여전히 ④런타임 미검증**(Motion Indicator, 아래 Stage B 절). ※ **2026-08-12 PoC-(36) 갱신**: Stage B-1 **계측 계층**(관측 전용, presence 판정 무융합)은 ④런타임 실측 완료(9.3) — 판정 융합·임계값 확정은 B-2 미결.
+- **Stage B (필수)**: Motion Indicator + ~~per-zone threshold~~ **aggregate 단위 motion 검출** (2026-08-12 PoC-(36) 정정)
+  - ★ **정정 근거 (2026-08-12)**: motion 데이터는 per-zone(8x8=64)이 아니라 **aggregate 단위**. 8x8 해상도에서 활성 aggregate 16개, 각 2x2 super-zone. `map_id = (i%8)/2 + 4*(i/16)`. 배열 = `motion_indicator.motion[32]`. 근거 = 라이브러리 실물(`vl53l5cx_plugin_motion_indicator` 계열 / `motion_indicator.cpp:150-155`).
+  - ★ **설계 파급**: Stage A는 8x8 zone 단위로 near를 세는데 motion은 4x4라 "near로 잡힌 그 zone이 움직이는가"를 1:1로 물을 수 없다. 2x2 단위로만 가능 → **사람과 정지 사물이 같은 super-zone에 겹치면 분리가 원리적으로 불가**. (실측 = 9.3)
+  - 발원 = 2026-07-09 판정 B에서 함수 시그니처만 확인하고 반환 자료형 shape 미확인(학습 15 ②단계를 함수까지만 수행) / 반영 = 2026-08-12.
 - **Stage C/D (선택)**: NanoEdge AI / Passing-by filter
 
 ### Stage B Motion Indicator 노출 확정 (2026-07-09 PoC-(26), 판정 B)
@@ -419,7 +422,12 @@ XIAO 배치 = D행/H행 5~11번(3V3 = D행 7열). 카테고리 2 핀 표의 SDA=
 
 **(h) ⚠️ 미결 — Stage A/B 구현**: `tof_test.cpp`는 현재 프레임 카운트 로그만. 64 zone 순회 / `target_status` 5·9 valid 필터 / center 4 zone / zone count 임계값(카테고리 9 Stage A)은 TODO 주석 상태 — 별도 코드 태스크.
   - ✅ **Stage A 해소 (2026-08-08 PoC-(35), PR #34 `ecfe5a0` + PR #35 `af1fbf9`)**: 64 zone 순회 / `target_status` 5·9 valid 필터 / center 4 zone 평균(div-by-zero 가드) / zone count 임계값(8) 실코드화 + 연속 3프레임 대칭 디바운스 도입, ④런타임 검증 통과. 상세 = 9.2.
-  - ⚠️ **Stage B 미결 유지**: Motion Indicator(`vl53l5cx_motion_indicator_init` 등) 실구현·④런타임 미착수. `VL53L5CX_DISABLE_MOTION_INDICATOR` 매크로가 `.pio/libdeps/` 내부라 클린 빌드 시 원복되는 문제(재현 방법 확정 선행)는 `tof_test.cpp` 주석에 각인된 상태로 존치.
+  - ⚠️ **Stage B 미결 유지**: Motion Indicator(`vl53l5cx_motion_indicator_init` 등) 실구현·④런타임 미착수. ~~`VL53L5CX_DISABLE_MOTION_INDICATOR` 매크로가 `.pio/libdeps/` 내부라 클린 빌드 시 원복되는 문제(재현 방법 확정 선행)는 `tof_test.cpp` 주석에 각인된 상태로 존치.~~
+    - ✅ **무효 확정 (2026-08-12 PoC-(36)) — 매크로 원복 문제는 유령이었음**: Motion Indicator는 라이브러리 기본값으로 활성이며 매크로 패치는 불필요. 클린 빌드로 원복될 대상 자체가 없음. 본 미결 항목은 무효.
+      - 근거 (전체 3개 ref 전수 확인 — 학습 13): ① `sparkfun/SparkFun_VL53L5CX_Arduino_Library`의 **v1.0.3 / main / master 3개 ref 모두** `src/platform.h:121`이 `// #define VL53L5CX_DISABLE_MOTION_INDICATOR`(주석 상태)로 배포 ② 로컬 파일 sha256 = `c061451cdd498746659cbb8e5519a930b5ab77a00298295d4e83f0ac63ce09d9` → 업스트림과 바이트 동일 = 무수정 확인 ③ `platform.h:118~121`은 옵션 disable 매크로 4종이 **전부 주석 상태**인 블록 = SparkFun 기본값이 전 기능 활성.
+      - ★ **발원 ≠ 반영 분리**: 발원 = 2026-07-09 판정 B의 "매크로 주석처리로 컴파일 활성" 표현이 **관찰 서술**(이미 주석돼 있어 활성)인데 **행위 서술**(우리가 주석처리함)로 오독되어 2026-08-08에 "클린 빌드 원복 리스크"로 파생 / 반증·문서 반영 = 2026-08-12.
+      - ★ **학습 21 신설 (2026-08-12)**: **미결 항목 자체가 유령일 수 있다 — 등재된 미결도 실물(코드·라이브러리·ref) 검증 대상**. 등재된 ⚠️ 미결이라고 존재를 전제하지 말고, 취소선 처리 전 실물로 재현 가능한지 먼저 확인. (SSoT 학습 번호: 18=PR 웹 머지 후 로컬 main pull / 19=근본원인 진단 재검증 / 20=원격 브랜치 `git ls-remote`(카테고리 20) / **21=미결도 유령일 수 있다**)
+    - ✅ **실구현 착수 (2026-08-12 PoC-(36), PR #36 `84f2272`, 브랜치 `feat/firmware-tof-stage-b-1`, 3파일 +97줄)**: Stage B-1 **계측 계층**(관측 전용) 실코드화 + ④런타임 실측 완료 — 상세 = **9.3**. presence 판정 무융합·임계값 미하드코딩. (판정 융합·임계값 확정 = B-2 소관 미결)
 
 ### 9.2 Stage A ④런타임 검증 완료 (2026-08-08 PoC-(35) 신설)
 
@@ -451,7 +459,48 @@ presence: NONE -> DETECTED (near=13/64, center=1015mm, streak=3)
 
 **(e) 디바운스 N=3 결정 (PR #35)**: 확정 상태와 다른 raw 판정이 연속 3프레임이어야 전환(진입/이탈 **대칭**). 근거 = 15Hz에서 3프레임 ≈ 200ms, 실측 플리커는 전부 1~2프레임 폭이라 소거되고 200ms는 사람 인지 지연으로 무시 가능. 비대칭은 실측 근거 부재로 미도입. 임계 경계(약 1m 정지)에서 near가 7↔8 왕복하며 presence가 매 프레임 반전되던 플리커(PR #34 실측)를 소거.
 
-**(f) ⚠️ Stage B는 여전히 ④런타임 미검증**: 본 절은 **Stage A 전용** 완료 보고. Motion Indicator(Stage B, 위 Stage B 절 + 9.1(h))는 실구현·런타임 미착수 — **"Stage A 완료"가 "ToF 사람 검증 완료"를 의미하지 않음**. Stage C/D(NanoEdge AI / Passing-by)도 미착수.
+**(f) ⚠️ Stage B는 여전히 ④런타임 미검증**: 본 절은 **Stage A 전용** 완료 보고. Motion Indicator(Stage B, 위 Stage B 절 + 9.1(h))는 실구현·런타임 미착수 — **"Stage A 완료"가 "ToF 사람 검증 완료"를 의미하지 않음**. Stage C/D(NanoEdge AI / Passing-by)도 미착수. ※ **2026-08-12 PoC-(36) 갱신**: Stage B-1 계측 계층은 ④런타임 실측 완료(9.3). 단 이는 **관측 전용**이며 presence 판정 융합은 여전히 B-2 미결 — "계측 완료 ≠ Stage B 판정 완료".
+
+### 9.3 Stage B-1 Motion Indicator 계측 계층 ④런타임 실측 (2026-08-12 PoC-(36) 신설)
+
+PR #36(`84f2272`, 브랜치 `feat/firmware-tof-stage-b-1`, 3파일 +97줄)로 Motion Indicator **계측 계층**(관측 전용, presence 판정 무융합·임계값 미하드코딩)을 실코드화하고, 2026-08-12 학부생 로컬 ④런타임 실측을 통과했다. **본 절은 계측(관측) 전용** — 판정 융합·임계값 확정은 B-2 소관(§9.3(F)).
+
+**(a) 초기화 성공 로그 (verbatim 실측)**
+```
+[tof][StageB-1] motion indicator ready (8x8, 400~1500mm, 16 aggregates)
+```
+③컴파일 → ④런타임 통과. motion 감시창 400~1500mm는 ST 기본값.
+
+**(b) 로그 필드 정의**: `g1`=global_indicator_1 / `ndet`=nb_of_detected_aggregates / `st`=status / `aggmax`=aggregate motion 최댓값. near·center 동반 출력(측정 조건 자동 부착).
+
+**(c) 4종+ 대조 실측 결과표** (2026-08-12, 실내 책상 환경, 8x8/15Hz/I2C 400kHz)
+
+| 상황 | near/64 | ndet/16 | aggmax |
+|---|---|---|---|
+| ① 무자극 기준선 (25프레임 연속) | 0 | 0 | 12~24 (스파이크 1회 37) |
+| ② 정지 사물 1m (center≈1244~1339mm) | 10~11 | 0 | 14~22 |
+| ③ 사람 1m 정지(체감) | 9~42 | 0 | 18~42 |
+| ④ 사람 접근 스윕 (center 1144→264mm) | 10~64 | 1~5 | 45~544 |
+| ⑤ 근접 자극 (center 249~253mm) | 31~34 | 6 | 114 |
+
+**(d) ★ 핵심 결론 3건**
+1. **Stage B 유효성 확정** — 정지 사물(ndet=0)과 접근하는 사람(ndet 1~6)이 완전히 분리. near로는 둘 다 임계값 8을 넘겨 구분 불가하나 motion으로는 갈림. = Stage B가 "선택"이 아니라 **"필수"**라는 판단이 실측으로 확인됨.
+2. **정지한 사람은 정지 사물과 구분 불가** — ③이 ②와 동일하게 ndet=0. "가만히 서 있다"고 체감한 30초 동안 실제 center는 1069→805mm로 약 20cm 표류했으나 그 속도로는 motion이 뜨지 않음. 즉 motion 검출은 **속도 의존**.
+3. **임계값 후보** = `ndet ≥ 1` 또는 `aggmax ≥ 50` (노이즈 상한 37 / 사람 하한 45 사이). ⚠️ **확정은 B-2 소관 — 본 절에서 확정 금지**.
+
+**(e) ★ 측정 환경 주의 (기존 원칙의 재실증)**: 첫 부팅 시 near=15/64, center=426mm로 기준선이 오염된 상태였고, 센서 지향 방향을 조정해 near=0/64를 확보한 뒤에야 유효 측정이 시작됨. ③컴파일과 ④런타임 사이의 **"측정 환경 유효성" 층**이 이번에도 작동(9.3(H) 재실증).
+
+**(f) Stage A 회귀**: 임계값 8 / 디바운스 N=3 무변경 상태에서 정상 동작 확인(presence NONE↔DETECTED 전환이 streak=3으로 실동작).
+
+**(F) Stage B-2 설계 방향 (수치 확정 아님 — 방향만 기록)**
+- (d)-2로부터: **"현재 움직이는가"가 아니라 "최근 N초 안에 움직였는가"로 설계**해야 함.
+- 논리 = 초인종을 누르는 사람은 반드시 걸어와서 누르므로 접근 과정에서 motion 발생. 반면 택배 상자는 놓인 뒤 영구히 movement 0. → motion 이벤트를 일정 시간 유지(**latch**)하는 구조 필요.
+- **Stage A 디바운스와 방향이 반대**: A = "연속 N프레임 충족해야 인정" / B = "최근 N프레임 중 1회라도 검출되면 유지".
+- ⚠️ N 값·latch 시간·임계값은 **전부 B-2 소관. 본 작업에서 수치 확정 금지**.
+
+**(G) ⚠️ 미결 — 벽면 실사용 환경 정확도 미측정 (발견 2026-08-08 / 문서 반영 2026-08-12)**: 거리-near 곡선(9.2) 및 금일 motion 실측(본 절)은 모두 실내 책상/바닥 환경. **현관 부착 시 벽·문틀 반사 영향은 미측정** — 실사용 환경 정확도는 별도 실측 소관. ⚠️ 미결.
+
+**(H) 환경 오염과 알고리즘 결함의 분리 원칙 (발견 2026-08-08 / 문서 반영 2026-08-12)**: Stage A 첫 실측의 전환 로그 도배는 **플리커가 아니라 센서 위 케이블을 15cm에서 감지한 것**이었음(center=118~175mm가 증거). → 무자극 기준선을 먼저 확보하고 조용해진 뒤 자극할 것. **③컴파일과 ④런타임 사이에 "측정 환경 유효성" 층이 하나 더 있음**(본 절 (e)로 재실증).
 
 ---
 
@@ -886,6 +935,10 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 
 학습 18 (PR 웹 머지 후 로컬 main 동기화 필수): GitHub 웹에서 PR squash 머지 시 remote main에 새 해시 커밋 생성 → 로컬 main 미반영. 다음 feature 브랜치 따기 전 `git checkout main && git pull origin main` 강제. 누락 시 squash로 사라진 원본 커밋 위에서 브랜치가 갈라져 다음 PR이 이전 PR 커밋을 끌고 감(2026-06-29 PR #6 = PR #5 strict 커밋 끌려옴 + merge commit 생성 사례). "git pull 폐지" 룰(동일 로컬 머신)의 명시적 예외 = PR 웹 머지 직후. 정상 복구 = fast-forward pull(rewrite 0).
 
+### 원격 브랜치 실존은 `git ls-remote origin` (2026-08-08 학습 20 신설, 문서 반영 2026-08-12)
+
+학습 20 (원격 브랜치는 `git ls-remote origin`으로 확인): 브랜치 삭제/정리 전 catch는 `git branch -r`(**스테일 로컬 추적 캐시**)이 아니라 `git ls-remote origin`(**진짜 origin 상태**)로 해야 함. `git branch -r`은 마지막 fetch 시점의 캐시라 이미 삭제된 원격 브랜치를 살아있는 것처럼 보이게 함 → `git remote prune origin`으로 stale 추적 ref 정리. `refs/pull/N/head`는 **닫힌 PR 아카이브라 삭제 대상 아님**(GitHub이 유지). 대량 불일치 catch 시 §9(임의 진행 금지, 사용자 판단 요청). **발견 = 2026-08-08 PoC-(35) 세션 / 문서 반영 = 2026-08-12 PoC-(36)** — 지침·인계 패키지엔 반영됐으나 decisions.md만 미등재였던 **SSoT 역방향 stale**. ★ 학습 18·19는 이미 등재돼 있으나 20만 부재 상태였음 → 학습 번호 SSoT 부재가 번호 혼동 재발의 원인이므로 정의와 함께 등재. (SSoT 학습 번호: 18=PR 웹 머지 후 로컬 main pull / 19=근본원인 진단 재검증 / **20=원격 브랜치 ls-remote** / 21=미결도 유령일 수 있다(9.1(h)))
+
 ### 5/17 종료 시점 액션
 - 본 카테고리 세부 룰 최종 확정
 - PoC-(2) 인계 패키지에 포함
@@ -900,6 +953,10 @@ PlatformIO env 분리 구조로 5/8~5/11 더미 테스트 결과 누적:
 3. 노션 갱신 위임 프롬프트 → Claude Code MCP에 던지기
 
 **우선순위**: GitHub `decisions.md` > 프로젝트 지침 > 노션 (충돌 시 GitHub 우선)
+
+### 프로세스 위생 — 좀비 Claude 인스턴스 (발견 2026-08-08 / 문서 반영 2026-08-12)
+
+`--dangerously-skip-permissions` 세션은 **터미널을 닫아도 잔존**(좀비 프로세스). 주기적으로 `ps aux | grep claude`로 점검하고, 이상 시 `pkill -f claude` 후 **단일 재기동**. "실행 중이던 것이 전부 죽었다"는 개별 원인이 아니라 **계통 원인의 신호**로 읽을 것(좀비 누적으로 인한 리소스 경합 가능성). 발견 = 2026-08-08 PoC-(35) 세션 / 문서 반영 = 2026-08-12 PoC-(36) — 지침·인계엔 반영됐으나 decisions.md 미등재였던 역방향 stale.
 
 ### Claude Code MCP 위임 시 자체 검증 3단계 강제 (코드 작성 관련, 2026-05-07 추가)
 
@@ -1475,6 +1532,13 @@ build_src_filter =
 - API Gateway 연동 (REST API 호출용)
 - ~~단가 catch: 초당 0.5원 (분당 30원), 띵동 추정 월 1,000~3,000원 → 기본 크레딧 100,000원 안전 수렴~~ **정정 (2026-08-03 PoC-(33), 카테고리 7 STT CSR 확정 시 재catch)**: 현행 CSR 요금 ≈ **15초당 4원**(2026 KR 요금표) — 기존 "초당 0.5원/분당 30원"과 불일치. 우리 용도(5초 클립 1건 ≈ 15초 단위 1과금 = 4원)로도 저빈도라 기본 크레딧 100,000원 안전 수렴 결론은 불변. 실 과금 시점 사용량 catch는 11~12주차 defer.
 - 만료 일자 catch: 2026-08-16 (3개월) → 11~12주차 진입 후 자동 과금 발생 시점 catch 강제
+
+**✅ CSR Application 등록 완료 + 호출 한도 실측 (2026-08-12 PoC-(36))**
+- **Application 등록 완료**: 이름 `ddingdong-stt`, 서비스 = **CLOVA Speech Recognition(CSR) 단독**(CLOVA Voice-Premium 미선택), 등록일 2026-08-12. Client ID / Client Secret 발급 완료 (★ 실값은 env·secrets 경유만 — 본 문서 기록 금지).
+- ★ **신규 실측 — 호출 한도**: **당일 30,000초 / 당월 300,000초**(콘솔 목록 화면 catch). 1건 5초 기준 당일 6,000건 / 당월 60,000건 → **실사용 대비 한도 제약 없음**.
+- **콘솔 경로 정정**: CSR 등록은 ~~AI Services → CLOVA Speech~~ 가 아니라 좌측 메뉴 **`AI·NAVER API > Application`**. ※ AI Services 카테고리(8종)에는 CSR이 없음 — CLOVA Speech는 별개 제품(카테고리 7 STT CSR 확정 note 정합).
+- **관문 ③ 간소화**: 등록 후 CSR 선택 유지 확인은 **목록 화면 "서비스구분" 열에서 직접 확인 가능** — 별도 [수정] 진입 불요.
+- 크레딧 만료 2026-08-16은 **미해소 유지**(30.7 자동 과금 가능성 서술 유지).
 
 ### 30.10 학습 catch 사례 누적 (5/16 추가)
 

@@ -1239,3 +1239,33 @@
 
 **관련 카테고리**: 9 (Stage A cross-ref) / 9.1 (g·h 해소) / 9.2 (Stage A ④런타임 검증 완료 신설) / 19 (노션 게이트 서술 정정 gap F) / 26.4 (시연 메시지 정정 gap G)
 **관련 commit**: 코드 PR #34 `ecfe5a0` + PR #35 `af1fbf9`(기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)
+
+---
+
+## 2026-08-12 (화) — PoC-(36) ToF Stage B-1 계측 계층 ④런타임 실측 + 9.1(h) 유령 미결 무효화 + SSoT 정정 2건 + 역방향 stale 4건 등재 (카테고리 9/20/21/30)
+
+### 결정 (카테고리 9.3 — Stage B-1 Motion Indicator 계측 계층 ④런타임 실측, 신설)
+- **2026-08-12 학부생 로컬 ④런타임 통과**: PR #36(`84f2272`, 브랜치 `feat/firmware-tof-stage-b-1`, 3파일 +97줄)로 Motion Indicator **계측 계층**(관측 전용, presence 판정 무융합·임계값 미하드코딩) 실코드화 + ④런타임 실측. 초기화 로그 `[tof][StageB-1] motion indicator ready (8x8, 400~1500mm, 16 aggregates)` verbatim 수록. 카테고리 9에 **9.3 절 신설**(초기화 로그 / 필드 정의 / 4종+ 대조 실측표 / 핵심 결론 3건 / 측정 환경 주의 / Stage A 회귀 / B-2 설계 방향 / stale (G)(H)).
+- **★ Stage B 유효성 실측 확정**: 정지 사물(ndet=0)과 접근하는 사람(ndet 1~6)이 motion으로 완전 분리 — near로는 둘 다 임계 8 초과라 구분 불가. Stage B가 "선택"이 아니라 **"필수"**임이 실측으로 확인.
+- **★ 정지한 사람 = 정지 사물 구분 불가(속도 의존)**: ③(사람 1m 정지)이 ②(정지 사물)와 동일 ndet=0. 30초간 center 1069→805mm(20cm) 표류에도 motion 미검출 → motion은 속도 의존 → **B-2는 "최근 N초 내 움직였는가"(latch) 설계** 방향(수치 확정은 B-2 소관, 본 entry 확정 금지).
+- **임계값 후보** = ndet ≥ 1 또는 aggmax ≥ 50(노이즈 상한 37/사람 하한 45 사이). B-2 소관 미확정.
+
+### 정정 (기존 SSoT 정정 2건 — 사유 명시)
+- **(C) 카테고리 9 Stage B 정의 "per-zone threshold" → aggregate 단위 (취소선+append)**: **사유** = motion 데이터는 per-zone(8x8=64)이 아니라 **aggregate 단위**(활성 16개, 각 2x2 super-zone, `motion[32]`). 라이브러리 실물(`motion_indicator.cpp:150-155`) 대조로 판명. **설계 파급** = Stage A(8x8)와 motion(4x4) 해상도 불일치로 "near zone이 움직이는가"를 1:1로 못 물음 → 사람·정지물이 같은 super-zone 겹치면 분리 원리적 불가. 발원 = 2026-07-09 판정 B에서 반환 shape 미확인(학습 15 ②단계 함수까지만).
+- **(B) 카테고리 9.1(h) Stage B "클린 빌드 매크로 원복 문제" 미결 무효화 (취소선+append)** ★ 본 세션 최중요: **사유** = 해당 미결은 **유령**이었음. `SparkFun_VL53L5CX_Arduino_Library` v1.0.3/main/master **3개 ref 모두** `platform.h:121`이 `// #define VL53L5CX_DISABLE_MOTION_INDICATOR`(주석)로 배포 + 로컬 sha256 `c061451…09d9` 업스트림 바이트 동일 → 매크로 패치 불필요, 클린 빌드로 원복될 대상 자체가 없음. **발원 ≠ 반영**: 2026-07-09 판정 B의 "매크로 주석처리로 컴파일 활성"이 **관찰 서술**인데 **행위 서술**로 오독 → 2026-08-08 "클린 빌드 원복 리스크" 파생 / 반증·반영 = 2026-08-12. → **학습 21 신설**(미결도 유령일 수 있다 — 등재된 미결도 실물 검증 대상).
+
+### 신규 (역방향 stale 4건 등재 — 지침·인계엔 있었으나 decisions.md 미등재, 각 "발견 2026-08-08 / 반영 2026-08-12")
+- **(a) 카테고리 9.3(G) — ToF 벽면 실사용 환경 정확도 미측정**: 거리-near/motion 실측 전부 실내 책상/바닥, 현관 벽·문틀 반사 미측정. ⚠️ 미결.
+- **(b) 카테고리 9.3(H) — 환경 오염과 알고리즘 결함의 분리 원칙**: Stage A 첫 실측 전환 도배는 플리커가 아니라 케이블 15cm 감지(center 118~175mm 증거). 무자극 기준선 선확보 원칙. ③컴파일↔④런타임 사이 "측정 환경 유효성" 층.
+- **(c) 카테고리 21 — 프로세스 위생(좀비 Claude 인스턴스)**: `--dangerously-skip-permissions` 세션 터미널 종료 후 잔존 → 주기 `ps aux | grep claude` / `pkill -f claude` 후 단일 재기동. "전부 죽었다"=계통 신호.
+- **(d) 카테고리 20 — 학습 20 = 원격 브랜치는 `git ls-remote origin`**: `git branch -r`은 스테일 캐시. `refs/pull/N/head`는 닫힌 PR 아카이브(삭제 대상 아님). ★ 학습 18·19는 등재됐으나 20만 부재였음 → 학습 번호 SSoT 부재가 번호 혼동 재발 원인이라 정의와 함께 등재.
+
+### 반영 (카테고리 30.9 — NCP CSR Application 등록 + 한도 실측)
+- **(E) CSR Application 등록 완료**: 이름 `ddingdong-stt`, CSR 단독(Voice-Premium 미선택), Client ID/Secret 발급(실값 미기록). ★ **신규 실측 호출 한도 = 당일 30,000초 / 당월 300,000초**(1건 5초 기준 당일 6,000/당월 60,000건 → 제약 없음). 콘솔 경로 정정 = `AI·NAVER API > Application`(AI Services 8종에 CSR 부재). 관문 ③ = 목록 "서비스구분" 열 직접 확인(수정 진입 불요). 크레딧 만료 2026-08-16 미해소 유지.
+
+**SSoT 정합 검증 (문서라 코드 3단계 N/A)**: 취소선/정정 대상 문구 전건 `git show HEAD:docs/decisions.md | grep`/`sed` 실존 확인 후 처리 — per-zone("per-zone threshold" 359, grep -c=1)/9.1(h) 클린빌드("클린 빌드 시 원복" 422, grep -c=1) 실측 O. 역방향 stale 4건 부재 = `grep -nE "벽면|문틀|반사"`/`"좀비|pkill|dangerously-skip"`/`"학습 20|ls-remote"` 각 0건 실증, 대조군 `"학습 18|학습 19"`는 다수 존재 = 20만 부재 확정. 신설 절 번호 9.3 = `grep -nE "^## 카테고리|^### "`로 9.2까지만 존재(충돌 없음). 신설 학습 20/21 = `grep -oE "학습 [0-9]+"` 최대 19 확인(충돌 없음). PR #36 머지 = `git log --oneline`(HEAD 84f2272) + `git ls-remote origin`(refs/heads/main=84f2272) 대조. 라이브러리 3 ref/sha256은 이전 세션 실측 인용(학습 13 전수 catch). NCP Client ID/Secret 실값 미기록(§7 준수).
+
+**비범위**: 코드 0 수정(`firmware/*`/`server/*`/`ml/*`/`.pio/*` 전부 read only — PR #36은 기 머지된 코드 인용, 본 세션 미접촉). 노션 미수정(Set 3 소관) / 프로젝트 지침 미수정(Set 2=학부생 직접) / `docs/git-convention.md` 무접촉 / Stage B-2 임계값·N값·latch 시간 미확정(설계 방향만). `docs/decisions.md`(9 Stage A/B cross-ref + Stage B per-zone 정정 + 9.1(h) 유령 무효화+학습 21 + 9.3 신설 + 카테고리 20 학습 20 + 카테고리 21 좀비 위생 + 30.9 NCP 실측) + `docs/decisions-log.md`(본 entry)만 편집. 브랜치 없이 main 직 push(카테고리 20, 문서 단독). 토큰/시크릿/계정 개인정보 미기록.
+
+**관련 카테고리**: 9 (Stage A/B cross-ref) / 9.1(h) (유령 미결 무효화 + 학습 21) / 9.3 (Stage B-1 계측 ④런타임 실측 신설) / 20 (학습 20 ls-remote 등재) / 21 (좀비 인스턴스 위생) / 30.9 (NCP CSR Application 실측)
+**관련 commit**: 코드 PR #36 `84f2272`(기 머지) + 본 entry 자체 (`docs/decisions.md` + `docs/decisions-log.md` docs-only, PR 없음)
