@@ -12,9 +12,14 @@
 //       Philips I²S 포맷 (MSB delayed 1 SCK from start of half-frame)
 //   - Espressif ESP-IDF 5.5 docs (context7 /websites/espressif_projects_esp-idf):
 //       legacy driver/i2s.h는 deprecated, 새 driver/i2s_std.h 권장
-//       BUT — arduino-esp32 v3.20017 SDK 패키지는 legacy driver/i2s.h만 노출
+//       BUT — 설치된 arduino-esp32 packaging은 legacy driver/i2s.h만 노출
 //       (find ~/.platformio/packages/.../include/driver/ → i2s.h만, i2s_std.h 부재)
 //       → 본 작업은 legacy API 채택 (deprecation warning 무시 가능, 동작 확인됨)
+//       ※ 정정(decisions.md SSoT): "v3.20017"은 PIO 패키지 버전 문자열
+//         (framework-arduinoespressif32@3.20017.241212)이며 core 3.x 아님.
+//         설치 core = Arduino-ESP32 2.0.17 (legacy driver/i2s.h 의존이 그 방증).
+//         레거시 헤더 채택 로직 자체는 정당 → 무변경 (학습 15 ②단계 모범 수행분,
+//         PR #34 tof_common.h 동형 오독 정정 선례 준용).
 
 #pragma once
 
@@ -45,9 +50,28 @@ constexpr UBaseType_t   MIC_TASK_PRIORITY    = 4;
 constexpr BaseType_t    MIC_TASK_CORE        = 0;     // Core 0 (cameraTask는 Core 1)
 constexpr uint32_t      MIC_LOOP_IDLE_LOG_MS = 5000;
 constexpr uint32_t      MIC_SERIAL_BOOT_DELAY_MS = 200;
-constexpr uint32_t      MIC_LOG_EVERY_N_BUFFERS  = 50;
+constexpr uint32_t      MIC_LOG_EVERY_N_BUFFERS  = 50;   // 계측 윈도우 크기 (재사용, 신설 X)
+
+// === M2 계측 계층 (관측 전용, 판정·변환 무접촉 — decisions.md §9.3 ToF Stage B-1 패턴 준용) ===
+// raw int32 통계를 로깅해 실제 비트 정렬을 드러낸다. shift/트리거/변환은 M4 소관.
+// K 윈도우마다 1회 raw 샘플 8개를 hex 덤프 (MSB 정렬 육안 확인용).
+constexpr uint32_t      MIC_RAW_DUMP_EVERY_N_WINDOWS = 5;
+
+// raw int32 한 버퍼의 진폭 통계. 호출부 지역변수로 사용 (static/전역 신설 금지 = RAM 순증 0).
+struct MicRawStats {
+  int32_t  n;       // 샘플 수         ∈ [0, MIC_DMA_BUF_LEN]
+  int32_t  min;     // 최소 진폭       ∈ [INT32_MIN, INT32_MAX]
+  int32_t  max;     // 최대 진폭       ∈ [INT32_MIN, INT32_MAX]
+  int64_t  mean;    // DC 오프셋       ∈ [INT32_MIN, INT32_MAX]
+  int64_t  pp;      // peak-to-peak    ∈ [0, 2^32-1]  (int32 초과 → int64 필수)
+  int64_t  rms;     // int32 도메인 RMS ∈ [0, 2^31]
+  uint32_t or_acc;  // 전 샘플 비트 OR 누적
+  int      tz;      // or_acc trailing zeros ∈ [0, 32] (하위 항상-0 비트 폭 = 실제 정렬 폭 물증)
+  int32_t  nz;      // 0이 아닌 샘플 수 ∈ [0, n]
+};
 
 // === API ===
 bool initMicI2S();
 void discardMicWarmup();
 void logMicMemoryDiagnostics(const char* tag);
+MicRawStats computeMicRawStats(const int32_t* samples, size_t count);

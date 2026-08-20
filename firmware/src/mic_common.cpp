@@ -81,3 +81,53 @@ void discardMicWarmup() {
                 (unsigned)MIC_WARMUP_DELAY_MS,
                 discarded, MIC_WARMUP_BUFFERS_DISCARD);
 }
+
+// M2 계측: raw int32 버퍼의 진폭 통계를 산출 (관측 전용, 변환·판정 무접촉).
+// 누산은 전부 지역변수 — 새 static/전역 저장소 신설 없음 (RAM 순증 0).
+//
+// ★ 오버플로 가드 (전 분기 값 도메인 열거로 불가 증명):
+//   - samples[i]  ∈ [INT32_MIN, INT32_MAX],  count ∈ [0, MIC_DMA_BUF_LEN=1024]
+//   - sum(Σs)     : |Σs| ≤ 1024·2^31 = 2^41 < INT64_MAX(2^63) → int64 안전
+//   - sumsq(Σs²)  : 최대 1024·(2^31)² = 2^72 > INT64_MAX(2^63) → int64/uint64 전부 오버플로.
+//                   Xtensa 32-bit엔 __int128 부재 → double 누산 채택(위임의 "int64 누산" pivot).
+//                   double 지수부는 2^72 ≫ 초과 여유, 정밀 손실은 2^(72-52)=2^20 미만
+//                   = 진폭 지표에 무관. (근본원인 재검증: 학습 19 — 위임 전제도 재확인)
+//   - pp = max-min : max≤2^31-1, min≥-2^31 → 최대 2^32-1, int32 초과 → int64 캐스팅 후 산출
+//   - or_acc      : uint32 OR 누적, 값역 = 전체 uint32, 오버플로 개념 무 (포화 아님)
+//   - tz          : __builtin_ctz(0) 미정의 → or_acc==0 분기에서 32로 명시 (하위 전부 0)
+//   - mean/rms 산출 시 count>0 보장(count==0 조기 반환) → 0 나눗셈 불가
+MicRawStats computeMicRawStats(const int32_t* samples, size_t count) {
+  MicRawStats st = {};
+  st.n = (int32_t)count;
+  if (count == 0) {
+    st.tz = 32;                  // 데이터 없음 → 전 비트 0 취급 (ctz 미정의 회피)
+    return st;
+  }
+
+  int32_t  smin  = INT32_MAX;
+  int32_t  smax  = INT32_MIN;
+  int64_t  sum   = 0;            // Σs,  |·| ≤ 2^41
+  double   sumsq = 0.0;          // Σs², 최대 2^72 → double (int64 오버플로 회피)
+  uint32_t oracc = 0;
+  int32_t  nz    = 0;
+
+  for (size_t i = 0; i < count; i++) {
+    const int32_t s = samples[i];
+    if (s < smin) smin = s;
+    if (s > smax) smax = s;
+    sum   += (int64_t)s;
+    sumsq += (double)s * (double)s;
+    oracc |= (uint32_t)s;
+    if (s != 0) nz++;
+  }
+
+  st.min    = smin;
+  st.max    = smax;
+  st.mean   = sum / (int64_t)count;                        // ∈ [INT32_MIN, INT32_MAX]
+  st.pp     = (int64_t)smax - (int64_t)smin;               // ∈ [0, 2^32-1]
+  st.rms    = (int64_t)sqrt(sumsq / (double)count);        // ∈ [0, 2^31]
+  st.or_acc = oracc;
+  st.tz     = (oracc == 0) ? 32 : __builtin_ctz(oracc);    // 하위 항상-0 비트 폭 = 실제 정렬 폭
+  st.nz     = nz;
+  return st;
+}
