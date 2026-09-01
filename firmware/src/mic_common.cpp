@@ -2,6 +2,8 @@
 
 #include "mic_common.h"
 
+#include <string.h>  // memcpy — int16 저장 시 타입 재해석을 표준 경로로 처리 (하단 주석)
+
 void logMicMemoryDiagnostics(const char* tag) {
   // 5/12 메모리 self-checkpoint 입력 데이터 (decisions.md 카테고리 17.1.1).
   Serial.printf("[MEM:%s] PSRAM total=%u free=%u | Heap free=%u min=%u\n",
@@ -129,5 +131,66 @@ MicRawStats computeMicRawStats(const int32_t* samples, size_t count) {
   st.or_acc = oracc;
   st.tz     = (oracc == 0) ? 32 : __builtin_ctz(oracc);    // 하위 항상-0 비트 폭 = 실제 정렬 폭
   st.nz     = nz;
+  return st;
+}
+
+// M4 변환: raw int32 → int16 PCM. shift 근거표는 mic_common.h "M4 변환 계층" 참조
+// (2026-08-20 ④런타임 tz=6 실측 → int16 = raw >> 14). 누산은 전부 지역변수 = RAM 순증 0.
+//
+// ★ src/dst 겹침(in-place) 허용 조건 — 호출부 M4가 동일 4 KiB를 union으로 공유한다:
+//   반복 i에서 읽는 src 바이트는 [4i, 4i+3], 그때까지 쓴 dst 바이트는 [0, 2i-1].
+//   2i-1 < 4i 가 모든 i ≥ 0에서 성립 → 아직 읽지 않은 raw를 덮어쓰는 경우가 없다.
+//   dst 저장을 memcpy로 하는 이유: int16 lvalue 직접 대입은 int32 저장소에 대한
+//   strict-aliasing 위반이고, TBAA가 "겹칠 리 없다"고 보고 store를 load 앞으로
+//   재배치할 여지가 있다. memcpy는 char 접근으로 취급되어 두 문제를 동시에 없앤다.
+//
+// ★ 오버플로 가드 (전 분기 값 도메인 열거로 불가 증명):
+//   - src[i]  ∈ [INT32_MIN, INT32_MAX] = [-2^31, 2^31-1],  count ∈ [0, MIC_DMA_BUF_LEN=1024]
+//   - v = src[i] >> 14 : 산술 시프트(GCC 문서 보증 / C++20 규정) → 부호 유지.
+//                        v ∈ [-2^17, 2^17-1] = [-131072, 131071] → int32 안전
+//   - clamp 후 v ∈ [INT16_MIN, INT16_MAX] = [-32768, 32767] → int16 무손실 대입
+//     (clamp 없으면 v가 int16 범위를 2^2배 초과 가능 → wrap-around로 부호 반전 = 최악 왜곡)
+//   - clip    : 증가 1회/샘플 → ∈ [0, count] ≤ 1024, uint32 안전
+//   - v²      : |v| ≤ 32768 → v² ≤ 2^30 < INT32_MAX(2^31-1) → 곱셈 자체는 int32로 무손실
+//   - sumsq(Σv²) : 최대 1024·2^30 = 2^40 < INT64_MAX(2^63) → int64 정확 누산.
+//                  (M2의 raw 도메인은 2^72라 double이 불가피했으나, 여기선 int64로 충분)
+//   - rms = sqrt(sumsq/count) ≤ 32768 → int32 안전
+//   - count == 0 조기 반환 → 0 나눗셈 불가. min/max 센티넬도 그 분기에서 미사용
+MicI16Stats convertMicRawToInt16(const int32_t* src, int16_t* dst, size_t count) {
+  MicI16Stats st = {};
+  st.n = (int32_t)count;
+  if (count == 0) {
+    return st;                   // min/max/rms/clip = 0 (센티넬 잔존 방지)
+  }
+
+  int16_t smin  = INT16_MAX;
+  int16_t smax  = INT16_MIN;
+  int64_t sumsq = 0;             // Σv², 최대 2^40 → int64 정확
+  uint32_t clip = 0;
+
+  for (size_t i = 0; i < count; i++) {
+    int32_t v = src[i] >> MIC_RAW_TO_INT16_SHIFT;   // 산술 시프트(부호 유지), 논리 시프트 아님
+    if (v > INT16_MAX) {
+      v = INT16_MAX;
+      clip++;
+    } else if (v < INT16_MIN) {
+      v = INT16_MIN;
+      clip++;
+    }
+
+    const int16_t out = (int16_t)v;
+    memcpy(&dst[i], &out, sizeof(out));             // in-place 겹침 안전 저장 (위 주석)
+
+    if (out < smin) smin = out;
+    if (out > smax) smax = out;
+    // 곱은 int32로 계산하고 누산만 int64 — out² ≤ 32768² = 2^30 < INT32_MAX 이므로 무손실.
+    // (int64×int64로 두면 Xtensa가 mull+mulsh+캐리 전파를 매 샘플 실행한다. disasm 확인분.)
+    sumsq += (int64_t)((int32_t)out * (int32_t)out);
+  }
+
+  st.min  = smin;
+  st.max  = smax;
+  st.rms  = (int32_t)sqrt((double)sumsq / (double)count);  // ∈ [0, 32768]
+  st.clip = clip;
   return st;
 }
