@@ -70,8 +70,50 @@ struct MicRawStats {
   int32_t  nz;      // 0이 아닌 샘플 수 ∈ [0, n]
 };
 
+// === M4 변환 계층 (int32 raw → int16 PCM, 2026-08-20 ④런타임 실측으로 확정) ===
+//
+// ★ 측정 조건: 2026-08-20 / env:mic_dummy / HEAD 17ce212 / 랩실(사람 대화 있음)
+//   39윈도우(w=233~271) — w=233~248 무자극 / w=249~266 근접 박수 / w=267~271 말하기
+//   = M2 defer 주석이 요구한 실측 프로토콜 ①무자극 ②근접 박수 ③육성 전부 충족.
+//
+// ★ 정렬 폭 물증 — 전 39윈도우 불변 (진폭이 60배 변동해도 무변화)
+//     or_acc = 0xFFFFFFC0 | tz = 6 | err = 0 | nz = 1024 (w=257만 1023)
+//
+//   도출식:  raw_int32    = sample_24bit << 6      ← tz=6 = 하위 6비트 항상 0
+//            sample_24bit = raw >> 6
+//            int16        = sample_24bit >> 8
+//            ───────────────────────────────────
+//            int16        = raw >> 14              ← MIC_RAW_TO_INT16_SHIFT
+//
+//   검산:      8388607 (24bit 최대) << 6 = 536870848 → >> 14 = 32767 = INT16_MAX 정확 일치
+//   실측 대입: 박수 max 296542208 >> 14 = 18099 = int16 풀스케일의 55%
+//              → 클리핑 없음, 헤드룸 약 1.8배. 단 더 큰 소리는 미측정 → saturation 가드 필수.
+//
+// ★ 폐기된 안: >>16 (M2 이전의 ">>8 두 번" 주석 계획). tz=6 실측과 불일치하며 유효
+//   비트를 2비트 더 버려 약 12dB(4배) 손실. 치명적이진 않으나 정확도 저하.
+//   계측 PR(#37)로 쪼개 tz를 먼저 잰 덕에 착수 전 발견 → 폐기.
+//
+// ⚠️ 배경 rms 2,104,135 ~ 2,646,435 은 **랩실 소음 포함 = 무음 기준선이 아니다.**
+//   RMS 트리거 임계값 근거로 사용 금지 (카테고리 3 "80% 지점"은 M5에서 조용한 환경
+//   재측정 후 확정). 본 표는 정렬 폭(shift) 근거로만 유효하다.
+constexpr int MIC_RAW_TO_INT16_SHIFT = 14;
+
+// int16 변환 결과 통계. 호출부 지역변수로 사용 (static/전역 신설 금지 = RAM 순증 0).
+struct MicI16Stats {
+  int32_t  n;     // 변환 샘플 수      ∈ [0, MIC_DMA_BUF_LEN]
+  int16_t  min;   // 최소 진폭         ∈ [INT16_MIN, INT16_MAX]
+  int16_t  max;   // 최대 진폭         ∈ [INT16_MIN, INT16_MAX]
+  int32_t  rms;   // int16 도메인 RMS  ∈ [0, 32768]
+  uint32_t clip;  // saturation clamp 발생 샘플 수 ∈ [0, n] (④런타임 클리핑 관측 수단)
+};
+
 // === API ===
 bool initMicI2S();
 void discardMicWarmup();
 void logMicMemoryDiagnostics(const char* tag);
 MicRawStats computeMicRawStats(const int32_t* samples, size_t count);
+
+// int32 raw 버퍼 → int16 PCM 버퍼 변환(산술 시프트 + saturation) + 통계를 1-pass로 산출.
+// dst는 호출부가 제공한다 — M4는 DMA 버퍼의 int16 union 뷰, M5는 2초 PSRAM 버퍼.
+// 내부 저장소를 신설하지 않는다 (RAM 순증 0). src/dst 겹침 허용 조건은 .cpp 주석 참조.
+MicI16Stats convertMicRawToInt16(const int32_t* src, int16_t* dst, size_t count);
