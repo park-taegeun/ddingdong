@@ -19,8 +19,11 @@ from flask import current_app
 
 from .constants import (
     KAKAO_HTTP_TIMEOUT_SECONDS,
+    KAKAO_LINK_URL,
+    KAKAO_MEMO_URL,
     KAKAO_REFRESH_TOKEN_TTL,
     KAKAO_TOKEN_URL,
+    PRIMARY_MESSAGES,
 )
 from .extensions import db
 from .models import KakaoToken
@@ -33,6 +36,61 @@ class KakaoTokenError(RuntimeError):
     호출부(/detect)는 이 예외를 잡아 1차 알림을 미발송으로 기록할 뿐,
     요청 전체를 5xx 로 떨어뜨리지 않는다.
     """
+
+
+class KakaoSendError(RuntimeError):
+    """memo 발송 실패(네트워크/HTTP/응답 계약 위반).
+
+    토큰 계층 실패(KakaoTokenError)와 굳이 나누는 이유 = 대시보드 집계 키가
+    token_expired / kakao_api_error 두 갈래로 이미 고정돼 있어서다
+    (dashboard/src/types/stats.ts SkipReasonCounts). 원인 계층이 다르면 다른 키로
+    집계돼야 "토큰이 죽은 것"과 "카카오가 안 받은 것"을 화면에서 구분할 수 있다.
+    """
+
+
+# skip_reason 값 (dashboard/src/types/stats.ts SkipReasonCounts 4종 중 카카오 소관 2종).
+# routes.py 가 Notification.skip_reason 에 그대로 넣는다.
+SKIP_REASON_TOKEN_EXPIRED = "token_expired"
+SKIP_REASON_KAKAO_API_ERROR = "kakao_api_error"
+
+
+def _uncommitted_classes():
+    """이 세션에 걸린 미커밋 변경의 클래스 목록(= 지금 commit 하면 함께 저장될 것들).
+
+    session.new/dirty 만으로는 부족하다: flush 를 거친 객체는 두 컬렉션에서 빠지지만
+    커밋은 안 된 상태로 트랜잭션에 남아, 토큰 갱신 커밋에 그대로 딸려간다.
+    (발견 경위 = 2026-09-03 Step 3 negative control — 발송 호출을 db.session.flush()
+     뒤로 옮겨봤더니 flush 이전만 보던 초판 가드가 이를 잡지 못했다.)
+
+    인스턴스가 아니라 클래스(InstanceState.class_)를 본다 — 뒤에서 말하는 약참조
+    문제로 인스턴스 자체는 None 이 될 수 있기 때문이다.
+
+    ★ 알려진 한계(실측 2026-09-03): flush 이후 SQLAlchemy 의 identity map 은 약참조라,
+      호출부가 객체 참조를 전혀 들고 있지 않으면 InstanceState 까지 수거돼 이 검사가
+      비어 버린다. 즉 "flush 했고 그 객체를 아무도 안 들고 있는" 경우는 못 잡는다.
+      실제 위험 지점인 routes.detect() 는 notif 지역변수로 참조를 끝까지 들고 있어
+      이 한계에 걸리지 않는다(negative control 로 검출 확인). 완전한 검출은 DBAPI
+      커넥션의 쓰기 트랜잭션 여부를 봐야 하는데 SQLite 전용 결합이라 채택하지 않았다.
+
+    ※ SessionTransaction 의 _new/_dirty 는 공개 API 가 아니다. SQLAlchemy 상향으로
+      사라지면 getattr 이 조용히 건너뛰어 flush 이전 검사만 남는다 — 가드가 약해질
+      뿐 앱이 죽지는 않게 한다(퇴화 감지는 회귀 테스트 소관).
+    """
+    classes = [type(obj) for obj in list(db.session.new) + list(db.session.dirty)]
+
+    # db.session 은 scoped_session 프록시라 get_transaction 을 노출하지 않는다 →
+    # 호출해서 실제 Session 을 꺼낸다.
+    tx = getattr(db.session(), "get_transaction", lambda: None)()
+    for attr in ("_new", "_dirty"):
+        for state in getattr(tx, attr, None) or ():
+            classes.append(state.class_)
+
+    seen, unique = set(), []
+    for cls in classes:
+        if cls not in seen:
+            seen.add(cls)
+            unique.append(cls)
+    return unique
 
 
 def _assert_commit_is_safe():
@@ -48,14 +106,12 @@ def _assert_commit_is_safe():
     의미상 무해하다.
     """
     foreign = [
-        obj
-        for obj in list(db.session.new) + list(db.session.dirty)
-        if not isinstance(obj, KakaoToken)
+        cls for cls in _uncommitted_classes() if not issubclass(cls, KakaoToken)
     ]
     if foreign:
         raise RuntimeError(
             "kakao.get_access_token() 은 세션에 미커밋 변경이 있는 지점에서 호출할 수 "
-            f"없다(토큰 갱신 커밋에 딸려간다). 계류 중: {[type(o).__name__ for o in foreign]}"
+            f"없다(토큰 갱신 커밋에 딸려간다). 계류 중: {[c.__name__ for c in foreign]}"
         )
 
 
@@ -178,3 +234,97 @@ def get_access_token():
             raise
 
     return row.access_token
+
+
+# ── 1차 텍스트 알림 발송 (카테고리 7) ────────────────────────────────────
+def _build_message(predicted_class):
+    """클래스별 1차 알림 본문. 분할·축약 없이 상수 원문 그대로 돌려준다.
+
+    PREDICTED_CLASSES 는 닫힌 3종 enum(카테고리 4)이라 키 부재는 발송 실패가 아니라
+    코딩 오류다 → get 폴백으로 임의 문구를 지어내지 않고 KeyError 로 시끄럽게 터뜨린다.
+    잘못된 본문을 화재 상황에 보내는 것보다 낫다.
+    """
+    return PRIMARY_MESSAGES[predicted_class]
+
+
+def _post_memo(access_token, message):
+    """memo default/send 를 1회 호출한다. 성공이면 반환, 실패면 예외.
+
+    재시도·백오프 없음(위임 §5 Step 3). 5초 예산 안에 두 번째 왕복을 태울 여유가 없고,
+    실패는 요청 실패가 아니라 "1차 알림 미발송"으로 기록되면 되기 때문이다.
+    """
+    template_object = json.dumps(
+        {
+            "object_type": "text",
+            "text": message,
+            # link 는 text 템플릿 필수 필드다(web_url/mobile_web_url 중 최소 1개).
+            # 이동 대상이 아직 없어 고정값을 쓴다 — 근거는 constants.KAKAO_LINK_URL 주석.
+            "link": {"web_url": KAKAO_LINK_URL, "mobile_web_url": KAKAO_LINK_URL},
+        },
+        # 한글·기호를 \uXXXX 로 부풀리지 않는다. 본문은 urlencode 가 다시 퍼센트 인코딩한다.
+        ensure_ascii=False,
+    )
+    data = urllib.parse.urlencode({"template_object": template_object}).encode("utf-8")
+    req = urllib.request.Request(
+        KAKAO_MEMO_URL,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=KAKAO_HTTP_TIMEOUT_SECONDS) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            # 토큰이 살아 있다고 판단했는데 카카오가 거부한 경우(폐기·권한 변경 등).
+            # 원인 계층이 토큰이므로 token_expired 로 집계되도록 토큰 예외로 올린다.
+            # 여기서 갱신 후 재발송하지 않는다 — "재시도 없음" 결정 그대로.
+            raise KakaoTokenError(f"memo 발송 인증 거부: HTTP {exc.code}") from exc
+        # 에러 본문을 싣지 않는다 — 요청 파라미터 에코 가능성 배제(_refresh 와 동형).
+        raise KakaoSendError(f"memo 발송 실패: HTTP {exc.code}") from exc
+    except Exception as exc:  # URLError/timeout/JSON 파싱 — 원인 타입만 남긴다
+        raise KakaoSendError(f"memo 발송 실패: {type(exc).__name__}") from exc
+
+    # 카카오는 HTTP 200 이어도 result_code 로 실패를 알린다(성공 = 0).
+    result_code = payload.get("result_code")
+    if result_code != 0:
+        detail = result_code if isinstance(result_code, int) else "missing"
+        raise KakaoSendError(f"memo 발송 실패: result_code={detail}")
+
+
+def send_primary_text(predicted_class):
+    """1차 텍스트 알림을 1회 발송한다. 성공이면 None, 실패면 skip_reason 문자열.
+
+    반환값 계약: None(성공) / SKIP_REASON_TOKEN_EXPIRED / SKIP_REASON_KAKAO_API_ERROR.
+    호출부는 이 값을 그대로 Notification.skip_reason 에 넣고 primary_sent=False 로
+    기록한다. 발송 실패로 /detect 를 5xx 로 떨어뜨리지 않는다 — ESP32 에게 "요청이
+    잘못됐다"고 알리는 것이 아니고, 재시도해봐야 같은 카카오 장애를 다시 맞기 때문이다.
+
+    ★ 호출 위치 제약: get_access_token() 이 갱신 성공 시 db.session.commit() 한다.
+      따라서 Notification 을 세션에 add 하기 전에 불러야 한다. 이 제약은 주석이 아니라
+      _assert_commit_is_safe() 가 실행 시점에 강제한다(위반 시 RuntimeError → 5xx).
+      그 RuntimeError 는 아래 except 절에 잡히지 않는다(KakaoTokenError/KakaoSendError
+      만 잡는다) — 계약 위반이 "카카오 발송 실패"로 둔갑하면 버그가 숨기 때문이다.
+
+    로그에 토큰을 남기지 않는다. 아래 예외 메시지는 상태 코드/예외 타입만 담는다.
+    """
+    # 본문을 먼저 만든다: 미등록 클래스(코딩 오류)라면 토큰 갱신 커밋도 네트워크 호출도
+    # 일으키기 전에 터지는 편이 원인 추적에 낫다.
+    message = _build_message(predicted_class)
+
+    try:
+        access_token = get_access_token()
+        _post_memo(access_token, message)
+    except KakaoTokenError as exc:
+        current_app.logger.warning("kakao primary send skipped: %s", exc)
+        return SKIP_REASON_TOKEN_EXPIRED
+    except KakaoSendError as exc:
+        current_app.logger.warning("kakao primary send failed: %s", exc)
+        return SKIP_REASON_KAKAO_API_ERROR
+
+    current_app.logger.info("kakao primary sent: class=%s", predicted_class)
+    return None
