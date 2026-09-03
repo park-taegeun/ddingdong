@@ -14,6 +14,11 @@ test_client 로 재구성해 repo 자산으로 고정한 것이 이 파일이다
 문자열이다(이 파일 상단 상수 2개가 전부). 카카오 토큰·시크릿 실값은 픽스처에 일절
 등장하지 않으며, _TestConfig 가 카카오 4개 항목을 빈 문자열로 덮어 개발자 로컬
 server/.env 의 실값이 테스트 경로로 새어드는 것까지 막는다.
+
+카카오 발송: ★ 이 스위트는 카카오로 실제 요청을 보내지 않는다. 발송 경로 케이스는
+unittest.mock 으로 kakao.send_primary_text / kakao.get_access_token /
+urllib.request.urlopen 을 스텁해 검증한다. _FAKE_ACCESS_TOKEN 은 발송 경로를 통과
+시키기 위한 자리표시 문자열이며 카카오가 발급한 값이 아니다(실값 금지 원칙 유지).
 """
 
 from __future__ import annotations
@@ -21,13 +26,65 @@ from __future__ import annotations
 import io
 import math
 import os
+import json
 import struct
 import tempfile
 import unittest
+import urllib.parse
+from pathlib import Path
+from unittest import mock
 
 # 더미 인증 토큰(실값 아님). create_app 이전에 넣어야 Config 가 읽는다.
 _DEVICE_TOKEN = "test-device-token"
 _DASHBOARD_TOKEN = "test-dashboard-token"
+
+# 발송 경로 스텁용 자리표시 문자열. 카카오 발급값 아님 — 실값은 이 파일에 없다.
+_FAKE_ACCESS_TOKEN = "test-access-token-not-real"
+
+# decisions.md 원문 위치. tests → app → server → repo 루트.
+_DECISIONS_MD = Path(__file__).resolve().parents[3] / "docs" / "decisions.md"
+_COPY2_MARKER = "**확정 카피 ② 카카오 알림용**"
+
+
+def _copy2_from_decisions() -> str | None:
+    """decisions.md 의 확정 카피 ② 코드펜스를 실추출. 파일이 없으면 None.
+
+    상수를 손으로 옮겨 적지 않았다는 것을 매 실행 대조로 증명하기 위한 것이다
+    (문서가 수정되면 이 대조가 먼저 깨져 드리프트를 알려준다).
+    """
+    if not _DECISIONS_MD.exists():
+        return None
+    lines = _DECISIONS_MD.read_text(encoding="utf-8").split("\n")
+    marker = next((i for i, ln in enumerate(lines) if _COPY2_MARKER in ln), None)
+    if marker is None:
+        return None
+    opened = next(
+        (i for i in range(marker + 1, len(lines)) if lines[i].strip() == "```"), None
+    )
+    if opened is None:
+        return None
+    closed = next(
+        (i for i in range(opened + 1, len(lines)) if lines[i].strip() == "```"), None
+    )
+    if closed is None:
+        return None
+    return "\n".join(lines[opened + 1 : closed])
+
+
+class _FakeResponse:
+    """urlopen 의 컨텍스트매니저 계약만 흉내 내는 최소 스텁."""
+
+    def __init__(self, payload):
+        self._body = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
 
 
 def _pcm16_sine(num_samples: int, freq_hz: int = 440, rate: int = 16000) -> bytes:
@@ -187,14 +244,20 @@ class DetectRegressionTest(unittest.TestCase):
         """1차 알림 시각이 detected_at 과 같은 변수를 공유하지 않는다.
 
         공유하던 시절엔 두 값이 항상 동일해 timing_metrics 1차 지연이 구조적으로
-        0ms 만 나왔다. 발송 배선 전이라 차이는 서브밀리초지만 '동일하지 않음'은
-        구조 회귀로 고정할 수 있다.
+        0ms 만 나왔다.
+
+        발송을 성공으로 스텁한다: 테스트 config 는 카카오 항목이 비어 있어 실제로는
+        전건이 미발송(token_expired)으로 떨어지고 primary_sent_at 이 전부 None 이 된다.
+        여기서 고정하려는 것은 발송 성공 여부가 아니라 '두 시각이 같은 변수를 쓰지
+        않는다'는 구조라서, 발송을 성공시킨 뒤 두 값을 비교한다.
         """
         from ..extensions import db
         from ..models import Notification
 
         made = 0
-        with self.app.app_context():
+        with self.app.app_context(), mock.patch(
+            "app.kakao.send_primary_text", return_value=None
+        ):
             for i in range(10):
                 if self._detect(f"regr-g14-{i}", f"dev-g14-{i}").status_code == 201:
                     made += 1
@@ -267,6 +330,309 @@ class DetectRegressionTest(unittest.TestCase):
             self.app.config["KAKAO_REFRESH_TOKEN"] = ""
             with self.assertRaises(kakao.KakaoTokenError):
                 kakao.get_access_token()
+
+    # ── 1차 알림 발송 배선 (카테고리 7, 실발송 없음 — 전부 스텁) ─────────
+    #
+    # 이 절의 모든 케이스는 카카오로 요청을 보내지 않는다. 스텁 지점은 두 층뿐이다:
+    #   (a) app.kakao.send_primary_text  = routes 배선을 볼 때
+    #   (b) app.kakao.get_access_token + urlopen = kakao 내부 실패 분기를 볼 때
+
+    @staticmethod
+    def _policy(predicted_class, confidence):
+        """정책 dict 를 손으로 짓지 않고 실제 판정 함수로 만든다(드리프트 방지)."""
+        from ..utils import _apply_prediction_policy
+
+        scores = {"doorbell": 0.34, "knock": 0.33, "fire_alarm": 0.33}
+        return _apply_prediction_policy(predicted_class, confidence, scores)
+
+    def _row(self, client_request_id):
+        from ..extensions import db
+        from ..models import Notification
+        from sqlalchemy import select
+
+        return db.session.execute(
+            select(Notification).where(
+                Notification.client_request_id == client_request_id
+            )
+        ).scalar_one()
+
+    def test_send_not_called_when_policy_skips(self) -> None:
+        """정책이 미발송으로 판정한 건은 발송 호출 자체를 하지 않는다.
+
+        저신뢰 건까지 카카오 왕복을 태우면 5초 예산과 skip_reason 집계가 함께 오염된다.
+        """
+        from ..constants import CONFIDENCE_THRESHOLD
+
+        low = self._policy("doorbell", CONFIDENCE_THRESHOLD - 0.2)
+        self.assertFalse(low["primary_sent"])  # 전제 확인
+
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction", return_value=low
+        ), mock.patch("app.kakao.send_primary_text") as send:
+            r = self._detect("regr-send-skip", "dev-send-skip")
+            self.assertEqual(r.status_code, 201)
+            send.assert_not_called()
+
+            row = self._row("regr-send-skip")
+            self.assertFalse(row.primary_sent)
+            self.assertIsNone(row.primary_sent_at)
+            self.assertEqual(row.skip_reason, "low_confidence")
+
+    def test_send_success_records_primary_sent(self) -> None:
+        """발송 성공 = primary_sent True + primary_sent_at 기록 + skip_reason 없음."""
+        sent = self._policy("doorbell", 0.95)
+        self.assertTrue(sent["primary_sent"])
+
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction", return_value=sent
+        ), mock.patch("app.kakao.send_primary_text", return_value=None) as send:
+            r = self._detect("regr-send-ok", "dev-send-ok")
+            self.assertEqual(r.status_code, 201)
+            send.assert_called_once_with("doorbell")
+
+            row = self._row("regr-send-ok")
+            self.assertTrue(row.primary_sent)
+            self.assertIsNotNone(row.primary_sent_at)
+            self.assertIsNone(row.skip_reason)
+
+    def test_send_failure_is_recorded_and_not_5xx(self) -> None:
+        """발송 실패는 요청 실패가 아니다 — 201 + primary_sent False + skip_reason."""
+        sent = self._policy("doorbell", 0.95)
+
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction", return_value=sent
+        ), mock.patch("app.kakao.send_primary_text", return_value="kakao_api_error"):
+            r = self._detect("regr-send-fail", "dev-send-fail")
+            self.assertEqual(r.status_code, 201)  # 5xx 아님
+
+            # 응답 본문(= 멱등 replay 로 재생될 스냅샷)에도 실제 발송 결과가 담긴다
+            status = r.get_json()["notification_status"]
+            self.assertFalse(status["primary_sent"])
+            self.assertIsNone(status["primary_sent_at"])
+            self.assertEqual(status["skip_reason"], "kakao_api_error")
+
+            row = self._row("regr-send-fail")
+            self.assertFalse(row.primary_sent)
+            self.assertIsNone(row.primary_sent_at)
+            self.assertEqual(row.skip_reason, "kakao_api_error")
+
+    def test_token_unavailable_records_token_expired(self) -> None:
+        """토큰 계층 실패는 kakao_api_error 가 아니라 token_expired 로 집계된다.
+
+        스텁 없이 실제 kakao 계층을 탄다 — 테스트 config 의 카카오 항목이 비어 있어
+        부트스트랩이 fail-fast 하고, 네트워크 호출은 일어나지 않는다.
+        """
+        sent = self._policy("doorbell", 0.95)
+
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction", return_value=sent
+        ):
+            r = self._detect("regr-send-notoken", "dev-send-notoken")
+            self.assertEqual(r.status_code, 201)
+
+            row = self._row("regr-send-notoken")
+            self.assertFalse(row.primary_sent)
+            self.assertEqual(row.skip_reason, "token_expired")
+
+    def test_send_timeout_leaves_primary_sent_determined(self) -> None:
+        """타임아웃 경로에서도 primary_sent 상태가 확정된다.
+
+        [4] 자체검증 ③이 "Step 3 소관"으로 남긴 미해결 항목의 증명이다. urlopen 이
+        TimeoutError 를 던지는 상황에서 요청이 5xx 로 새거나 primary_sent 가 판정
+        직후 값(True)으로 남지 않고, False + kakao_api_error 로 확정되어야 한다.
+        """
+        sent = self._policy("doorbell", 0.95)
+
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction", return_value=sent
+        ), mock.patch("app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN), mock.patch(
+            "app.kakao.urllib.request.urlopen", side_effect=TimeoutError("timed out")
+        ) as urlopen:
+            r = self._detect("regr-send-timeout", "dev-send-timeout")
+            self.assertEqual(r.status_code, 201)
+            # 재시도 없음 — 왕복은 정확히 1회만 시도된다
+            self.assertEqual(urlopen.call_count, 1)
+            # 타임아웃이 실제로 걸려 있다(무기한 대기 금지). 값 근거는 constants 주석.
+            from ..constants import KAKAO_HTTP_TIMEOUT_SECONDS
+
+            self.assertEqual(
+                urlopen.call_args.kwargs["timeout"], KAKAO_HTTP_TIMEOUT_SECONDS
+            )
+
+            row = self._row("regr-send-timeout")
+            self.assertFalse(row.primary_sent)
+            self.assertIsNone(row.primary_sent_at)
+            self.assertEqual(row.skip_reason, "kakao_api_error")
+
+    def test_send_precedes_notification_add(self) -> None:
+        """발송이 Notification 생성보다 먼저 일어난다 — 두 방식으로 증명한다.
+
+        (1) 순서 직접 관찰: Notification 생성자를 감싸 호출 순서를 기록한다.
+        (2) 규약 실행 증명: 발송 시점에 _assert_commit_is_safe() 를 직접 돌려,
+            토큰 갱신 커밋에 딸려갈 남의 미커밋 변경이 없음을 확인한다.
+
+        negative control(2026-09-03): 발송 호출을 db.session.add(notif) +
+        db.session.flush() 뒤로 옮기면 이 케이스가 500 으로 깨지는 것을 확인했다.
+        """
+        from .. import kakao
+        from ..models import Notification
+
+        sent = self._policy("doorbell", 0.95)
+        seen = []
+
+        def _guarded(predicted_class):
+            kakao._assert_commit_is_safe()  # 위반이면 RuntimeError
+            seen.append("send")
+            return None
+
+        def _recording(*args, **kwargs):
+            seen.append("notification")
+            return Notification(*args, **kwargs)
+
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction", return_value=sent
+        ), mock.patch("app.kakao.send_primary_text", side_effect=_guarded), mock.patch(
+            "app.routes.Notification", side_effect=_recording
+        ):
+            r = self._detect("regr-send-order", "dev-send-order")
+            self.assertEqual(r.status_code, 201)
+
+        self.assertEqual(seen, ["send", "notification"])
+
+    def test_commit_guard_sees_flushed_but_uncommitted_rows(self) -> None:
+        """flush 를 거쳐 session.new 에서 빠진 미커밋 행도 가드가 잡는다.
+
+        flush 이전(session.new/dirty)만 보던 초판 가드는 이 상황을 놓쳤다
+        (2026-09-03 negative control 로 발견). SQLAlchemy 상향으로 내부 컬렉션이
+        사라지면 가드가 조용히 약해지므로, 그 퇴화를 여기서 감지한다.
+
+        ★ 객체 참조를 지역변수로 들고 있는 형태로 재현한다 — routes.detect() 가 notif
+          를 끝까지 들고 있는 것과 같은 모양이다. 참조를 아무도 안 들고 있으면 identity
+          map 약참조 때문에 가드가 못 잡는다(kakao._uncommitted_classes docstring 의
+          "알려진 한계"). 그 한계를 숨기지 않으려고 형태를 실제 호출부에 맞췄다.
+        """
+        from .. import kakao
+        from ..extensions import db
+        from ..models import Notification
+        from ..utils import utc_now
+
+        with self.app.app_context():
+            pending = Notification(
+                    client_request_id="guard-flushed",
+                    request_id="req_guardflushed",
+                    device_id="dev-guard-flushed",
+                    detected_at=utc_now(),
+                    predicted_class="doorbell",
+                    confidence=0.9,
+                    all_scores={"doorbell": 0.9, "knock": 0.05, "fire_alarm": 0.05},
+                    tof_applied=True,
+                    tof_passed=True,
+                    tof_reason="probe",
+                    primary_sent=False,
+                    primary_sent_at=None,
+                    enrich_status="skipped",
+                    secondary_sent=False,
+                    secondary_sent_at=None,
+                    skip_reason=None,
+                    image_url=None,
+                    image_thumbnail_url=None,
+                    audio_url=None,
+                    stt=None,
+            )
+            db.session.add(pending)
+            db.session.flush()  # ← 여기서 session.new 가 비워진다
+            self.assertEqual(len(db.session.new), 0)  # 전제 확인
+
+            with self.assertRaises(RuntimeError) as ctx:
+                kakao.get_access_token()
+            self.assertNotIsInstance(ctx.exception, kakao.KakaoTokenError)
+            self.assertIn("Notification", str(ctx.exception))
+            self.assertIsNotNone(pending)  # 참조 유지가 이 케이스의 전제다
+            db.session.rollback()
+
+    # ── 확정 카피 ② (카테고리 7.1) ───────────────────────────────────────
+    def test_fire_alarm_copy_matches_decisions_md(self) -> None:
+        """상수가 decisions.md 확정 카피 ② 원문과 바이트 동일한지 매 실행 대조.
+
+        손 전사가 아님의 증명이자 드리프트 감지다. 문서가 수정되면 여기서 먼저 깨진다.
+        """
+        from ..constants import FIRE_ALARM_PRIMARY_MESSAGE
+
+        doc = _copy2_from_decisions()
+        if doc is None:
+            self.skipTest(f"decisions.md 를 찾지 못했다: {_DECISIONS_MD}")
+        self.assertEqual(FIRE_ALARM_PRIMARY_MESSAGE.encode("utf-8"), doc.encode("utf-8"))
+
+    def test_fire_alarm_copy_size_facts(self) -> None:
+        """266자 / 603 bytes / 9줄 — 2026-09-03 실측이 절단 없음을 확인한 그 크기다.
+
+        ★ 문서상 "200자 상한"은 실측으로 반증됐다. 이 케이스가 깨진다면 카피가 바뀐
+          것이므로 재발송 1회로 렌더를 재확인할 것 — 200자로 축약하는 것이 답이 아니다.
+        """
+        from ..constants import FIRE_ALARM_PRIMARY_MESSAGE as msg
+
+        self.assertEqual(len(msg), 266)
+        self.assertEqual(len(msg.encode("utf-8")), 603)
+        self.assertEqual(len(msg.splitlines()), 9)
+
+    def test_memo_request_carries_full_copy_in_one_call(self) -> None:
+        """발송 요청 본문에 카피 ② 전문이 1회 요청으로 실린다(분할·축약 없음).
+
+        urlopen 을 가로채 실제 전송 파라미터를 복원해 대조한다 — 카카오로 나가는
+        요청은 없다.
+        """
+        from .. import kakao
+        from ..constants import FIRE_ALARM_PRIMARY_MESSAGE
+
+        captured = []
+
+        def _capture(req, timeout=None):
+            captured.append(req)
+            return _FakeResponse({"result_code": 0})
+
+        with self.app.app_context(), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch("app.kakao.urllib.request.urlopen", side_effect=_capture):
+            self.assertIsNone(kakao.send_primary_text("fire_alarm"))
+
+        self.assertEqual(len(captured), 1)  # 분할 발송 없음
+        form = urllib.parse.parse_qs(captured[0].data.decode("utf-8"))
+        template = json.loads(form["template_object"][0])
+        self.assertEqual(template["object_type"], "text")
+        self.assertEqual(template["text"], FIRE_ALARM_PRIMARY_MESSAGE)
+        self.assertIn("link", template)  # text 템플릿 필수 필드
+
+    def test_memo_non_zero_result_code_is_failure(self) -> None:
+        """HTTP 200 이어도 result_code 가 0 이 아니면 실패로 집계한다."""
+        from .. import kakao
+
+        with self.app.app_context(), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch(
+            "app.kakao.urllib.request.urlopen",
+            return_value=_FakeResponse({"result_code": -1}),
+        ):
+            self.assertEqual(
+                kakao.send_primary_text("doorbell"), kakao.SKIP_REASON_KAKAO_API_ERROR
+            )
+
+    def test_memo_401_is_token_expired_not_api_error(self) -> None:
+        """발송 중 401 은 원인 계층이 토큰이므로 token_expired 로 집계된다."""
+        import urllib.error
+
+        from .. import kakao
+
+        err = urllib.error.HTTPError(
+            kakao.KAKAO_MEMO_URL, 401, "Unauthorized", {}, None
+        )
+        with self.app.app_context(), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch("app.kakao.urllib.request.urlopen", side_effect=err) as urlopen:
+            self.assertEqual(
+                kakao.send_primary_text("doorbell"), kakao.SKIP_REASON_TOKEN_EXPIRED
+            )
+            # 갱신 후 재발송 없음(재시도 금지)
+            self.assertEqual(urlopen.call_count, 1)
 
     # ── stats ────────────────────────────────────────────────────────────
     def test_stats_contract(self) -> None:
