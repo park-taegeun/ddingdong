@@ -280,9 +280,12 @@ def _post_memo(access_token, message):
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
-            # 토큰이 살아 있다고 판단했는데 카카오가 거부한 경우(폐기·권한 변경 등).
-            # 원인 계층이 토큰이므로 token_expired 로 집계되도록 토큰 예외로 올린다.
-            # 여기서 갱신 후 재발송하지 않는다 — "재시도 없음" 결정 그대로.
+            # 토큰이 살아 있다고 판단했는데 카카오가 거부한 경우(콘솔 수동 재발급,
+            # client_secret rotate, 서버 시계 어긋남 등). 원인 계층이 토큰이므로
+            # token_expired 로 집계되도록 토큰 예외로 올린다.
+            # 여기서 갱신 후 재발송하지 않는다 — "재시도 없음" 결정 그대로. 대신
+            # 호출부가 DB 토큰을 만료 표시해 "다음 이벤트"에서 갱신이 태워진다
+            # (_invalidate_access_token 주석의 자기 치유 규약).
             raise KakaoTokenError(f"memo 발송 인증 거부: HTTP {exc.code}") from exc
         # 에러 본문을 싣지 않는다 — 요청 파라미터 에코 가능성 배제(_refresh 와 동형).
         raise KakaoSendError(f"memo 발송 실패: HTTP {exc.code}") from exc
@@ -296,15 +299,56 @@ def _post_memo(access_token, message):
         raise KakaoSendError(f"memo 발송 실패: result_code={detail}")
 
 
+def _invalidate_access_token():
+    """DB 의 access 토큰을 "만료됨"으로 표시한다. 401 자기 치유의 유일한 진입점.
+
+    경위(실측 2026-09-03): needs_refresh() 는 access_expires_at 만 본다. 그 값이 미래인데
+    카카오가 토큰을 거부하는 상태(콘솔 수동 재발급 / client_secret rotate / 시계 어긋남)에
+    들어가면, 갱신이 걸리지 않아 매 이벤트가 같은 죽은 토큰으로 401 을 반복하고
+    access_expires_at 이 자연 만료될 때까지 1차 알림이 계속 실패했다. 401 을 받고도
+    이 컬럼을 되돌리는 코드가 없었던 것이 원인이다(프로브로 3회 연속 401 재현).
+
+    만료 시각을 "지금"으로 내린다. needs_refresh 는 (access_expires_at - now) <= 마진
+    비교라 같은 값이어도 0 <= 마진 → True 이고, 다음 이벤트에서는 now 가 더 커져 음수가
+    된다. _bootstrap 이 "발급 시각을 모르는 env 토큰"에 쓰는 표기와 같은 관용이다.
+
+    ★ 같은 요청 안에서 재발송하지 않는다(위임 §5 Step 3 "재시도 없음"). 자기 치유는
+      다음 이벤트에서 일어난다 — 이 함수는 상태만 바꾸고 네트워크를 건드리지 않는다.
+    """
+    # 이 함수도 commit 한다 → 가드는 커밋하는 쪽에 붙인다. 지금 호출 경로에서는
+    # get_access_token() 이 이미 통과시킨 뒤라 사실상 재확인이지만, 나중에 호출 지점이
+    # 옮겨져도 "남의 미커밋 변경이 딸려가는" 사고가 조용히 생기지 않게 남겨 둔다.
+    _assert_commit_is_safe()
+
+    row = db.session.get(KakaoToken, KakaoToken.SINGLETON_ID)
+    if row is None:
+        # 행이 없으면 다음 이벤트가 _bootstrap 으로 새로 만들고 그 경로가 이미 즉시
+        # 갱신을 태운다 → 표시할 대상도, 표시할 이유도 없다.
+        return
+
+    now = utc_now()
+    row.access_expires_at = now
+    row.updated_at = now
+    db.session.commit()
+    # 토큰 값은 찍지 않는다. 무슨 일이 일어났는지만 남긴다.
+    current_app.logger.warning(
+        "kakao access token marked expired: memo 401 (다음 이벤트에서 갱신 시도)"
+    )
+
+
 def send_primary_text(predicted_class):
     """1차 텍스트 알림을 1회 발송한다. 성공이면 None, 실패면 skip_reason 문자열.
 
     반환값 계약: None(성공) / SKIP_REASON_TOKEN_EXPIRED / SKIP_REASON_KAKAO_API_ERROR.
     호출부는 이 값을 그대로 Notification.skip_reason 에 넣고 primary_sent=False 로
-    기록한다. 발송 실패로 /detect 를 5xx 로 떨어뜨리지 않는다 — ESP32 에게 "요청이
-    잘못됐다"고 알리는 것이 아니고, 재시도해봐야 같은 카카오 장애를 다시 맞기 때문이다.
+    기록한다. 발송 401 은 이번 요청에서 재발송하지 않고(재시도 금지) DB 토큰만 만료
+    표시해 다음 이벤트가 갱신을 태우게 한다 — 자기 치유는 이벤트 경계를 넘어 일어난다.
 
-    ★ 호출 위치 제약: get_access_token() 이 갱신 성공 시 db.session.commit() 한다.
+    발송 실패로 /detect 를 5xx 로 떨어뜨리지 않는다 — ESP32 에게 "요청이 잘못됐다"고
+    알리는 것이 아니고, 재시도해봐야 같은 카카오 장애를 다시 맞기 때문이다.
+
+    ★ 호출 위치 제약: 이 함수는 두 지점에서 db.session.commit() 한다 —
+      get_access_token() 의 갱신 성공, 그리고 발송 401 시 _invalidate_access_token().
       따라서 Notification 을 세션에 add 하기 전에 불러야 한다. 이 제약은 주석이 아니라
       _assert_commit_is_safe() 가 실행 시점에 강제한다(위반 시 RuntimeError → 5xx).
       그 RuntimeError 는 아래 except 절에 잡히지 않는다(KakaoTokenError/KakaoSendError
@@ -316,10 +360,20 @@ def send_primary_text(predicted_class):
     # 일으키기 전에 터지는 편이 원인 추적에 낫다.
     message = _build_message(predicted_class)
 
+    # try 를 둘로 나눈 이유: 같은 KakaoTokenError 라도 "토큰을 못 구했다"(갱신 실패)와
+    # "구한 토큰을 카카오가 거부했다"(발송 401)는 후처리가 다르다. 후자만 DB 토큰을
+    # 만료 표시해야 한다 — 전자에서 표시하면 이미 만료로 판정된 값을 다시 쓰는 무의미한
+    # 쓰기이고, 갱신 실패 원인(env 미설정 등)은 표시로 풀리지 않는다.
     try:
         access_token = get_access_token()
-        _post_memo(access_token, message)
     except KakaoTokenError as exc:
+        current_app.logger.warning("kakao primary send skipped: %s", exc)
+        return SKIP_REASON_TOKEN_EXPIRED
+
+    try:
+        _post_memo(access_token, message)
+    except KakaoTokenError as exc:  # 401 — 토큰이 죽어 있다
+        _invalidate_access_token()
         current_app.logger.warning("kakao primary send skipped: %s", exc)
         return SKIP_REASON_TOKEN_EXPIRED
     except KakaoSendError as exc:

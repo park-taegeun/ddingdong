@@ -40,6 +40,15 @@ _DASHBOARD_TOKEN = "test-dashboard-token"
 
 # 발송 경로 스텁용 자리표시 문자열. 카카오 발급값 아님 — 실값은 이 파일에 없다.
 _FAKE_ACCESS_TOKEN = "test-access-token-not-real"
+_FAKE_REFRESH_TOKEN = "test-refresh-token-not-real"
+_FAKE_RENEWED_TOKEN = "test-renewed-token-not-real"
+
+# 갱신 경로를 열기 위한 자리표시 자격증명. _TestConfig 는 이 둘을 비워 두므로(로컬
+# .env 유출 차단) 갱신을 태우는 케이스에서만 patch.dict 로 잠시 채운다. 실값 아님.
+_FAKE_KAKAO_CREDS = {
+    "KAKAO_REST_API_KEY": "test-rest-api-key-not-real",
+    "KAKAO_CLIENT_SECRET": "test-client-secret-not-real",
+}
 
 # decisions.md 원문 위치. tests → app → server → repo 루트.
 _DECISIONS_MD = Path(__file__).resolve().parents[3] / "docs" / "decisions.md"
@@ -633,6 +642,179 @@ class DetectRegressionTest(unittest.TestCase):
             )
             # 갱신 후 재발송 없음(재시도 금지)
             self.assertEqual(urlopen.call_count, 1)
+
+    # ── 401 자기 치유 (G-신규, 2026-09-03) ────────────────────────────────
+    # 배경: needs_refresh() 는 access_expires_at 만 본다. 그 값이 미래인데 카카오가
+    # 토큰을 거부하는 상태(콘솔 수동 재발급 / client_secret rotate / 시계 어긋남)가
+    # 실재한다 — 2026-09-03 에 client_secret rotate 가 실제로 수행됐다.
+    # 보완 전 프로브 실측: 3회 연속 401, access_expires_at 불변, 복구 경로 없음.
+    def _drop_kakao_token(self) -> None:
+        from ..extensions import db
+        from ..models import KakaoToken
+
+        with self.app.app_context():
+            row = db.session.get(KakaoToken, KakaoToken.SINGLETON_ID)
+            if row is not None:
+                db.session.delete(row)
+                db.session.commit()
+
+    def _seed_kakao_token(self, expires_in_hours):
+        """kakao_tokens 단일 행을 심는다(케이스 종료 시 삭제).
+
+        토큰·시크릿 실값은 없다 — 전부 자리표시 문자열이다.
+        expires_in_hours=6 이면 needs_refresh False, 0 이면 True 인 상태를 만든다.
+        """
+        from datetime import timedelta
+
+        from ..extensions import db
+        from ..models import KakaoToken
+        from ..utils import utc_now
+
+        self.addCleanup(self._drop_kakao_token)
+        now = utc_now()
+        db.session.merge(
+            KakaoToken(
+                id=KakaoToken.SINGLETON_ID,
+                access_token=_FAKE_ACCESS_TOKEN,
+                refresh_token=_FAKE_REFRESH_TOKEN,
+                access_expires_at=now + timedelta(hours=expires_in_hours),
+                refresh_expires_at=now + timedelta(days=59),
+                updated_at=now,
+            )
+        )
+        db.session.commit()
+
+    def test_memo_401_marks_token_expired_for_next_event(self) -> None:
+        """needs_refresh=False 인데 401 → DB 토큰을 만료 표시(다음 이벤트가 갱신을 태운다).
+
+        이 케이스가 깨지면 "죽은 토큰으로 401 무한 반복" 상태로 되돌아간 것이다.
+        """
+        import urllib.error
+
+        from .. import kakao
+        from ..extensions import db
+        from ..models import KakaoToken
+        from ..utils import utc_now
+
+        err = urllib.error.HTTPError(kakao.KAKAO_MEMO_URL, 401, "Unauthorized", {}, None)
+        with self.app.app_context():
+            self._seed_kakao_token(6)
+            row = db.session.get(KakaoToken, KakaoToken.SINGLETON_ID)
+            self.assertFalse(row.needs_refresh(utc_now()))  # 전제: 갱신이 안 걸리는 상태
+
+            with mock.patch(
+                "app.kakao.urllib.request.urlopen", side_effect=err
+            ) as urlopen:
+                self.assertEqual(
+                    kakao.send_primary_text("doorbell"), kakao.SKIP_REASON_TOKEN_EXPIRED
+                )
+            # 같은 요청 안에서 갱신 후 재발송하지 않는다(위임 §5 Step 3 "재시도 없음")
+            self.assertEqual(urlopen.call_count, 1)
+
+            db.session.expire_all()
+            row = db.session.get(KakaoToken, KakaoToken.SINGLETON_ID)
+            self.assertTrue(row.needs_refresh(utc_now()))
+
+    def test_401_self_heals_on_next_event(self) -> None:
+        """다음 이벤트에서 갱신이 걸려 발송이 회복되고, 그 다음부터는 갱신이 재발하지 않는다."""
+        import urllib.error
+
+        from .. import kakao
+
+        err = urllib.error.HTTPError(kakao.KAKAO_MEMO_URL, 401, "Unauthorized", {}, None)
+        calls = []
+
+        def _fake(req, timeout=None):
+            calls.append(req.full_url)
+            if req.full_url == kakao.KAKAO_TOKEN_URL:
+                return _FakeResponse(
+                    {"access_token": _FAKE_RENEWED_TOKEN, "expires_in": 21599}
+                )
+            return _FakeResponse({"result_code": 0})
+
+        with self.app.app_context():
+            self._seed_kakao_token(6)
+            with mock.patch("app.kakao.urllib.request.urlopen", side_effect=err):
+                kakao.send_primary_text("doorbell")  # 이벤트 1: 401 → 만료 표시
+
+            with mock.patch.dict(self.app.config, _FAKE_KAKAO_CREDS), mock.patch(
+                "app.kakao.urllib.request.urlopen", side_effect=_fake
+            ):
+                self.assertIsNone(kakao.send_primary_text("doorbell"))  # 이벤트 2
+                self.assertEqual(calls, [kakao.KAKAO_TOKEN_URL, kakao.KAKAO_MEMO_URL])
+
+                calls.clear()
+                self.assertIsNone(kakao.send_primary_text("doorbell"))  # 이벤트 3
+                self.assertEqual(calls, [kakao.KAKAO_MEMO_URL])  # 갱신 재발 없음
+
+    def test_repeated_401_does_not_amplify_round_trips(self) -> None:
+        """새 토큰도 거부당하는 최악의 경우에도 왕복은 이벤트당 2회(갱신+발송)로 고정된다.
+
+        무한 갱신 루프가 불가능함의 값 도메인 증명이다: get_access_token() 의 갱신은
+        while 이 아니라 if 1회이고, 401 처리는 상태만 바꿀 뿐 재귀·재발송을 하지 않는다.
+        """
+        import urllib.error
+
+        from .. import kakao
+
+        err = urllib.error.HTTPError(kakao.KAKAO_MEMO_URL, 401, "Unauthorized", {}, None)
+        calls = []
+
+        def _fake(req, timeout=None):
+            calls.append(req.full_url)
+            if req.full_url == kakao.KAKAO_TOKEN_URL:
+                return _FakeResponse(
+                    {"access_token": _FAKE_RENEWED_TOKEN, "expires_in": 21599}
+                )
+            raise err  # 갱신받은 토큰마저 거부당한다
+
+        with self.app.app_context():
+            self._seed_kakao_token(6)
+            with mock.patch.dict(self.app.config, _FAKE_KAKAO_CREDS), mock.patch(
+                "app.kakao.urllib.request.urlopen", side_effect=_fake
+            ):
+                for _ in range(3):
+                    self.assertEqual(
+                        kakao.send_primary_text("doorbell"),
+                        kakao.SKIP_REASON_TOKEN_EXPIRED,
+                    )
+
+        self.assertEqual(
+            calls,
+            [
+                kakao.KAKAO_MEMO_URL,  # 이벤트 1: 아직 만료 표시 전
+                kakao.KAKAO_TOKEN_URL,
+                kakao.KAKAO_MEMO_URL,  # 이벤트 2
+                kakao.KAKAO_TOKEN_URL,
+                kakao.KAKAO_MEMO_URL,  # 이벤트 3
+            ],
+        )
+
+    def test_refresh_failure_skips_send_without_extra_write(self) -> None:
+        """갱신 실패는 발송을 시도하지 않고, 만료 표시를 덧쓰지도 않는다.
+
+        401 자기 치유가 "토큰을 못 구한 경우"까지 번지지 않는지 본다 — env 미설정 같은
+        원인은 만료 표시로 풀리지 않으므로 쓸모없는 쓰기를 하지 않는 편이 맞다.
+        (자동 복구 불가 구간이며, 사람이 env 를 고치는 것 외의 경로는 없다.)
+        """
+        from .. import kakao
+        from ..extensions import db
+        from ..models import KakaoToken
+
+        with self.app.app_context():
+            self._seed_kakao_token(0)  # needs_refresh True
+            before = db.session.get(KakaoToken, KakaoToken.SINGLETON_ID).access_expires_at
+
+            # _TestConfig 가 KAKAO_REST_API_KEY 를 비워 둔다 → 네트워크 이전에 실패
+            with mock.patch("app.kakao.urllib.request.urlopen") as urlopen:
+                self.assertEqual(
+                    kakao.send_primary_text("doorbell"), kakao.SKIP_REASON_TOKEN_EXPIRED
+                )
+            self.assertEqual(urlopen.call_count, 0)  # 갱신도 발송도 왕복 0회
+
+            db.session.expire_all()
+            after = db.session.get(KakaoToken, KakaoToken.SINGLETON_ID).access_expires_at
+            self.assertEqual(before, after)
 
     # ── stats ────────────────────────────────────────────────────────────
     def test_stats_contract(self) -> None:
