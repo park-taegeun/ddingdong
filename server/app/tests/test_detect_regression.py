@@ -149,13 +149,24 @@ class DetectRegressionTest(unittest.TestCase):
     # ── 판정 정책 (G12 무접촉 확인 포함) ─────────────────────────────────
     def test_prediction_policy_branches(self) -> None:
         """_apply_prediction_policy 3분기. fire_alarm 이 임계값 검사보다 앞이라는
-        현행 순서(G12, 사용자 판단 대기 중)를 '바꾸지 않았음'의 회귀 고정이다."""
+        현행 순서(G12)를 '바꾸지 않았음'의 회귀 고정이다.
+
+        ★ 이 순서는 decisions.md 카테고리 3 에 G12 로 등재된 미결이며, 사용자 판단
+          대기 중이다. 본 케이스는 "현행 동작 고정"이지 "확정 사양"이 아니다 —
+          여기서 통과한다는 사실이 이 순서를 옳다고 승인하지 않는다.
+
+        ★ G12 가 "threshold 선행"으로 결정되면 이 케이스는 실패하는 것이 정상이며,
+          그때 테스트를 새 결정에 맞춰 갱신할 것. 테스트를 먼저 지우고 로직을 고치지
+          말 것 — 순서가 바뀌었다는 사실을 이 실패가 드러내 주는 것이 고정의 목적이다.
+        """
         from ..constants import CONFIDENCE_THRESHOLD
         from ..utils import _apply_prediction_policy
 
         scores = {"doorbell": 0.1, "knock": 0.1, "fire_alarm": 0.8}
 
-        # 임계값 미만이어도 fire_alarm 이면 먼저 잡혀 발송된다(현행 순서 고정)
+        # 임계값 미만이어도 fire_alarm 이면 먼저 잡혀 발송된다.
+        # 현행 동작 고정 — G12 가 threshold 선행으로 결정되면 이 단언이 뒤집힌다
+        # (그때 갱신할 것. 위 docstring 참조).
         fire = _apply_prediction_policy("fire_alarm", CONFIDENCE_THRESHOLD - 0.1, scores)
         self.assertTrue(fire["primary_sent"])
         self.assertIsNone(fire["skip_reason"])
