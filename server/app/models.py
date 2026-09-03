@@ -9,7 +9,7 @@ from datetime import datetime
 from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .constants import IDEMPOTENCY_TTL
+from .constants import IDEMPOTENCY_TTL, KAKAO_REFRESH_MARGIN
 from .extensions import db
 from .utils import to_kst_iso
 
@@ -99,3 +99,33 @@ class IdempotencyKey(db.Model):
     def is_valid(self, now_utc):
         """생성 후 24시간 이내면 True (TTL 내 유효한 멱등 키)."""
         return (now_utc - self.created_at) < IDEMPOTENCY_TTL
+
+
+class KakaoToken(db.Model):
+    """카카오 OAuth 토큰 저장 (카테고리 7, 단일 행).
+
+    나에게 보내기(memo)는 수신자가 서비스 운영자 1명이라 다중 사용자 모델이 필요
+    없다. 항상 id=SINGLETON_ID 한 행만 두고 갱신은 그 행을 덮어쓴다.
+
+    to_dict() 를 두지 않는다 — 이 테이블이 담는 값은 토큰 실값이라 직렬화 대상이
+    아니다. 대시보드 토큰 상태(카테고리 6.1)는 절대 만료시각 대신 상대값만 노출해야
+    하므로, 그 배선 시 전용 표현 함수를 따로 만든다(to_dict 재사용 금지).
+    """
+
+    __tablename__ = "kakao_tokens"
+
+    # 단일 행 고정 PK. autoincrement 를 끄고 이 값만 써서 "두 번째 행"이 생길
+    # 여지를 없앤다.
+    SINGLETON_ID = 1
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+
+    access_token: Mapped[str]
+    refresh_token: Mapped[str]
+    access_expires_at: Mapped[datetime]  # naive UTC
+    refresh_expires_at: Mapped[datetime]  # naive UTC
+    updated_at: Mapped[datetime]  # naive UTC
+
+    def needs_refresh(self, now_utc):
+        """access 토큰이 만료됐거나 만료 임박(KAKAO_REFRESH_MARGIN 이내)이면 True."""
+        return (self.access_expires_at - now_utc) <= KAKAO_REFRESH_MARGIN
