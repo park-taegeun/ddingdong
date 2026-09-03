@@ -13,7 +13,7 @@ import numpy as np
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import select
 
-from . import image_store, model_serving, rate_limit
+from . import image_store, kakao, model_serving, rate_limit
 from .auth import dashboard_auth, device_auth
 from .constants import (
     AUDIO_FILE_FIELD,
@@ -132,6 +132,33 @@ def detect():
     else:
         pred = mock_prediction()
     request_id = new_request_id()
+
+    # 5) 1차 알림 실발송 (카테고리 7). 정책이 미발송으로 판정한 건은 발송 호출 자체를
+    # 하지 않는다 — 저신뢰/ToF 거부 건까지 카카오 왕복을 태우면 5초 예산과 skip_reason
+    # 집계가 동시에 오염된다. 판정 로직(_apply_prediction_policy)은 손대지 않았다:
+    # 여기서 하는 일은 "발송하라고 판정된 건"의 실제 발송 결과를 반영하는 것뿐이다.
+    # ★ 호출 지점: 아래 db.session.add(notif) 보다 반드시 앞이어야 한다. 토큰 갱신이
+    #   일어나면 kakao 계층이 db.session.commit() 하므로, 미커밋 Notification 이 세션에
+    #   있으면 그것까지 함께 커밋된다. 이 순서는 kakao._assert_commit_is_safe() 가
+    #   실행 시점에 강제한다(위반 시 RuntimeError).
+    primary_sent = pred["primary_sent"]
+    skip_reason = pred["skip_reason"]
+    if primary_sent:
+        send_skip_reason = kakao.send_primary_text(pred["predicted_class"])
+        if send_skip_reason is not None:
+            # 발송 실패는 요청 실패가 아니다 → 5xx 로 올리지 않고 미발송으로 기록만 한다.
+            # enrich_status 는 건드리지 않는다: 2차 알림 진행 여부는 A-2 소관 결정이고,
+            # 여기서 임의로 skipped 로 바꾸면 미결을 코드로 확정해 버린다.
+            primary_sent = False
+            skip_reason = send_skip_reason
+
+    # G14: 1차 알림 시각을 detected_at 과 같은 변수(now)로 채우면 두 값이 항상
+    # 동일해져 timing_metrics(1차 지연 = primary_sent_at − detected_at)가 구조적으로
+    # 0ms 만 낸다. 발송 왕복이 끝난 뒤에 별도로 찍는다 → 이 값은 "발송 완료 시각"이다.
+    # ※ detected_at 정의(= ESP32 트리거 시각, 카테고리 6.1)는 건드리지 않는다 —
+    #   현재 구조가 서버 수신 시각을 넣는 것은 그대로 두고 primary_sent_at 만 분리.
+    primary_sent_at = utc_now() if primary_sent else None
+
     notif = Notification(
         client_request_id=client_request_id,
         request_id=request_id,
@@ -143,12 +170,12 @@ def detect():
         tof_applied=pred["tof"]["applied"],
         tof_passed=pred["tof"]["passed"],
         tof_reason=pred["tof"]["reason"],
-        primary_sent=pred["primary_sent"],
-        primary_sent_at=now if pred["primary_sent"] else None,
+        primary_sent=primary_sent,
+        primary_sent_at=primary_sent_at,
         enrich_status=pred["enrich_status"],
         secondary_sent=False,
         secondary_sent_at=None,
-        skip_reason=pred["skip_reason"],
+        skip_reason=skip_reason,
         image_url=None,
         image_thumbnail_url=None,
         audio_url=None,
@@ -157,8 +184,11 @@ def detect():
     db.session.add(notif)
     db.session.flush()  # PK 확정
 
+    # 발송 왕복이 이미 끝난 뒤라 이 스냅샷에 실제 발송 결과가 담긴다
+    # (멱등 replay 는 이 본문을 그대로 돌려주므로, 순서가 뒤집히면 replay 가
+    #  발송 전 상태를 영원히 재생하게 된다).
     body = notif.to_dict()
-    # 5) idempotency 키 기록 (동일 client_request_id 24h 내 재요청 → 위 replay)
+    # 6) idempotency 키 기록 (동일 client_request_id 24h 내 재요청 → 위 replay)
     db.session.add(
         IdempotencyKey(
             client_request_id=client_request_id,
