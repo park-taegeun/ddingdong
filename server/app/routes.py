@@ -132,6 +132,14 @@ def detect():
     else:
         pred = mock_prediction()
     request_id = new_request_id()
+
+    # G14: 1차 알림 시각을 detected_at 과 같은 변수(now)로 채우면 두 값이 항상
+    # 동일해져 timing_metrics(1차 지연 = primary_sent_at − detected_at)가 구조적으로
+    # 0ms 만 낸다. 발송 판정이 끝난 시점을 별도로 찍는다.
+    # ※ detected_at 정의(= ESP32 트리거 시각, 카테고리 6.1)는 건드리지 않는다 —
+    #   현재 구조가 서버 수신 시각을 넣는 것은 그대로 두고 primary_sent_at 만 분리.
+    primary_sent_at = utc_now() if pred["primary_sent"] else None
+
     notif = Notification(
         client_request_id=client_request_id,
         request_id=request_id,
@@ -144,7 +152,7 @@ def detect():
         tof_passed=pred["tof"]["passed"],
         tof_reason=pred["tof"]["reason"],
         primary_sent=pred["primary_sent"],
-        primary_sent_at=now if pred["primary_sent"] else None,
+        primary_sent_at=primary_sent_at,
         enrich_status=pred["enrich_status"],
         secondary_sent=False,
         secondary_sent_at=None,
