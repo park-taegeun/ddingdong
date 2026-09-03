@@ -117,3 +117,70 @@ MicRawStats computeMicRawStats(const int32_t* samples, size_t count);
 // dst는 호출부가 제공한다 — M4는 DMA 버퍼의 int16 union 뷰, M5는 2초 PSRAM 버퍼.
 // 내부 저장소를 신설하지 않는다 (RAM 순증 0). src/dst 겹침 허용 조건은 .cpp 주석 참조.
 MicI16Stats convertMicRawToInt16(const int32_t* src, int16_t* dst, size_t count);
+
+// === M5-a 링버퍼 계층 (관측 전용 — 적재·상태 로그만. 트리거·임계값·판정 0줄) ===
+//
+// decisions.md 카테고리 20 "계측 → 실측 → 판정" 분리 원칙의 4회차 적용.
+// M5-a = 본 계층(적재·관측) / M5-b = ④런타임 실측 / M5-c = 판정(임계값·스냅샷 추출).
+//
+// ★ 슬롯 산술 (근거유형 = 논증)
+//   슬롯 1개 = i2s_read 한 버퍼 = MIC_DMA_BUF_LEN(1024) 샘플
+//            = 1024 / MIC_SAMPLE_RATE_HZ(16000) = 64ms = 2,048 bytes(int16)
+//   32 슬롯  = 2.048초 = 32,768 샘플 = 65,536 bytes
+//
+// ★ 왜 31.25가 아니라 32인가
+//   2.000초 = 16000 × 2 = 32,000 샘플 = 31.25 슬롯 — 버퍼 정수배가 아니다.
+//   0.25슬롯(256 샘플)을 맞추려면 슬롯 경계를 쪼개는 부분 버퍼 적재 로직이 필요하고,
+//   그 로직이 wrap-around 산술과 곱해지면 경계 버그 표면이 커진다. 2.048초는 2초
+//   하한을 만족하는 상위 근사(+2.4%)라 부분 버퍼 처리를 통째로 회피할 수 있다.
+//
+// ★ 서버 수용 근거 (근거유형 = 문서인용·미실측)
+//   - 서빙 시그니처 waveform (1, None) f32 = 가변 길이 수용 (decisions.md 6.2)
+//   - AUDIO_MAX_BYTES = 320,000 (server/app/constants.py:29 실측 grep)
+//     65,536 bytes = 상한의 20.5% → 크기 초과(413) 불가, 여유 충분
+//   - transport 계약 A안 = multipart/form-data + int16 PCM raw bytes (decisions.md 6.2)
+//
+// ★ 근거유형 = 논증 (④런타임 미검증). PSRAM 할당 성공 여부·실 가용 용량은 M5-b 실측 소관.
+//
+// ★ 재조정 방법
+//   G29는 B안(하이브리드 = pre-roll 일부 + post 일부)으로 확정됐으나 pre/post 비율은
+//   미확정이다(M5-b 실측 → M5-c에서 어택 길이·트리거 지연 측정 후 산출). 링버퍼는
+//   "최근 N슬롯을 항상 보유하는" 구조라 비율과 무관하게 성립하므로, 비율이 확정되면
+//   필요 슬롯 수를 재산출해 본 상수만 갱신한다.
+//   ⚠️ 본 계층은 pre/post 비율 상수를 신설하지 않는다 — 실측 전에 박으면 죽은 상수가
+//      되고, 되돌릴 때 적재 코드까지 흔들려 원인 분리가 불가해진다(카테고리 20 근거).
+constexpr uint32_t MIC_RING_SLOTS = 32;
+
+// 링버퍼 적재 상태(관측 전용).
+// ★ 저장 위치 판단: MicRawStats / MicI16Stats와 동일하게 **호출부 지역변수** 원칙을 따른다.
+//   링버퍼 상태는 태스크 수명 내내 유지돼야 하지만, 유일한 호출부 micTask()는 반환하지
+//   않는 무한 루프라 그 지역변수의 수명 = 태스크 수명이다. buf_count / err_count /
+//   window_idx가 이미 같은 방식으로 살아 있다 → static/전역을 신설할 이유가 없고,
+//   신설하면 .bss 순증이 발생한다(PR #36/#38/#39가 3회 연속 지킨 RAM 순증 0 위반).
+//   링버퍼 본체 포인터도 같은 이유로 전역이 아니라 initMicRingBuffer() 반환값으로 넘긴다.
+struct MicRingStatus {
+  uint32_t write_idx;     // 다음 적재 슬롯       ∈ [0, MIC_RING_SLOTS)  = [0, 31]
+  uint32_t wraps;         // wrap-around 횟수     ∈ [0, UINT32_MAX] (2.048초당 +1)
+  uint32_t gaps;          // i2s_read 실패로 적재를 건너뛴 횟수 ∈ [0, UINT32_MAX]
+  uint32_t slots_filled;  // 부팅 후 채워진 슬롯 수 ∈ [0, MIC_RING_SLOTS] (포화 후 고정)
+};
+
+// 2초(=MIC_RING_SLOTS 슬롯) int16 링버퍼를 PSRAM에 할당한다.
+// 반환 = 링버퍼 선두 포인터 / 실패 시 nullptr(호출부는 링버퍼 없이 계속 진행 = graceful).
+// ※ 위임 원안은 `bool initMicRingBuffer()` + 내부 전역 보관이었으나, 본 파일이 세 곳에서
+//   명문화한 "static/전역 신설 금지 = RAM 순증 0" 컨벤션과 충돌해 포인터 반환으로 채택
+//   (decisions.md 카테고리 29 = 위임과 실제 컨벤션 충돌 시 기존 컨벤션 우선).
+int16_t* initMicRingBuffer();
+
+// idx번째 슬롯의 선두 포인터.
+// - base == nullptr(할당 실패)이면 nullptr을 그대로 전파한다 → 호출부 널 가드 1곳으로 수렴.
+// - idx는 모듈러로 접으므로 어떤 입력이 와도 [0, MIC_RING_SLOTS) 밖 슬롯을 가리키지 않는다
+//   (micRingAdvance가 이미 범위를 지키므로 이중 방어).
+inline int16_t* micRingSlot(int16_t* base, uint32_t idx) {
+  return (base == nullptr)
+             ? nullptr
+             : base + (size_t)(idx % MIC_RING_SLOTS) * MIC_DMA_BUF_LEN;
+}
+
+// 슬롯 1칸 전진 + wrap-around. **적재에 성공한 뒤에만** 호출한다.
+void micRingAdvance(MicRingStatus* st);
