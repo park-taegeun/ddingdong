@@ -194,3 +194,83 @@ MicI16Stats convertMicRawToInt16(const int32_t* src, int16_t* dst, size_t count)
   st.clip = clip;
   return st;
 }
+
+// M5-a 링버퍼: 2초 int16 스냅샷을 **상시 보유**하기 위한 PSRAM 링버퍼.
+// 근거표(슬롯 산술 / 32 채택 사유 / 서버 수용)는 mic_common.h "M5-a 링버퍼 계층" 참조.
+//
+// ★ 왜 PSRAM인가: 65,536 bytes는 내부 SRAM(320KB, 현 .bss 13,280B 기준선) 대비 과대하다.
+//   PSRAM에 두면 내부 SRAM 순증이 링버퍼 메타(호출부 지역변수)뿐이라 사실상 0이 된다.
+//
+// ★ 할당 API 선택 (학습 15 ②단계 = 패키지 헤더 실노출 확인)
+//   ps_malloc은 esp32-hal-psram.h:36에 선언돼 있고 Arduino.h 경유로 이미 가시적이다.
+//   구현(esp32-hal-psram.c:105) = `if(!spiramDetected) return NULL;` +
+//   `heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)`.
+//   → repo 선례(upload_spike_common.cpp:22의 `heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM)`)
+//     대비 **spiramDetected 가드 + 8BIT cap이 추가된 상위집합**이라 ps_malloc을 채택한다.
+//     (선례 2건은 프로즌 하네스이고 esp_heap_caps.h를 직접 include하는 포지션이라
+//      컨벤션 충돌이 아니다 — Arduino 계층 파일인 본 파일은 Arduino 계층 API를 쓴다.)
+//
+// ★ 실패 시 graceful degradation: nullptr을 반환할 뿐 부팅을 실패시키지 않는다.
+//   discardMicWarmup()이 i2s_read 실패를 세기만 하고 계속 진행하는 것과 동형이다.
+//   호출부는 링버퍼 없이 M2 계측 / M4 변환을 기존 그대로 수행한다(회귀 0).
+int16_t* initMicRingBuffer() {
+  const size_t bytes = (size_t)MIC_RING_SLOTS * MIC_DMA_BUF_LEN * sizeof(int16_t);
+
+  int16_t* const base = (int16_t*)ps_malloc(bytes);
+  if (base == nullptr) {
+    Serial.printf("[mic][M5a] ring alloc FAILED: %u bytes | psramFound=%d PSRAM total=%u free=%u"
+                  " — 링버퍼 없이 계속 진행 (M2 계측 / M4 변환 무영향)\n",
+                  (unsigned)bytes,
+                  (int)psramFound(),
+                  (unsigned)ESP.getPsramSize(),
+                  (unsigned)ESP.getFreePsram());
+    return nullptr;
+  }
+
+  // 전 영역 0 클리어 — ① 미적재 슬롯의 잔류 쓰레기 제거(M5-c 스냅샷 추출이 결정론적이 됨)
+  // ② 65,536 bytes 전체를 실제로 write-touch 하므로 "할당은 됐으나 접근 불가"를 부팅 시점에
+  //    드러낸다(할당 성공 ≠ 매핑 정상, 학습 14의 "값 존재 ≠ 매 프레임 접근 가능"과 동형).
+  memset(base, 0, bytes);
+
+  // 슬롯 총 길이(ms) = 슬롯수 × 슬롯당 샘플 × 1000 / 샘플레이트. 정수 산술로 정확히 2048.
+  const uint32_t span_ms =
+      (uint32_t)((uint64_t)MIC_RING_SLOTS * MIC_DMA_BUF_LEN * 1000u / MIC_SAMPLE_RATE_HZ);
+
+  Serial.printf("[mic][M5a] ring alloc OK: %u slots x %u samples = %u bytes (%ums)"
+                " | PSRAM total=%u free=%u\n",
+                (unsigned)MIC_RING_SLOTS, (unsigned)MIC_DMA_BUF_LEN, (unsigned)bytes,
+                (unsigned)span_ms,
+                (unsigned)ESP.getPsramSize(),
+                (unsigned)ESP.getFreePsram());
+  return base;
+}
+
+// M5-a 링버퍼 인덱스 전진.
+//
+// ★ 값 도메인 증명 (전 분기 열거)
+//   진입 불변식: write_idx ∈ [0, MIC_RING_SLOTS-1] = [0, 31]
+//     - 초기값 0 (호출부 `MicRingStatus ring = {}` 값 초기화)
+//     - 아래 산술의 출구값이 항상 [0, 31]이므로 귀납적으로 유지된다
+//   분기 A (write_idx+1 <  32): 갱신값 ∈ [1, 31]   → 불변식 유지, wraps 불변
+//   분기 B (write_idx+1 == 32): 갱신값 = 0         → 불변식 유지, wraps += 1
+//   ※ write_idx는 uint32_t지만 31을 넘겨 증가하는 경로가 없으므로 오버플로 자체가 불가.
+//   ※ wraps: 32버퍼(=2.048초)마다 +1 → UINT32_MAX 도달까지 약 279년. 도달해도 로그
+//      표시값만 0으로 접힐 뿐 적재 로직이 참조하지 않으므로 무해(포화 처리 불필요).
+//   ※ slots_filled: MIC_RING_SLOTS에서 포화(증가 중단) → [0, 32] 밖으로 못 나간다.
+//   ※ st == nullptr 방어: 호출부는 항상 유효 주소를 넘기지만, 널 역참조 경로를 코드로
+//      닫아 둔다(호출부 실수 시 크래시 대신 no-op).
+void micRingAdvance(MicRingStatus* st) {
+  if (st == nullptr) {
+    return;
+  }
+
+  if (st->slots_filled < MIC_RING_SLOTS) {
+    st->slots_filled++;            // 포화 전까지만 증가 → ∈ [0, MIC_RING_SLOTS]
+  }
+
+  st->write_idx++;                 // ∈ [1, MIC_RING_SLOTS]
+  if (st->write_idx >= MIC_RING_SLOTS) {
+    st->write_idx = 0;             // wrap-around → ∈ [0, MIC_RING_SLOTS)
+    st->wraps++;
+  }
+}
