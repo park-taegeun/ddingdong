@@ -136,3 +136,31 @@ PRIMARY_MESSAGES = {
     "knock": "🔔[띵동] 누군가 노크했어요.",
     "fire_alarm": FIRE_ALARM_PRIMARY_MESSAGE,
 }
+
+# ── /detect ToF 메타 wire 계약 (카테고리 6.2 G10, 2026-09-04) ────────────
+# A안 multipart 계약 동형: 오디오는 파일 파트, ToF 메타는 form field.
+# 4종 이름은 decisions.md 6.2 G10 항목이 지정한 필드명 그대로다
+# ("필요 필드 4종 = tof_presence / tof_near_count / tof_center_mm / tof_motion_ndet").
+TOF_PRESENCE_FIELD = "tof_presence"
+TOF_NEAR_COUNT_FIELD = "tof_near_count"
+TOF_CENTER_MM_FIELD = "tof_center_mm"
+TOF_MOTION_NDET_FIELD = "tof_motion_ndet"
+
+# 8x8 그리드 zone 총수. 근거유형 = 실측(구조 상수, 임계값 아님).
+# 출처 = decisions.md 9.2(b) 실측 로그 `near=13/64` / 9.3(c) 실측표 헤더 `near/64`
+# / 9.1 브링업 로그 `frame #1 (8x8, 64 zones)`. 8x8 = 64 는 센서 해상도 자체라
+# 사람이 고른 경계값이 아니다 → 하드코딩해도 카테고리 20(실측 없는 판정) 위반 아님.
+# 용도 = tof_near_count 의 구조적 상한(0~64) 검증 전용. 판정 임계값(near >= 8)은
+# 디바이스 소관이며 서버는 재계산하지 않는다(9.2(d), tof_meta.py 상단 주석).
+# ★ 재조정 방법: 센서 해상도를 4x4 로 바꾸면(프레임레이트 상향 목적) 16 으로 교체.
+TOF_ZONE_TOTAL = 64
+
+# 활성 motion aggregate 총수. 근거유형 = 실측(구조 상수, 임계값 아님).
+# 출처 = decisions.md 9.3(a) 초기화 로그 verbatim `motion indicator ready (8x8,
+# 400~1500mm, 16 aggregates)` / 9.3(c) 실측표 헤더 `ndet/16` / 카테고리 9 정정 근거
+# ("8x8 해상도에서 활성 aggregate 16개, 각 2x2 super-zone", 라이브러리 실물 대조).
+# ※ 배열 자체는 motion[32] 이지만 8x8 해상도에서 실제로 채워지는 것은 16개다 —
+#   상한은 "배열 길이"가 아니라 "활성 aggregate 수"이므로 16 을 쓴다.
+# 용도 = tof_motion_ndet 의 구조적 상한(0~16) 검증 전용. 판정 임계값
+# (TOF_MOTION_NDET_MIN=1, 9.4(a))은 디바이스 소관이며 서버는 재계산하지 않는다.
+TOF_MOTION_AGGREGATE_TOTAL = 16

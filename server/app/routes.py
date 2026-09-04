@@ -13,7 +13,7 @@ import numpy as np
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import select
 
-from . import image_store, kakao, model_serving, rate_limit
+from . import image_store, kakao, model_serving, rate_limit, tof_meta
 from .auth import dashboard_auth, device_auth
 from .constants import (
     AUDIO_FILE_FIELD,
@@ -57,6 +57,13 @@ def detect():
     device_id = request.form.get("device_id")
     if not client_request_id or not device_id:
         raise ApiError(400, "bad_request", "client_request_id 와 device_id 는 필수입니다.")
+
+    # ToF 메타 4종(카테고리 6.2 G10) — 전부 optional 이고 **부재가 정상 경로**다.
+    # 2026-09-03 A-1 end-to-end 완주 경로(7.5)가 ToF 없이 ④런타임을 통과한 유일한
+    # 동작 경로라, 부재를 400 으로 막으면 그 검증분이 그대로 회귀한다. 검증 실패도
+    # 400 을 내지 않는다(사유 = tof_meta.py 상단 주석) → 이 파싱은 게이트가 아니며
+    # 게이트 순서(멱등 → rate limit → 디코드 → 추론)를 이동시키지 않는다.
+    tof = tof_meta.parse_tof_meta(request.form)
 
     audio_file = request.files.get(AUDIO_FILE_FIELD)
     if audio_file is None or audio_file.filename == "":
@@ -122,7 +129,7 @@ def detect():
         scores = model_serving.predict(waveform)
         infer_ms = (time.monotonic() - infer_started) * 1000
         predicted_class, confidence, all_scores = model_serving.scores_to_prediction(scores)
-        pred = _apply_prediction_policy(predicted_class, confidence, all_scores)
+        pred = _apply_prediction_policy(predicted_class, confidence, all_scores, tof)
         current_app.logger.info(
             "detect real inference: predicted_class=%s confidence=%.2f infer_ms=%.2f",
             predicted_class,
@@ -130,8 +137,18 @@ def detect():
             infer_ms,
         )
     else:
-        pred = mock_prediction()
+        pred = mock_prediction(tof)
     request_id = new_request_id()
+
+    # 응답·DB 와 별개로 로그에서도 세 상태가 갈려야 한다(부재를 통과로 읽지 않기 위함).
+    # state=absent 면 게이트 미적용, invalid 면 이탈 필드까지 남는다.
+    current_app.logger.info(
+        "detect tof meta: state=%s applied=%s passed=%s reason=%s",
+        tof["state"],
+        pred["tof"]["applied"],
+        pred["tof"]["passed"],
+        pred["tof"]["reason"],
+    )
 
     # 5) 1차 알림 실발송 (카테고리 7). 정책이 미발송으로 판정한 건은 발송 호출 자체를
     # 하지 않는다 — 저신뢰/ToF 거부 건까지 카카오 왕복을 태우면 5초 예산과 skip_reason

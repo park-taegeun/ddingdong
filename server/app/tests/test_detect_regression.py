@@ -139,15 +139,19 @@ class DetectRegressionTest(unittest.TestCase):
         os.unlink(cls._db_file.name)
 
     # ── 헬퍼 ─────────────────────────────────────────────────────────────
-    def _detect(self, client_request_id, device_id, audio=None):
+    def _detect(self, client_request_id, device_id, audio=None, tof=None):
+        """tof = ToF 메타 form field dict(부재가 기본). 값은 multipart 관례대로 문자열."""
+        data = {
+            "client_request_id": client_request_id,
+            "device_id": device_id,
+            "audio": (io.BytesIO(self.pcm if audio is None else audio), "a.pcm"),
+        }
+        if tof:
+            data.update(tof)
         return self.client.post(
             "/api/v1/detect",
             headers={"Authorization": f"Bearer {_DEVICE_TOKEN}"},
-            data={
-                "client_request_id": client_request_id,
-                "device_id": device_id,
-                "audio": (io.BytesIO(self.pcm if audio is None else audio), "a.pcm"),
-            },
+            data=data,
             content_type="multipart/form-data",
         )
 
@@ -841,6 +845,302 @@ class DetectRegressionTest(unittest.TestCase):
             headers={"Authorization": f"Bearer {_DEVICE_TOKEN}"},
         )
         self.assertEqual(r.status_code, 401)
+
+    # ── ToF 메타 wire (카테고리 6.2 G10) ──────────────────────────────────
+    #
+    # 이 절이 고정하는 불변식 5개:
+    #   I1 ToF 부재 요청은 현행대로 통과한다(2026-09-03 A-1 경로 보존, fail-open).
+    #   I2 노크·초인종은 tof_presence 가 참일 때만 발송 경로에 진입한다.
+    #   I3 화재경보는 ToF 게이트를 우회한다(카테고리 3 SSoT).
+    #   I4 "게이트를 통과한 요청"과 "ToF 부재로 게이트를 적용하지 않은 요청"이
+    #      응답·DB 두 곳에서 구분 가능하다(부재를 통과로 위장하지 않는다).
+    #   I5 서버는 tof_presence 를 재판정하지 않는다 — near_count/center/ndet 로
+    #      통과 여부를 다시 계산하지 않는다(9.2(e)/9.4(b) 시간축 판정 재구성 불가).
+
+    @staticmethod
+    def _prediction_stub(predicted_class, confidence=0.95):
+        """클래스·신뢰도만 고정하고 판정은 실제 함수에 맡기는 mock_prediction 대역.
+
+        상수 dict 를 돌려주는 스텁을 쓰면 라우트가 파싱한 ToF 메타가 판정까지
+        흘러가는지를 검증하지 못한다 — 여기서는 랜덤 요소만 제거한다.
+        """
+
+        def _stub(tof_meta=None):
+            from ..utils import _apply_prediction_policy
+
+            scores = {"doorbell": 0.34, "knock": 0.33, "fire_alarm": 0.33}
+            return _apply_prediction_policy(
+                predicted_class, confidence, scores, tof_meta
+            )
+
+        return _stub
+
+    _TOF_PASS = {
+        # 9.2(b) 실측 로그(near=13/64, center=1015mm) + 9.4(d) 재충전 로그(ndet=1) 어휘
+        "tof_presence": "true",
+        "tof_near_count": "13",
+        "tof_center_mm": "1015",
+        "tof_motion_ndet": "1",
+    }
+    _TOF_FAIL = {
+        "tof_presence": "false",
+        "tof_near_count": "1",
+        "tof_center_mm": "2953",
+        "tof_motion_ndet": "0",
+    }
+
+    def _detect_with(self, key, predicted_class, tof, confidence=0.95):
+        """클래스 고정 + ToF 메타 동봉 detect 1회. (응답, 발송 스텁) 반환."""
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction",
+            side_effect=self._prediction_stub(predicted_class, confidence),
+        ), mock.patch("app.kakao.send_primary_text", return_value=None) as send:
+            resp = self._detect(f"regr-tof-{key}", f"dev-tof-{key}", tof=tof)
+            row = self._row(f"regr-tof-{key}") if resp.status_code == 201 else None
+            return resp, send, row
+
+    def test_tof_absent_preserves_current_behavior(self) -> None:
+        """I1. ToF 4필드 부재 = 현행 A-1 경로 그대로 발송된다(400 아님, 차단 아님)."""
+        resp, send, row = self._detect_with("absent", "knock", None)
+        self.assertEqual(resp.status_code, 201)
+        send.assert_called_once_with("knock")
+
+        status = resp.get_json()["notification_status"]
+        self.assertTrue(status["primary_sent"])
+        self.assertNotIn("skip_reason", status)
+        self.assertTrue(row.primary_sent)
+
+    def test_knock_with_presence_true_enters_send_path(self) -> None:
+        """I2. 노크 + presence 참 → 발송 경로 진입 + 게이트 적용 기록."""
+        resp, send, row = self._detect_with("knock-pass", "knock", self._TOF_PASS)
+        self.assertEqual(resp.status_code, 201)
+        send.assert_called_once_with("knock")
+
+        check = resp.get_json()["tof_check"]
+        self.assertTrue(check["applied"])
+        self.assertTrue(check["passed"])
+        # 하드코딩 문자열이 아니라 수신값에서 생성됐다는 증명 — 요청에 실은 값이 보인다
+        self.assertIn("near=13/64", check["reason"])
+        self.assertIn("center=1015mm", check["reason"])
+        self.assertIn("ndet=1/16", check["reason"])
+        self.assertTrue(row.tof_applied)
+        self.assertTrue(row.tof_passed)
+
+    def test_knock_with_presence_false_is_blocked(self) -> None:
+        """I2. 노크 + presence 거짓 → 차단 + 사유 기록 + 카카오 왕복 자체를 태우지 않음."""
+        resp, send, row = self._detect_with("knock-fail", "knock", self._TOF_FAIL)
+        self.assertEqual(resp.status_code, 201)  # 차단은 요청 실패가 아니다
+        send.assert_not_called()
+
+        body = resp.get_json()
+        self.assertFalse(body["notification_status"]["primary_sent"])
+        self.assertEqual(body["notification_status"]["skip_reason"], "tof_rejected")
+        self.assertEqual(body["notification_status"]["enrich_status"], "skipped")
+        self.assertTrue(body["tof_check"]["applied"])
+        self.assertFalse(body["tof_check"]["passed"])
+        self.assertEqual(row.skip_reason, "tof_rejected")
+        self.assertIsNone(row.primary_sent_at)
+
+    def test_doorbell_with_presence_false_is_blocked(self) -> None:
+        """I2. 초인종도 동일 게이트. (SP/DTW 2층은 본 PR 범위 밖 — 여기선 ToF 1층만)"""
+        resp, send, row = self._detect_with("bell-fail", "doorbell", self._TOF_FAIL)
+        self.assertEqual(resp.status_code, 201)
+        send.assert_not_called()
+        self.assertFalse(row.primary_sent)
+        self.assertEqual(row.skip_reason, "tof_rejected")
+
+    def test_fire_alarm_bypasses_tof_gate(self) -> None:
+        """I3. 화재경보 + presence 거짓 → 그래도 발송(카테고리 3 "ToF 우회").
+
+        ★ 이 케이스가 실패하면 화재경보가 ToF 게이트를 따르게 바뀐 것이다 —
+          청각장애인 대응 수칙(7.1) 발송이 사람 검증에 묶이면 안 된다.
+        """
+        resp, send, row = self._detect_with("fire-fail", "fire_alarm", self._TOF_FAIL)
+        self.assertEqual(resp.status_code, 201)
+        send.assert_called_once_with("fire_alarm")
+        self.assertTrue(row.primary_sent)
+        self.assertIsNone(row.skip_reason)
+
+        check = resp.get_json()["tof_check"]
+        self.assertFalse(check["applied"])  # 게이트 미적용 = 우회
+        self.assertIsNone(check["passed"])
+        self.assertTrue(check["reason"].startswith("fire_alarm_bypass"))
+        # 우회했더라도 받은 증거는 버리지 않는다
+        self.assertIn("presence=false", check["reason"])
+
+    def test_tof_absent_is_distinguishable_from_tof_pass(self) -> None:
+        """I4. 부재와 통과가 응답·DB 에서 갈린다.
+
+        ★ negative control 대상 불변식이다. "ToF 부재를 presence=true 로 취급"하는
+          변형은 발송 결과(primary_sent True)만 보면 부재 케이스와 구별되지 않아
+          아무 테스트도 깨지지 않는다 — applied/passed/reason 세 값을 함께 고정해야
+          그 변형이 검출된다.
+        """
+        _, _, absent_row = self._detect_with("distinct-absent", "knock", None)
+        resp_pass, _, pass_row = self._detect_with(
+            "distinct-pass", "knock", self._TOF_PASS
+        )
+
+        # 발송 결과는 둘 다 동일 — 이 값만으로는 두 상태를 구분할 수 없다
+        self.assertTrue(absent_row.primary_sent)
+        self.assertTrue(pass_row.primary_sent)
+
+        # 응답에서 구분 가능
+        absent_check = self._body("regr-tof-distinct-absent")["tof_check"]
+        pass_check = resp_pass.get_json()["tof_check"]
+        self.assertFalse(absent_check["applied"])
+        self.assertIsNone(absent_check["passed"])
+        self.assertEqual(absent_check["reason"], "tof_absent")
+        self.assertTrue(pass_check["applied"])
+        self.assertTrue(pass_check["passed"])
+
+        # DB 기록에서도 구분 가능
+        self.assertFalse(absent_row.tof_applied)
+        self.assertIsNone(absent_row.tof_passed)
+        self.assertEqual(absent_row.tof_reason, "tof_absent")
+        self.assertTrue(pass_row.tof_applied)
+
+    def test_tof_invalid_is_distinguishable_from_absent_and_pass(self) -> None:
+        """I4. 이탈(invalid)은 부재와도 통과와도 다른 제3의 상태로 기록된다.
+
+        여기서는 presence 없이 telemetry 만 온 오배선을 쓴다 — 게이트 입력이 없으므로
+        차단하지 않되(fail-open) 사유가 tof_absent 와 달라야 한다.
+        """
+        resp, send, row = self._detect_with(
+            "invalid", "knock", {"tof_near_count": "13", "tof_center_mm": "1015"}
+        )
+        self.assertEqual(resp.status_code, 201)  # 400 아님 — 체인을 죽이지 않는다
+        send.assert_called_once_with("knock")
+
+        check = resp.get_json()["tof_check"]
+        self.assertFalse(check["applied"])
+        self.assertIsNone(check["passed"])
+        self.assertNotEqual(check["reason"], "tof_absent")
+        self.assertIn("tof_invalid", check["reason"])
+        self.assertIn("tof_presence", check["reason"])
+        self.assertIn("tof_invalid", row.tof_reason)
+
+    def test_tof_out_of_range_telemetry_is_recorded_not_rejected(self) -> None:
+        """§2-C. 구조 상한(zone 64 / aggregate 16) 이탈 = 400 아님, 값은 버리고 사유 기록.
+
+        상한 근거 = decisions.md 9.2/9.3 실측 구조 상수(constants.py 주석 참조).
+        """
+        resp, _, row = self._detect_with(
+            "range",
+            "knock",
+            {
+                "tof_presence": "true",
+                "tof_near_count": "65",  # 64 초과
+                "tof_motion_ndet": "17",  # 16 초과
+                "tof_center_mm": "-1",  # 음수
+            },
+        )
+        self.assertEqual(resp.status_code, 201)
+
+        check = resp.get_json()["tof_check"]
+        # presence 는 멀쩡하므로 게이트는 그대로 적용된다(telemetry 이탈이 게이트를
+        # 끄면, 거절될 요청이 telemetry 를 망가뜨리는 것만으로 통과하게 된다)
+        self.assertTrue(check["applied"])
+        self.assertTrue(check["passed"])
+        for field in ("tof_near_count", "tof_motion_ndet", "tof_center_mm"):
+            self.assertIn(field, check["reason"])
+        self.assertIn("invalid", check["reason"])
+        # 이탈값은 기록에 그대로 실리지 않는다(요약 표기는 invalid)
+        self.assertNotIn("near=65", row.tof_reason)
+
+    def test_tof_telemetry_invalid_does_not_disable_gate(self) -> None:
+        """§2-C. presence 거짓 + telemetry 이탈 → 여전히 차단된다(게이트 우회 불가)."""
+        resp, send, row = self._detect_with(
+            "range-fail",
+            "knock",
+            {"tof_presence": "false", "tof_near_count": "999"},
+        )
+        self.assertEqual(resp.status_code, 201)
+        send.assert_not_called()
+        self.assertEqual(row.skip_reason, "tof_rejected")
+
+    def test_tof_presence_boolean_tokens(self) -> None:
+        """multipart 는 전부 문자열 — "false"/"0"/"" 가 참으로 평가되면 안 된다."""
+        from ..tof_meta import parse_tof_meta
+
+        for raw in ("true", "TRUE", " true ", "1"):
+            meta = parse_tof_meta({"tof_presence": raw})
+            self.assertEqual(meta["state"], "present", raw)
+            self.assertIs(meta["presence"], True, raw)
+
+        for raw in ("false", "False", "0"):
+            meta = parse_tof_meta({"tof_presence": raw})
+            self.assertEqual(meta["state"], "present", raw)
+            self.assertIs(meta["presence"], False, raw)
+
+        # 허용표 밖 = 이탈. 빈 문자열이 '부재'로 흡수되지 않는 것이 핵심이다
+        # (부재는 게이트 미적용이지만, 빈 값은 송신측 오배선이라 사유가 남아야 한다).
+        for raw in ("", "  ", "yes", "on", "presence", "2"):
+            meta = parse_tof_meta({"tof_presence": raw})
+            self.assertEqual(meta["state"], "invalid", raw)
+            self.assertIsNone(meta["presence"], raw)
+
+    def test_server_does_not_recompute_presence_from_telemetry(self) -> None:
+        """I5. 게이트는 tof_presence 단독. near_count 로 임계값 8 을 다시 계산하지 않는다.
+
+        근거 = Stage A 디바운스(9.2(e))·Stage B-2 latch(9.4(b))는 15Hz 프레임 이력이
+        있어야 성립하는 시간축 판정이라 단발 POST 스냅샷으로 재구성 불가. 서버가
+        재계산하면 디바이스 판정과 갈린다.
+        """
+        # near=64(임계값 8 을 한참 넘김)인데 디바이스가 사람 없음이라 했으면 → 차단
+        _, send_hi, row_hi = self._detect_with(
+            "norecompute-hi",
+            "knock",
+            {"tof_presence": "false", "tof_near_count": "64", "tof_motion_ndet": "16"},
+        )
+        send_hi.assert_not_called()
+        self.assertEqual(row_hi.skip_reason, "tof_rejected")
+
+        # near=0(임계값 미달)인데 디바이스가 사람 있음이라 했으면 → 통과
+        # (latch 가 붙잡고 있는 구간 = 9.4(d) `#4291~#4351` 실측 사례)
+        _, send_lo, row_lo = self._detect_with(
+            "norecompute-lo",
+            "knock",
+            {"tof_presence": "true", "tof_near_count": "0", "tof_motion_ndet": "0"},
+        )
+        send_lo.assert_called_once_with("knock")
+        self.assertTrue(row_lo.primary_sent)
+
+    def test_tof_meta_does_not_change_gate_order(self) -> None:
+        """게이트 순서(멱등 → rate limit → 디코드 → 추론) 무이동 회귀.
+
+        ToF 파싱은 게이트가 아니다 — ToF 를 실어도 멱등 replay 가 먼저 잡고,
+        같은 device 의 새 키는 rate limit 에 걸리며, 깨진 오디오는 400 이다.
+        """
+        dev = "dev-tof-order"
+        with self.app.app_context(), mock.patch(
+            "app.kakao.send_primary_text", return_value=None
+        ):
+            first = self._detect("regr-tof-order-1", dev, tof=self._TOF_PASS)
+            self.assertEqual(first.status_code, 201)
+
+            blocked = self._detect("regr-tof-order-2", dev, tof=self._TOF_PASS)
+            self.assertEqual(blocked.status_code, 429)
+
+            replayed = self._detect("regr-tof-order-1", dev, tof=self._TOF_FAIL)
+            self.assertEqual(replayed.status_code, 200)
+            self.assertEqual(replayed.headers.get("Idempotent-Replay"), "true")
+            # 멱등 replay 는 최초 응답 스냅샷 — 나중 요청의 ToF 값이 끼어들지 않는다
+            self.assertEqual(replayed.get_json(), first.get_json())
+
+        # 깨진 오디오는 ToF 유무와 무관하게 여전히 400(디코드 게이트 무이동)
+        bad = self._detect(
+            "regr-tof-order-3", "dev-tof-order-3", audio=b"\x01", tof=self._TOF_PASS
+        )
+        self.assertEqual(bad.status_code, 400)
+
+    def _body(self, client_request_id):
+        """저장된 알림의 응답 스냅샷(멱등 키에 캐시된 최초 응답 본문)."""
+        from ..extensions import db
+        from ..models import IdempotencyKey
+
+        with self.app.app_context():
+            return db.session.get(IdempotencyKey, client_request_id).response_json
 
 
 if __name__ == "__main__":
