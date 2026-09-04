@@ -5,8 +5,10 @@
 // ★ 계층 이력 (decisions.md 카테고리 20 "계측 → 실측 → 판정" 패턴 준용):
 //   M2 = 계측(or_acc/tz 관측 전용) → M3 = ④런타임 실측(2026-08-20) → M4 = 판정 = shift 확정.
 //   M4는 실측으로 확정된 shift(=14)로 int16 변환만 수행한다.
-//   M5-a = 본 단계 = **다시 계측 계층**. 매 버퍼 int16 변환 → PSRAM 링버퍼 적재 +
-//   적재 상태 관측만 한다. 임계값·트리거·상태머신·스냅샷 추출은 M5-c 소관으로 여전히 0줄.
+//   M5-a = 다시 계측 계층. 매 버퍼 int16 변환 → PSRAM 링버퍼 적재 + 적재 상태 관측.
+//   M5-a2 = 본 단계 = **여전히 계측 계층**. M5-a ④런타임(2026-09-03)이 드러낸 관측
+//   설계 결함(로그 게이트가 시간의 2%만 관측 → 과도 이벤트 미검출)을 윈도우 진폭
+//   누적으로 해소한다. 임계값·트리거·상태머신·스냅샷 추출은 M5-c 소관으로 여전히 0줄.
 //   트리거 판정 / DC 오프셋 보정 / 업로드는 여전히 0줄 (하단 defer 주석 참조).
 // 5/21 PoC 통합 시 cameraTask(Core 1) + micTask(Core 0) 병행 검증 (decisions.md 카테고리 14).
 
@@ -33,6 +35,45 @@ static void micTask(void* parameter) {
   //   = graceful degradation. 부팅 실패로 만들지 않는다(initMicI2S 실패 처리와 동형).
   int16_t* const ring_base = initMicRingBuffer();
   MicRingStatus  ring      = {};   // write_idx=0 / wraps=0 / gaps=0 / slots_filled=0
+
+  // ── M5-a2: 윈도우(MIC_LOG_EVERY_N_BUFFERS 버퍼) 진폭 누적 ──
+  // ★ 왜 필요한가 (2026-09-03 M5-a ④런타임 실측이 드러낸 **관측 설계 결함**)
+  //   로그 게이트가 50버퍼당 1버퍼만 출력한다 = 64ms / 3.2s = **시간의 2%만 관측**이다.
+  //   그 세션에서 의도적으로 친 박수가 42윈도우 전부에서 미검출됐다(i16 rms 60~97 평탄,
+  //   max 251). 8/20 M3의 박수 max 18,099(int16 풀스케일 55%)와 72배 차이 = 마이크가
+  //   아니라 관측이 이벤트를 지나친 것이다(박수 약 100ms가 2% 창에 들 확률 ≈ 2%,
+  //   10회 쳐도 기대 검출 0.2회). 8/20에 잡힌 것이 오히려 우연이었다.
+  //   → convertMicRawToInt16이 이미 **매 버퍼** 산출하고 있으나 게이트 밖에서 버려지던
+  //     MicI16Stats를 윈도우 단위로 누적해 실질 관측률을 100%로 올린다.
+  //     여전히 관측 전용 — 임계값·트리거·판정·상태머신은 0줄(M5-c 소관, decisions.md 20).
+  //
+  // ★ rms를 최댓값과 최솟값 둘 다 잡는 이유
+  //   최댓값만으로는 이벤트는 잡히나 **무음 바닥**이 안 잡힌다. M5-c 임계값은 "바닥과
+  //   이벤트의 분리점"이므로 양쪽이 다 필요하다(카테고리 3 "80% 지점" 근거 산출용).
+  //
+  // ★ 자료형 근거 (전 분기 값 도메인 열거)
+  //   - i16.max / i16.min ∈ [INT16_MIN, INT16_MAX] = [-32768, 32767] (convert가 clamp 보장)
+  //   - ⚠️ |INT16_MIN| = 32768 은 int16으로 표현 불가하다. 절댓값을 int16에 담으면
+  //     wrap-around로 -32768이 되어 **최대 진폭이 최소값으로 부호 반전**한다 = 본 계층의
+  //     유일한 진짜 함정. 그래서 절댓값 계산도 보관도 전부 int32로 한다.
+  //     → win_peak ∈ [0, 32768] 안전 (int32 상한 대비 여유 2^16배).
+  //   - i16.rms  ∈ [0, 32768]                                   → int32 안전
+  //   - i16.clip ∈ [0, n] ≤ MIC_DMA_BUF_LEN = 1024
+  //     윈도우 합 ≤ MIC_LOG_EVERY_N_BUFFERS × 1024 = 50 × 1024 = 51,200 → uint32 안전
+  //   - win_nbuf ∈ [0, MIC_LOG_EVERY_N_BUFFERS] = [0, 50]
+  //
+  // ★ 센티넬 상수를 두지 않는다
+  //   최솟값 추적에 INT32_MAX 같은 매직 초기값을 쓰지 않고 win_nbuf == 0(= 이번 윈도우의
+  //   첫 표본인가)으로 판정한다. **센티넬 자체가 존재하지 않으므로 센티넬이 로그로 새어나갈
+  //   경로도 없다.** 표본이 0건인 윈도우는 아래 출력이 별도 분기로 갈린다(전 분기 열거).
+  //
+  // ★ RAM: 전부 micTask 지역변수 = 이미 할당된 4KiB 태스크 스택 내부.
+  //   static/전역 신설 0 → 내부 SRAM 순증 0 (mic_common.h 컨벤션, PR #36/#38/#39/#41 연속).
+  int32_t  win_peak    = 0;   // max(|min|,|max|)의 윈도우 최댓값 ∈ [0, 32768]
+  int32_t  win_rms_max = 0;   // rms 윈도우 최댓값                ∈ [0, 32768]
+  int32_t  win_rms_min = 0;   // rms 윈도우 최솟값                ∈ [0, 32768] (nbuf>0에서만 유효)
+  uint32_t win_clip    = 0;   // clip 윈도우 합계                 ∈ [0, 51200]
+  uint32_t win_nbuf    = 0;   // 누적 버퍼 수 = 이 윈도우의 실제 관측 표본 수 ∈ [0, 50]
 
   size_t   bytes_read  = 0;
   uint32_t buf_count   = 0;
@@ -81,6 +122,25 @@ static void micTask(void* parameter) {
       i16       = convertMicRawToInt16(audio_buffer.raw, slot, n);
       i16_valid = true;
       micRingAdvance(&ring);
+
+      // ── M5-a2 윈도우 누적 (관측 전용 — 최대/최소/합계만. 비교·판정 임계값 0개) ──
+      // ★ 절댓값은 int32에서만 계산한다: -(int32_t)(int16_t)(-32768) = +32768 로 안전.
+      //   int16 중간 변수를 두면 그 지점에서 -32768로 되접힌다(위 자료형 근거).
+      // ★ win_nbuf == 0 검사를 rms **최솟값에만** 붙인 이유 (전 분기 열거):
+      //   pk, i16.rms ∈ [0, 32768]이고 리셋값도 0이다.
+      //   - 최댓값 계열: 첫 표본이 0보다 크면 `>`가 참이라 갱신되고, 0이면 리셋값 0이
+      //     이미 정답이라 갱신이 불필요하다 → 두 분기 모두 결과가 옳다. 가드 불필요.
+      //   - 최솟값: 리셋값 0이 하한이라 `<`가 영원히 거짓이 된다 → 가드가 없으면
+      //     **항상 0이 출력**되어 무음 기준선이 통째로 무의미해진다. 그래서 여기만 붙인다.
+      const int32_t a_max = (i16.max >= 0) ? (int32_t)i16.max : -(int32_t)i16.max;
+      const int32_t a_min = (i16.min >= 0) ? (int32_t)i16.min : -(int32_t)i16.min;
+      const int32_t pk    = (a_max >= a_min) ? a_max : a_min;
+
+      if (pk      > win_peak)                     win_peak    = pk;
+      if (i16.rms > win_rms_max)                  win_rms_max = i16.rms;
+      if (win_nbuf == 0 || i16.rms < win_rms_min) win_rms_min = i16.rms;
+      win_clip += i16.clip;
+      win_nbuf++;
     }
 
     // ── M2 계측: 윈도우(MIC_LOG_EVERY_N_BUFFERS 버퍼)마다 raw int32 통계 1줄 출력 ──
@@ -145,6 +205,42 @@ static void micTask(void* parameter) {
                     (unsigned)ring.gaps, (unsigned)ring.slots_filled,
                     (unsigned)MIC_RING_SLOTS,
                     (unsigned)ESP.getFreePsram());
+
+      // ── M5-a2 관측: 윈도우 진폭 누적 (별도 줄 — 아래 줄 길이 근거) ──
+      //   nbuf = 이 윈도우가 실제로 누적한 버퍼 수. 정상 = 50.
+      //          ★ 첫 윈도우(w=1)만 1이다 — 게이트가 (++buf_count % 50) == 1 이라
+      //            buf_count = 1, 51, 101 … 에서 열린다. w=1은 buf_count=1 한 건만
+      //            누적된 상태이고, w=2는 buf_count 2~51 = 정확히 50건이다.
+      //            (2026-09-03 실측 교차검증: w=5에서 ring idx=9 wraps=6 → 전진 201회
+      //             = 6×32+9, 그리고 buf_count(w=5) = 1+4×50 = 201 로 정확히 일치.)
+      //          ★ i2s_read 실패분은 buf_count도 누적도 올리지 않으므로 nbuf < 50 이면
+      //            그 자체가 관측 손실 신호가 아니라 첫 윈도우이거나 링 미가용이다.
+      //   peak = max(|min|, |max|) 윈도우 최댓값 / rms=[최솟값..최댓값] / clip = 윈도우 합.
+      // ★ 줄 길이 상한 설계 (근거유형 = 실측, ~/ddingdong-측정결과/mic_m5a_2026-09-03):
+      //   손상률이 줄 길이에 단조 증가했다 — 141B 57.9% / 108B 12.5% / 81B 16.7% /
+      //   80B 0% / 78B 0%. 80B 이하 62줄에서 손상 0건. 본 줄은 모든 필드가 uint32/int32
+      //   최대 자릿수인 최악값(호스트 snprintf 실측)에서도 74B라 그 구간 안에 든다
+      //   (전형값 54B). M5a 줄에 얹으면 약 148B = 손상률 57.9% 구간으로 들어간다.
+      // ⚠️ 단 이 상관은 실측 상관일 뿐 인과 규명이 아니다 — 근본 원인 판단은 PR 본문 참조.
+      if (win_nbuf > 0) {
+        Serial.printf("[mic][M5a2] w=%u nbuf=%u peak=%d rms=[%d..%d] clip=%u\n",
+                      (unsigned)window_idx, (unsigned)win_nbuf,
+                      (int)win_peak, (int)win_rms_min, (int)win_rms_max,
+                      (unsigned)win_clip);
+      } else {
+        // 링버퍼 미가용(ps_malloc 실패) 경로 = 매 버퍼 변환 자체가 없어 표본이 0건이다.
+        // 0을 찍으면 "무음"으로 오독되므로 상태를 그대로 밝힌다. 이 분기가 존재하는 한
+        // win_rms_min의 리셋값 0이 유효값처럼 출력될 경로는 없다.
+        Serial.printf("[mic][M5a2] w=%u nbuf=0 peak=n/a rms=[n/a] clip=n/a (ring OFF)\n",
+                      (unsigned)window_idx);
+      }
+
+      // 윈도우 리셋 — 출력 직후에 둔다. 다음 윈도우는 이 반복 **이후**의 버퍼부터 담는다.
+      win_peak    = 0;
+      win_rms_max = 0;
+      win_rms_min = 0;
+      win_clip    = 0;
+      win_nbuf    = 0;
     }
 
     // ── [mic][해소] 24→16bit 정렬 변환: M4에서 구현 완료 (2026-08-20 실측 확정) ──
@@ -174,6 +270,13 @@ static void micTask(void* parameter) {
     //   M5-a 현황: **링버퍼는 확보됐으나 판정은 여전히 0줄이다.** 2초 스냅샷을 항상 들고
     //             있게 됐을 뿐, 언제 그것을 뽑을지(임계값·트리거)는 실측 전이라 미정이다.
     //             적재와 판정을 한 PR에 섞지 않는 이유 = decisions.md 카테고리 20.
+    //   M5-a2 현황: **관측 수단이 확보됐다. 판정은 여전히 0줄이다.**
+    //             2026-09-03 ④런타임에서 드러난 사실 = 로그 게이트가 시간의 2%만 관측해
+    //             **과도 이벤트 관측이 구조적으로 불가능**했다(의도적으로 친 박수 미검출).
+    //             8/20 M3에서 박수 max 296,542,208이 잡힌 것은 **우연이었다**.
+    //             그 2% 샘플링 위에서 산출한 배경 rms는 "스냅샷 42개"일 뿐 바닥이 아니다.
+    //             → 아래 판정 방법 ①의 "무음 기준선"은 M5-a2의 rms 최솟값(win_rms_min)으로
+    //               재야 하며, ②의 이벤트 진폭은 peak / rms 최댓값으로 잰다.
     //   현 상태 : i16 rms를 로그로 관측만 한다. 임계값·판정·상태머신 0줄.
     //   미결 사유: 카테고리 3 "80% 지점"의 기준선이 미확정이다.
     //   ⚠️ M3 배경 rms 2,104,135 ~ 2,646,435 를 무음 기준선으로 쓰지 말 것 —
