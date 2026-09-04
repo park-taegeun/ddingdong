@@ -247,7 +247,13 @@ def enrich():
     )
     if notif is None:
         raise ApiError(404, "not_found", "해당 client_request_id 의 알림을 찾을 수 없습니다.")
-    if notif.enrich_status in ("completed", "skipped"):
+    # 종결 상태 3종은 재처리하지 않는다. "failed"(자막 발송 실패)를 여기 포함시키는 것이
+    # 본 PR 의 추가분이다 — 빼 두면 ESP32 재시도가 이 경로를 다시 타고 **이미 성공한
+    # 사진을 한 번 더 발송**한다(같은 알림이 두 번 도착). 2차는 best-effort + 요청 안
+    # 1회 재시도(카테고리 7)이고, 그 재시도 예산은 이미 첫 요청에서 소진됐다.
+    # ※ "failed" 는 본 PR 이전에는 서버가 낼 수 없던 값이라, 이 확장으로 동작이 바뀌는
+    #   기존 상태는 없다(completed/skipped 는 그대로).
+    if notif.enrich_status in ("completed", "skipped", "failed"):
         raise ApiError(
             409,
             "conflict",
@@ -285,17 +291,66 @@ def enrich():
     enr = mock_enrichment(notif.request_id)
     # 이미지 = 실 로컬 저장 + opaque public URL 로 실코드화(카테고리 7, image_store 스켈레톤).
     # 카카오 memo 는 image_url(public URL)만 수신하므로 서버가 스스로 호스팅한 URL 을 싣는다.
-    # thumbnail_url/audio_url/stt 는 mock 유지(리사이즈·오디오 호스팅·Clova STT = 11주차).
+    # thumbnail_url/audio_url 은 mock 유지(리사이즈·오디오 호스팅 = 11주차).
     opaque_id = image_store.store_image(image_bytes)
-    notif.image_url = image_store.public_url(opaque_id)
+    image_url = image_store.public_url(opaque_id)
+    caption = _caption_from_stt(enr["stt"])
+
+    # 2차 알림 실발송 (카테고리 7). 사진(feed) → 자막(text) 2건 분할.
+    # ★ 호출 지점: 아래 notif 필드 수정보다 반드시 앞이어야 한다. 토큰 갱신·401 표시가
+    #   일어나면 kakao 계층이 db.session.commit() 하므로, 미커밋 Notification 변경이
+    #   세션에 있으면 그것까지 함께 커밋된다. /detect 의 발송→기록 순서와 동형이며
+    #   kakao._assert_commit_is_safe() 가 실행 시점에 강제한다(위반 시 RuntimeError).
+    # ★ 동기 발송(§2-F): 2차 예산 15초에 대해 정상 p95 ≈1초(7.3 × 2건, 6.5%), 최악
+    #   ≈7.5초(토큰 1 + 사진 2 + 자막 2 회 × 타임아웃 1.5s). ESP32 측 /enrich 호출부는
+    #   아직 없고(firmware grep 0건), 기존 하네스 상한 HTTP_TIMEOUT_MS=10000(main.cpp)
+    #   보다 최악값이 작다. ⚠️ 펌웨어 2차 클라이언트를 만들 때 이 최악값을 덮는지 재확인.
+    send = kakao.send_secondary(
+        notif.predicted_class, image_url, caption, notif.detected_at
+    )
+
+    notif.image_url = image_url
     notif.image_thumbnail_url = enr["media"]["image_thumbnail_url"]
     notif.audio_url = enr["media"]["audio_url"]
     notif.stt = enr["stt"]
-    notif.enrich_status = "completed"
-    notif.secondary_sent = True
-    notif.secondary_sent_at = utc_now()
+    # 2차 발송 결과의 상태 표현 (§2-E). to_dict() 키를 늘리지 않고 **기존 3키의 값
+    # 조합**으로 4조합을 구분한다 — 프론트 NotificationItem 11필드 계약 무변경.
+    #   secondary_sent    = 의도한 발송이 **전부** 성공했는가
+    #   secondary_sent_at = **사진**이 실제 전달된 시각(실패면 None)
+    #   enrich_status     = 자막 발송이 실패했는가("failed") / 아닌가("completed")
+    # 왜 secondary_sent 가 "사진 성공"이 아니라 "전부 성공"인가:
+    #   NotificationStatusBadge.derive() 가 secondary_sent 를 enrich_status 보다 **먼저**
+    #   보고 "전송 완료"를 띄운다(dashboard/src/components/notifications/…Badge.tsx).
+    #   사진만 간 부분 성공에 True 를 넣으면 화면이 완전 성공으로 보인다 — §2-E 가
+    #   금지한 바로 그 상태다.
+    # enrich_status="failed" 는 프론트 EnrichStatus 에 이미 선언돼 있으나 서버가 한 번도
+    # 낸 적 없던 값이다(Badge 에 "2차 실패" 분기도 이미 있다) — PR #43 의 tof_check.passed
+    # null 선례와 같은 "선언돼 있던 값 형태를 처음 쓰는" 확장이라 프론트 수정이 없다.
+    notif.secondary_sent = send["photo_sent"] and send["caption_sent"] is not False
+    notif.secondary_sent_at = utc_now() if send["photo_sent"] else None
+    notif.enrich_status = "failed" if send["caption_sent"] is False else "completed"
     db.session.commit()
     return jsonify(notif.to_dict()), 200
+
+
+def _caption_from_stt(stt):
+    """STT 결과 → 2차 자막 문자열. 없으면 None(= text 발송 자체를 건너뛴다).
+
+    ★ defer (G23, STT 미구현): 지금 들어오는 stt 는 utils.mock_enrichment 가 만든 mock
+      이다. 실 STT(CSR / CLOVA Speech, 카테고리 7)가 붙으면 mock_enrichment 를 실호출로
+      교체하는 것만으로 이 배선은 그대로 동작한다 — 본 함수도 send_secondary 도 "누가
+      transcript 를 만들었는지"를 묻지 않기 때문이다.
+      판정 방법 = 실 STT 배선 후 /enrich 를 1회 실호출해 ① 카카오톡에 도착한 자막이
+      mock 문구(utils._MOCK_TRANSCRIPTS 4종)가 아닌 실제 발화인지 ② 무음 클립에서
+      transcript 가 비어 caption_sent=None(미발송)으로 떨어지는지 두 가지를 확인한다.
+
+    빈 문자열·공백만 있는 transcript 를 None 으로 접는 이유: 카카오 text 템플릿에 빈
+    본문을 실어 보내면 사용자에게 빈 말풍선이 도착한다. "보낼 자막이 없다"와 같은 상태다.
+    """
+    if not stt:
+        return None
+    transcript = (stt.get("transcript") or "").strip()
+    return transcript or None
 
 
 def _validate_image_part(image_file):

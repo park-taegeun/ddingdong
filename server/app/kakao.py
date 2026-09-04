@@ -13,17 +13,21 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from flask import current_app
 
 from .constants import (
+    KAKAO_FEED_BUTTON_TITLE,
     KAKAO_HTTP_TIMEOUT_SECONDS,
     KAKAO_LINK_URL,
     KAKAO_MEMO_URL,
     KAKAO_REFRESH_TOKEN_TTL,
+    KAKAO_SECONDARY_MAX_ATTEMPTS,
     KAKAO_TOKEN_URL,
+    KST,
     PRIMARY_MESSAGES,
+    SECONDARY_FEED_TITLES,
 )
 from .extensions import db
 from .models import KakaoToken
@@ -382,3 +386,230 @@ def send_primary_text(predicted_class):
 
     current_app.logger.info("kakao primary sent: class=%s", predicted_class)
     return None
+
+
+# ── 2차 알림 발송 (사진 feed → 자막 text, 카테고리 7 / 7.3) ──────────────
+#
+# ★ 이 절은 전부 신규 함수다. 위 1차 계층(토큰·_post_memo·_invalidate_access_token·
+#   send_primary_text)은 2026-09-03 ④런타임 검증을 통과한 자산이라 시그니처·본문·상수를
+#   건드리지 않았다 — 재사용은 **호출**로만 한다.
+#
+# ★ 왜 2건으로 나눠 보내는가 (근거유형 = 실측, 2026-09-04 프로브):
+#   feed description 은 2줄에서 잘리고, 그 상한 기준이 글자 수가 아니라 줄 수라
+#   절단 지점이 렌더 폭에 종속된다(52자·110자가 둘 다 2줄에서, 서로 다른 글자
+#   위치에서 잘렸다). 즉 자막을 description 에 넣으면 서버가 안전한 길이를 정할 수
+#   없다. 반면 text 템플릿은 266자 전문 렌더가 실측돼 있다(7.5(b)).
+#   → 사진은 feed 로, 자막은 text 로 따로 보낸다. 순서는 **사진 먼저**(누가 왔는지가
+#     뭐라고 말했는지보다 먼저 필요하다 — 근거유형 = 논증).
+#   비용 = memo 왕복 p95 490ms(7.3) × 2 ≈ 1초 = 2차 15초 예산의 약 6.5%(논증, 산술).
+
+
+def _feed_description(detected_at_utc):
+    """feed 카드 본문. 감지 시각(KST) 한 줄 — 자막은 넣지 않는다(위 절 주석).
+
+    자막을 배제한 자리에 무엇을 넣을지는 "2줄 안에 확실히 들어가고, 사진만으로는 알 수
+    없는 정보"를 기준으로 골랐다. 감지 시각은 카드가 늦게 열렸을 때 "언제 온 방문인지"를
+    복원해 주고, 길이가 고정(약 20자)이라 어떤 렌더 폭에서도 절단 위험이 없다
+    — 실측 P1(15자)이 1줄로 전문 렌더된 구간이다.
+    ★ 길이 상한 상수를 만들지 않는 이유 = 상한이 줄 수 기준이라 서버가 글자 수로 정할
+      수 없기 때문이다(카테고리 20: 실측 없는 판정 금지). 대신 서버가 만드는 문자열
+      자체를 짧게 고정한다.
+    """
+    if detected_at_utc is None:
+        # 호출부가 시각을 못 주는 경우는 현재 없다. 그래도 카드 본문을 비워 두지 않는다
+        # (description 은 feed 필수 필드이고, 빈 문자열이 렌더에서 어떻게 보이는지는
+        #  실측된 적이 없다).
+        return "방문자 사진이 도착했습니다."
+    kst = detected_at_utc.replace(tzinfo=timezone.utc).astimezone(KST)
+    return f"{kst.month}월 {kst.day}일 {kst.strftime('%H:%M')} 감지"
+
+
+def _build_secondary_title(predicted_class):
+    """클래스별 사진 카드 제목. _build_message 와 동형으로 폴백 없이 KeyError 를 낸다."""
+    return SECONDARY_FEED_TITLES[predicted_class]
+
+
+def _post_memo_feed(access_token, title, description, image_url):
+    """memo default/send 를 feed 템플릿으로 1회 호출한다. 성공이면 반환, 실패면 예외.
+
+    엔드포인트는 text 와 같은 memo default/send 다 — 템플릿 종류는 object_type 이
+    가른다(7.3 실측도 이 경로로 이뤄졌다: "feed/default/send 왕복").
+
+    ★ image_url 은 **사전 호스팅된 public URL 문자열만** 받는다. memo 에는 이미지 파일
+      업로드 엔드포인트가 없어 바이트가 통과하지 못한다(카테고리 7 SSoT, 2026-07-31
+      PoC-(30) 실사). 서버가 스스로 호스팅한 URL(image_store.public_url)을 싣는다.
+
+    ★ POST 배관이 _post_memo 와 거의 같은데도 합치지 않은 이유: _post_memo 는
+      ④런타임 검증분이라 본 PR 의 무변경 대상이다(시그니처·본문 불변). 공통 헬퍼로
+      빼려면 그 함수를 고쳐야 하므로, 중복을 감수하고 신규 함수로 둔다.
+      ★ 재조정 방법: 2차 경로가 ④런타임을 통과해 두 함수가 함께 "검증분"이 되면
+        그때 공통 POST 헬퍼로 묶는다(그 리팩토링은 두 경로의 회귀가 함께 돌 때 안전하다).
+    """
+    template_object = json.dumps(
+        {
+            "object_type": "feed",
+            "content": {
+                "title": title,
+                "description": description,
+                "image_url": image_url,
+                # link 는 feed content 필수 필드(text 템플릿과 동형, KAKAO_LINK_URL 주석).
+                "link": {"web_url": KAKAO_LINK_URL, "mobile_web_url": KAKAO_LINK_URL},
+            },
+            "button_title": KAKAO_FEED_BUTTON_TITLE,
+        },
+        ensure_ascii=False,
+    )
+    data = urllib.parse.urlencode({"template_object": template_object}).encode("utf-8")
+    req = urllib.request.Request(
+        KAKAO_MEMO_URL,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=KAKAO_HTTP_TIMEOUT_SECONDS) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            # 1차와 같은 계층 분리: 인증 거부는 토큰 예외로 올려 token_expired 로
+            # 집계되게 한다(대시보드 skip_reason 키가 이미 두 갈래로 고정돼 있다).
+            raise KakaoTokenError(f"feed 발송 인증 거부: HTTP {exc.code}") from exc
+        # 에러 본문을 싣지 않는다 — 요청 파라미터 에코 가능성 배제(_post_memo 동형).
+        raise KakaoSendError(f"feed 발송 실패: HTTP {exc.code}") from exc
+    except Exception as exc:  # URLError/timeout/JSON 파싱 — 원인 타입만 남긴다
+        raise KakaoSendError(f"feed 발송 실패: {type(exc).__name__}") from exc
+
+    result_code = payload.get("result_code")
+    if result_code != 0:
+        detail = result_code if isinstance(result_code, int) else "missing"
+        raise KakaoSendError(f"feed 발송 실패: result_code={detail}")
+
+
+def _send_part(part, send_call):
+    """2차 발송 1건을 최대 KAKAO_SECONDARY_MAX_ATTEMPTS 회 시도.
+
+    반환 (sent, reason, token_dead):
+      sent       발송 성공 여부
+      reason     실패 시 skip_reason 계열 문자열, 성공이면 None
+      token_dead 401 을 받아 토큰을 만료 표시했는가(호출부가 남은 건을 중단하는 신호)
+
+    ★ 재시도 범위가 이 함수 안이라는 점이 설계의 핵심이다. 재시도는 **지금 실패한 그
+      한 건**에만 걸리고, 이미 성공해 이 함수를 빠져나간 건은 어떤 경로로도 다시
+      호출되지 않는다 → "2건 통째 재시도"로 성공한 사진이 중복 발송되는 경로가 코드에
+      존재하지 않는다(카테고리 7 "1회 재시도"의 2건 분할 체제 해석, §2-D).
+
+    ★ 재시도 대상을 HTTP 상태 코드가 아니라 **예외 클래스**로 가른 이유:
+      - KakaoSendError = 네트워크 타임아웃 / 5xx / 그 밖의 HTTP 오류 / result_code≠0.
+        일시적일 수 있으므로 재시도한다.
+      - KakaoTokenError = 401(인증 거부) 또는 토큰 확보 실패. 재시도하지 않는다 —
+        1차가 확립한 자기 치유 규약이 "같은 요청 안에서 재발송하지 않고 DB 토큰을 만료
+        표시해 **다음 이벤트**에서 갱신을 태운다"이기 때문이다. 같은 죽은 토큰으로 즉시
+        다시 쏘면 그 규약을 깨고 왕복만 낭비한다.
+      기각한 대안 = 상태 코드별 분류(4xx 는 결정론적이니 재시도 제외). 그렇게 하려면
+      _post_memo 가 상태 코드를 노출하도록 고쳐야 하는데 그 함수는 무변경 대상이고,
+      결정론적 4xx 를 한 번 더 쏘는 비용(약 490ms)은 15초 예산에서 무해하다.
+    """
+    for attempt in range(1, KAKAO_SECONDARY_MAX_ATTEMPTS + 1):
+        try:
+            send_call()
+        except KakaoTokenError as exc:
+            _invalidate_access_token()
+            current_app.logger.warning("kakao secondary %s failed: %s", part, exc)
+            return False, SKIP_REASON_TOKEN_EXPIRED, True
+        except KakaoSendError as exc:
+            if attempt < KAKAO_SECONDARY_MAX_ATTEMPTS:
+                current_app.logger.warning(
+                    "kakao secondary %s retrying (%d/%d): %s",
+                    part,
+                    attempt,
+                    KAKAO_SECONDARY_MAX_ATTEMPTS,
+                    exc,
+                )
+                continue
+            current_app.logger.warning("kakao secondary %s failed: %s", part, exc)
+            return False, SKIP_REASON_KAKAO_API_ERROR, False
+        return True, None, False
+
+
+def send_secondary(predicted_class, image_url, caption, detected_at_utc):
+    """2차 알림을 발송한다 — 사진(feed) 먼저, 자막(text) 나중.
+
+    caption 이 None/빈 문자열이면 **text 발송을 아예 호출하지 않는다**(§2-C).
+    현 시점 자막 소스는 mock 이다 — 실 STT(G23)는 미구현이고 본 PR 범위 밖이다.
+
+    반환 dict:
+      photo_sent      bool         사진 발송 성공 여부
+      photo_reason    str | None   실패 사유(skip_reason 계열), 성공이면 None
+      caption_sent    bool | None  자막 발송 성공 여부. **None = 자막이 없어 미발송**
+      caption_reason  str | None   실패 사유, 성공·미발송이면 None
+
+    ★ caption_sent 가 3상태(True/False/None)인 것이 §2-C 요구다 — "자막이 없어서 안
+      보냄"(None)과 "보내려다 실패함"(False)이 호출부·로그·DB 어디서도 섞이지 않는다.
+
+    ★ 호출 위치 제약 (1차와 동일): 이 함수는 get_access_token()/_invalidate_access_token()
+      을 통해 db.session.commit() 할 수 있다. 따라서 **Notification 을 수정하기 전에**
+      불러야 한다. 위반 시 _assert_commit_is_safe() 가 RuntimeError 를 올린다.
+
+    ★ 토큰은 두 건이 **한 번 확보해 공유**한다. 확보 자체가 실패하면 네트워크 왕복을
+      한 번도 태우지 않고 두 건 모두 token_expired 로 끝낸다 — 죽은 토큰으로 두 번
+      쏘는 것은 이벤트당 왕복 상한만 늘리고 결과를 바꾸지 않는다.
+    """
+    result = {
+        "photo_sent": False,
+        "photo_reason": None,
+        "caption_sent": None,
+        "caption_reason": None,
+    }
+    has_caption = bool(caption)
+
+    try:
+        access_token = get_access_token()
+    except KakaoTokenError as exc:
+        current_app.logger.warning("kakao secondary skipped: %s", exc)
+        result["photo_reason"] = SKIP_REASON_TOKEN_EXPIRED
+        if has_caption:
+            result["caption_sent"] = False
+            result["caption_reason"] = SKIP_REASON_TOKEN_EXPIRED
+        return result
+
+    title = _build_secondary_title(predicted_class)
+    description = _feed_description(detected_at_utc)
+
+    # ① 사진(feed) — 먼저. "누가 왔는지"가 "뭐라고 말했는지"보다 먼저 필요하다.
+    photo_sent, photo_reason, token_dead = _send_part(
+        "photo",
+        lambda: _post_memo_feed(access_token, title, description, image_url),
+    )
+    result["photo_sent"] = photo_sent
+    result["photo_reason"] = photo_reason
+
+    # ② 자막(text) — 나중. 사진이 실패해도 시도한다: 사용자에게 "뭐라고 말했는지"라도
+    #    남기는 편이 아무것도 안 보내는 것보다 낫다(부분 성공은 상태에서 구분된다).
+    if has_caption:
+        if token_dead:
+            # 방금 401 을 받아 토큰을 만료 표시했다 — 같은 죽은 토큰으로 두 번째 왕복을
+            # 태우지 않는다(1차 자기 치유 규약: 치유는 다음 이벤트에서).
+            result["caption_sent"] = False
+            result["caption_reason"] = SKIP_REASON_TOKEN_EXPIRED
+        else:
+            # 자막은 1차와 같은 text 템플릿이라 검증분 _post_memo 를 그대로 재사용한다
+            # (신규 함수 없이 호출만 — §2-A 무변경 유지).
+            caption_sent, caption_reason, _ = _send_part(
+                "caption", lambda: _post_memo(access_token, caption)
+            )
+            result["caption_sent"] = caption_sent
+            result["caption_reason"] = caption_reason
+
+    current_app.logger.info(
+        "kakao secondary: class=%s photo=%s caption=%s photo_reason=%s caption_reason=%s",
+        predicted_class,
+        result["photo_sent"],
+        result["caption_sent"],
+        result["photo_reason"],
+        result["caption_reason"],
+    )
+    return result
