@@ -30,6 +30,7 @@ import json
 import struct
 import tempfile
 import unittest
+import urllib.error
 import urllib.parse
 from pathlib import Path
 from unittest import mock
@@ -51,6 +52,24 @@ _FAKE_KAKAO_CREDS = {
 }
 
 # decisions.md 원문 위치. tests → app → server → repo 루트.
+# dashboard/src/types/notification.ts NotificationItem 필드 11종 (to_dict 계약 SSoT).
+_NOTIFICATION_ITEM_KEYS = (
+    "client_request_id",
+    "request_id",
+    "detected_at",
+    "predicted_class",
+    "confidence",
+    "all_scores",
+    "tof_check",
+    "notification_status",
+    "media",
+    "stt",
+    "device_id",
+)
+
+# HTTPError 생성용 자리표시 URL(실 호출 없음 — urlopen 은 전부 스텁된다).
+KAKAO_MEMO_URL_FOR_TEST = "https://kapi.example.test/memo"
+
 _DECISIONS_MD = Path(__file__).resolve().parents[3] / "docs" / "decisions.md"
 _COPY2_MARKER = "**확정 카피 ② 카카오 알림용**"
 
@@ -1141,6 +1160,427 @@ class DetectRegressionTest(unittest.TestCase):
 
         with self.app.app_context():
             return db.session.get(IdempotencyKey, client_request_id).response_json
+
+    # ── 2차 알림 발송 배선 (A-2, 카테고리 7 — 실발송 없음, 전부 스텁) ────
+    #
+    # 이 절이 고정하는 불변식:
+    #   S1. 자막이 있으면 2건(사진 feed → 자막 text)이, **이 순서로** 나간다.
+    #   S2. 자막이 없으면 사진 1건만 나가고 text 는 **호출되지 않는다**.
+    #   S3. 부분 실패는 완전 성공과 다른 상태로 기록된다(4조합 전부 서로 구분).
+    #   S4. 재시도는 **실패한 건에만** 걸린다 — 성공한 건은 다시 발송되지 않는다.
+    #   S5. 1차 경로(/detect)는 본 배선의 영향을 받지 않는다.
+    #
+    # 스텁 지점은 두 층뿐이다(1차 절 컨벤션 동형):
+    #   (a) app.kakao.send_secondary   = routes 배선/상태 매핑을 볼 때
+    #   (b) app.kakao.get_access_token + urlopen = kakao 내부 순서·재시도를 볼 때
+
+    _JPEG = b"\xff\xd8" + b"\x00" * 64  # SOI 매직바이트 + 더미 본문
+
+    def _seed_pending(self, key, predicted_class="doorbell"):
+        """/detect 를 태워 enrich_status=pending 인 알림 1건을 만든다."""
+        sent = self._policy(predicted_class, 0.95)
+        self.assertEqual(sent["enrich_status"], "pending")  # 전제 확인
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction", return_value=sent
+        ), mock.patch("app.kakao.send_primary_text", return_value=None):
+            r = self._detect(key, "dev-" + key)
+            self.assertEqual(r.status_code, 201)
+
+    def _enrich(self, key):
+        return self.client.post(
+            "/api/v1/enrich",
+            headers={"Authorization": f"Bearer {_DEVICE_TOKEN}"},
+            data={
+                "client_request_id": key,
+                "image": (io.BytesIO(self._JPEG), "a.jpg"),
+                "audio": (io.BytesIO(self.pcm), "a.pcm"),
+            },
+            content_type="multipart/form-data",
+        )
+
+    @staticmethod
+    def _stt(transcript):
+        """mock_enrichment 반환값을 자막만 바꿔 재구성(나머지 mock 형태 유지)."""
+
+        def _fake(request_id):
+            from ..utils import mock_enrichment
+
+            enr = mock_enrichment(request_id)
+            enr["stt"] = None if transcript is None else dict(enr["stt"], transcript=transcript)
+            return enr
+
+        return _fake
+
+    def _run_enrich(self, key, transcript, send_result):
+        """자막·발송결과를 고정한 /enrich 1회. (응답 json, send 호출 mock) 반환."""
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_enrichment", side_effect=self._stt(transcript)
+        ), mock.patch(
+            "app.kakao.send_secondary", return_value=send_result
+        ) as send:
+            r = self._enrich(key)
+            self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+            return r.get_json(), send
+
+    @staticmethod
+    def _result(photo_sent, caption_sent):
+        """send_secondary 반환 계약 그대로의 스텁 결과."""
+        return {
+            "photo_sent": photo_sent,
+            "photo_reason": None if photo_sent else "kakao_api_error",
+            "caption_sent": caption_sent,
+            "caption_reason": None if caption_sent is not False else "kakao_api_error",
+        }
+
+    @staticmethod
+    def _status(body):
+        return body["notification_status"]
+
+    def test_caption_present_sends_photo_then_caption(self) -> None:
+        """S1 — 자막이 있으면 사진(feed) → 자막(text) 2건이 그 순서로 나간다.
+
+        ★ 순서를 결과가 아니라 **wire 로** 검사한다. 두 발송이 서로 독립이라 "순서를
+          뒤집는" 변형은 결과만 보는 케이스로는 검출되지 않는다(NC-4 함정) — 실제
+          urlopen 요청 2건의 template object_type 을 순서대로 본다.
+        """
+        from .. import kakao
+
+        captured = []
+
+        def _capture(req, timeout=None):
+            form = urllib.parse.parse_qs(req.data.decode("utf-8"))
+            captured.append(json.loads(form["template_object"][0]))
+            return _FakeResponse({"result_code": 0})
+
+        with self.app.app_context(), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch("app.kakao.urllib.request.urlopen", side_effect=_capture):
+            from datetime import datetime
+
+            out = kakao.send_secondary(
+                "doorbell", "https://example.test/c/abc.jpg", "택배 왔습니다.",
+                datetime(2026, 9, 4, 6, 30, 0),
+            )
+
+        self.assertEqual([t["object_type"] for t in captured], ["feed", "text"])
+        self.assertEqual(captured[0]["content"]["image_url"], "https://example.test/c/abc.jpg")
+        self.assertEqual(captured[1]["text"], "택배 왔습니다.")
+        self.assertTrue(out["photo_sent"])
+        self.assertTrue(out["caption_sent"])
+        # 자막은 feed description 에 들어가지 않는다(2줄 절단, 2026-09-04 프로브)
+        self.assertNotIn("택배", captured[0]["content"]["description"])
+        # 감지 시각(KST = UTC+9 → 15:30)이 본문이 된다
+        self.assertIn("15:30", captured[0]["content"]["description"])
+
+    def test_caption_absent_sends_photo_only(self) -> None:
+        """S2 — 자막이 없으면 text 를 호출하지 않는다(사진 1건만)."""
+        from .. import kakao
+
+        captured = []
+
+        def _capture(req, timeout=None):
+            form = urllib.parse.parse_qs(req.data.decode("utf-8"))
+            captured.append(json.loads(form["template_object"][0]))
+            return _FakeResponse({"result_code": 0})
+
+        with self.app.app_context(), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch("app.kakao.urllib.request.urlopen", side_effect=_capture):
+            out = kakao.send_secondary("knock", "https://example.test/c/x.jpg", None, None)
+
+        self.assertEqual([t["object_type"] for t in captured], ["feed"])
+        self.assertTrue(out["photo_sent"])
+        # None = "보낼 자막이 없었다". False("보내려다 실패") 와 섞이면 안 된다(§2-C).
+        self.assertIsNone(out["caption_sent"])
+        self.assertIsNone(out["caption_reason"])
+
+    def test_blank_transcript_is_treated_as_no_caption(self) -> None:
+        """공백만 있는 transcript 는 자막 없음으로 접힌다(빈 말풍선 방지)."""
+        from ..routes import _caption_from_stt
+
+        self.assertIsNone(_caption_from_stt(None))
+        self.assertIsNone(_caption_from_stt({}))
+        self.assertIsNone(_caption_from_stt({"transcript": ""}))
+        self.assertIsNone(_caption_from_stt({"transcript": "   "}))
+        self.assertEqual(_caption_from_stt({"transcript": " 안녕 "}), "안녕")
+
+    def test_full_success_state(self) -> None:
+        """S3 (1/4) — 사진O 자막O = 완전 성공."""
+        self._seed_pending("regr-sec-ok")
+        body, send = self._run_enrich("regr-sec-ok", "택배 왔습니다.", self._result(True, True))
+        send.assert_called_once()
+        st = self._status(body)
+        self.assertTrue(st["secondary_sent"])
+        self.assertIsNotNone(st["secondary_sent_at"])
+        self.assertEqual(st["enrich_status"], "completed")
+
+    def test_photo_ok_caption_failed_is_not_full_success(self) -> None:
+        """S3 (2/4) — 사진O 자막X. 완전 성공과 반드시 달라야 한다.
+
+        ★ secondary_sent 를 "사진 성공"으로 두면 대시보드 뱃지가 이 건을 "전송 완료"로
+          렌더한다(derive 가 secondary_sent 를 enrich_status 보다 먼저 본다) — §2-E 가
+          금지한 "부분 성공이 완전 성공처럼 보이는" 상태다. 그래서 False 다.
+        """
+        self._seed_pending("regr-sec-cap-fail")
+        body, _ = self._run_enrich(
+            "regr-sec-cap-fail", "택배 왔습니다.", self._result(True, False)
+        )
+        st = self._status(body)
+        self.assertFalse(st["secondary_sent"])
+        self.assertEqual(st["enrich_status"], "failed")
+        # 사진은 실제로 갔다 → 전달 시각이 남는다(완전 실패와 구분되는 지점)
+        self.assertIsNotNone(st["secondary_sent_at"])
+
+    def test_photo_failed_caption_ok_is_distinct(self) -> None:
+        """S3 (3/4) — 사진X 자막O. 위 (2/4) 와도, 완전 성공과도 다른 상태."""
+        self._seed_pending("regr-sec-photo-fail")
+        body, _ = self._run_enrich(
+            "regr-sec-photo-fail", "택배 왔습니다.", self._result(False, True)
+        )
+        st = self._status(body)
+        self.assertFalse(st["secondary_sent"])
+        self.assertIsNone(st["secondary_sent_at"])   # 사진이 안 갔다
+        self.assertEqual(st["enrich_status"], "completed")  # 자막은 실패가 아니다
+
+    def test_both_failed_is_distinct(self) -> None:
+        """S3 (4/4) — 2건 다 실패. 나머지 3조합 어느 것과도 겹치지 않는다."""
+        self._seed_pending("regr-sec-both-fail")
+        body, _ = self._run_enrich(
+            "regr-sec-both-fail", "택배 왔습니다.", self._result(False, False)
+        )
+        st = self._status(body)
+        self.assertFalse(st["secondary_sent"])
+        self.assertIsNone(st["secondary_sent_at"])
+        self.assertEqual(st["enrich_status"], "failed")
+
+    def test_four_combinations_are_mutually_distinguishable(self) -> None:
+        """S3 — 위 4조합의 상태 3키 조합이 실제로 서로 다름을 한자리에서 확인.
+
+        개별 케이스가 각자 통과해도 두 조합이 같은 튜플로 수렴하면 진단이 불가능하다.
+        """
+        seen = {}
+        for name, (photo, caption) in {
+            "photo_ok_caption_ok": (True, True),
+            "photo_ok_caption_fail": (True, False),
+            "photo_fail_caption_ok": (False, True),
+            "photo_fail_caption_fail": (False, False),
+        }.items():
+            key = f"regr-sec-combo-{name}"
+            self._seed_pending(key)
+            body, _ = self._run_enrich(key, "자막 있음", self._result(photo, caption))
+            st = self._status(body)
+            triple = (
+                st["secondary_sent"],
+                st["secondary_sent_at"] is not None,
+                st["enrich_status"],
+            )
+            self.assertNotIn(triple, seen, f"{name} 이 {seen.get(triple)} 와 같은 상태로 수렴")
+            seen[triple] = name
+        self.assertEqual(len(seen), 4)
+
+    def test_no_caption_success_is_not_marked_failed(self) -> None:
+        """자막이 없어 안 보낸 것은 실패가 아니다 — enrich_status 가 failed 가 되면 안 된다."""
+        self._seed_pending("regr-sec-nocap")
+        body, _ = self._run_enrich("regr-sec-nocap", None, self._result(True, None))
+        st = self._status(body)
+        self.assertTrue(st["secondary_sent"])
+        self.assertEqual(st["enrich_status"], "completed")
+        # 자막 유무 자체는 stt 필드가 보존한다(상태 3키와 합쳐 전 상태 복원 가능)
+        self.assertIsNone(body["stt"])
+
+    def test_retry_applies_only_to_the_failed_part(self) -> None:
+        """S4 — 사진 성공 + 자막 첫 실패 → 재시도는 자막에만. 사진 재발송 0건.
+
+        ★ 이 케이스가 "2건 통째 재시도" 변형의 유일한 검출 지점이다: 결과(둘 다 성공)만
+          보면 통째 재시도도 통과하므로, **wire 요청 시퀀스**를 본다.
+        """
+        from .. import kakao
+
+        seq = []
+
+        def _capture(req, timeout=None):
+            form = urllib.parse.parse_qs(req.data.decode("utf-8"))
+            kind = json.loads(form["template_object"][0])["object_type"]
+            seq.append(kind)
+            if kind == "text" and seq.count("text") == 1:
+                return _FakeResponse({"result_code": -1})  # 자막 1회차만 실패
+            return _FakeResponse({"result_code": 0})
+
+        with self.app.app_context(), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch("app.kakao.urllib.request.urlopen", side_effect=_capture):
+            out = kakao.send_secondary("doorbell", "https://e.test/a.jpg", "자막", None)
+
+        self.assertEqual(seq, ["feed", "text", "text"])
+        self.assertEqual(seq.count("feed"), 1)  # 성공한 사진은 단 한 번만 나갔다
+        self.assertTrue(out["photo_sent"])
+        self.assertTrue(out["caption_sent"])
+
+    def test_retry_budget_is_one_per_part(self) -> None:
+        """재시도는 건당 1회까지 — 계속 실패해도 무한 반복하지 않는다."""
+        from .. import kakao
+        from ..constants import KAKAO_SECONDARY_MAX_ATTEMPTS
+
+        seq = []
+
+        def _capture(req, timeout=None):
+            form = urllib.parse.parse_qs(req.data.decode("utf-8"))
+            seq.append(json.loads(form["template_object"][0])["object_type"])
+            return _FakeResponse({"result_code": -1})
+
+        with self.app.app_context(), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch("app.kakao.urllib.request.urlopen", side_effect=_capture):
+            out = kakao.send_secondary("doorbell", "https://e.test/a.jpg", "자막", None)
+
+        self.assertEqual(seq.count("feed"), KAKAO_SECONDARY_MAX_ATTEMPTS)
+        self.assertEqual(seq.count("text"), KAKAO_SECONDARY_MAX_ATTEMPTS)
+        self.assertFalse(out["photo_sent"])
+        self.assertFalse(out["caption_sent"])
+        self.assertEqual(out["photo_reason"], "kakao_api_error")
+
+    def test_secondary_401_does_not_resend_in_same_request(self) -> None:
+        """401 은 재시도하지 않는다 — 1차가 확립한 자기 치유 규약(다음 이벤트에서 갱신).
+
+        같은 죽은 토큰으로 두 번째 왕복을 태우지도 않는다(자막까지 즉시 중단).
+        """
+        from .. import kakao
+
+        seq = []
+
+        def _capture(req, timeout=None):
+            form = urllib.parse.parse_qs(req.data.decode("utf-8"))
+            seq.append(json.loads(form["template_object"][0])["object_type"])
+            raise urllib.error.HTTPError(KAKAO_MEMO_URL_FOR_TEST, 401, "u", {}, None)
+
+        with self.app.app_context(), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch("app.kakao._invalidate_access_token") as invalidate, mock.patch(
+            "app.kakao.urllib.request.urlopen", side_effect=_capture
+        ):
+            out = kakao.send_secondary("doorbell", "https://e.test/a.jpg", "자막", None)
+
+        self.assertEqual(seq, ["feed"])  # 재시도 0회 + 자막 왕복 0회
+        invalidate.assert_called_once()
+        self.assertEqual(out["photo_reason"], "token_expired")
+        self.assertEqual(out["caption_reason"], "token_expired")
+        self.assertFalse(out["caption_sent"])
+
+    def test_token_unavailable_skips_both_sends(self) -> None:
+        """토큰 확보 실패 → 네트워크 왕복 0회로 두 건 모두 token_expired."""
+        from .. import kakao
+
+        with self.app.app_context(), mock.patch(
+            "app.kakao.get_access_token",
+            side_effect=kakao.KakaoTokenError("no token"),
+        ), mock.patch("app.kakao.urllib.request.urlopen") as urlopen:
+            out = kakao.send_secondary("doorbell", "https://e.test/a.jpg", "자막", None)
+
+        urlopen.assert_not_called()
+        self.assertFalse(out["photo_sent"])
+        self.assertEqual(out["photo_reason"], "token_expired")
+        self.assertEqual(out["caption_reason"], "token_expired")
+
+    def test_secondary_send_precedes_notification_update(self) -> None:
+        """발송은 notif 수정보다 먼저 — kakao 계층 commit 에 미커밋 변경이 딸려가지 않는다.
+
+        1차(test_send_precedes_notification_add)와 같은 규약을 2차에서 재고정한다.
+        순서가 뒤집히면 kakao._assert_commit_is_safe() 가 RuntimeError 를 올린다.
+        """
+        from .. import kakao
+
+        self._seed_pending("regr-sec-order")
+
+        seen = {}
+
+        def _recording(*args, **kwargs):
+            # 발송 시점에 세션이 깨끗해야 한다(= 가드가 통과할 수 있는 상태).
+            kakao._assert_commit_is_safe()
+            seen["called"] = True
+            return self._result(True, True)
+
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_enrichment", side_effect=self._stt("자막")
+        ), mock.patch("app.kakao.send_secondary", side_effect=_recording):
+            r = self._enrich("regr-sec-order")
+            self.assertEqual(r.status_code, 200)
+        self.assertTrue(seen.get("called"))
+
+    def test_failed_enrich_is_terminal_no_duplicate_photo(self) -> None:
+        """S4 — 자막 실패로 failed 가 된 건은 재처리되지 않는다(사진 중복 발송 차단)."""
+        self._seed_pending("regr-sec-terminal")
+        body, _ = self._run_enrich(
+            "regr-sec-terminal", "자막", self._result(True, False)
+        )
+        self.assertEqual(self._status(body)["enrich_status"], "failed")
+
+        with self.app.app_context(), mock.patch(
+            "app.kakao.send_secondary"
+        ) as send:
+            again = self._enrich("regr-sec-terminal")
+            self.assertEqual(again.status_code, 409)
+            send.assert_not_called()  # 두 번째 요청은 발송을 태우지 않는다
+
+    def test_fire_alarm_never_reaches_secondary(self) -> None:
+        """카테고리 7 "화재경보 = 1차 알림만(2차 사진+자막 미발송)" 이 코드로 유지된다."""
+        fire = self._policy("fire_alarm", 0.95)
+        self.assertEqual(fire["enrich_status"], "skipped")  # 전제 확인
+
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction", return_value=fire
+        ), mock.patch("app.kakao.send_primary_text", return_value=None):
+            self.assertEqual(self._detect("regr-sec-fire", "dev-sec-fire").status_code, 201)
+
+        with self.app.app_context(), mock.patch("app.kakao.send_secondary") as send:
+            r = self._enrich("regr-sec-fire")
+            self.assertEqual(r.status_code, 409)
+            send.assert_not_called()
+
+    def test_secondary_wiring_does_not_change_primary_path(self) -> None:
+        """S5 — /detect 응답 계약·게이트가 2차 배선과 무관하게 그대로다(§2-B).
+
+        같은 요청을 두 번 보내 멱등 replay 가 그대로 재생되는지까지 본다.
+        """
+        sent = self._policy("doorbell", 0.95)
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction", return_value=sent
+        ), mock.patch("app.kakao.send_primary_text", return_value=None) as primary, \
+                mock.patch("app.kakao.send_secondary") as secondary:
+            first = self._detect("regr-sec-primary", "dev-sec-primary")
+            self.assertEqual(first.status_code, 201)
+            secondary.assert_not_called()  # /detect 는 2차를 태우지 않는다
+            primary.assert_called_once()
+
+            body = first.get_json()
+            self.assertEqual(sorted(body.keys()), sorted(_NOTIFICATION_ITEM_KEYS))
+            st = body["notification_status"]
+            self.assertTrue(st["primary_sent"])
+            self.assertFalse(st["secondary_sent"])
+            self.assertIsNone(st["secondary_sent_at"])
+            self.assertEqual(st["enrich_status"], "pending")
+
+            replay = self._detect("regr-sec-primary", "dev-sec-primary")
+            self.assertEqual(replay.status_code, 200)
+            self.assertEqual(replay.get_json(), body)
+
+    def test_to_dict_key_count_unchanged(self) -> None:
+        """§2-E 제약 — 2차 배선 후에도 to_dict() 최상위 키는 11개 그대로."""
+        self._seed_pending("regr-sec-keys")
+        body, _ = self._run_enrich("regr-sec-keys", "자막", self._result(True, True))
+        self.assertEqual(len(body), 11)
+        self.assertEqual(sorted(body.keys()), sorted(_NOTIFICATION_ITEM_KEYS))
+        # notification_status 하위도 프론트 NotificationStatus 선언 범위를 넘지 않는다
+        self.assertLessEqual(
+            set(body["notification_status"]),
+            {
+                "primary_sent",
+                "primary_sent_at",
+                "enrich_status",
+                "secondary_sent",
+                "secondary_sent_at",
+                "skip_reason",
+            },
+        )
 
 
 if __name__ == "__main__":
