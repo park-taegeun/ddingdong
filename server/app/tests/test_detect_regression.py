@@ -235,30 +235,34 @@ class DetectRegressionTest(unittest.TestCase):
         r = self._detect("regr-big", "dev-big", audio=b"\x00" * (AUDIO_MAX_BYTES + 2))
         self.assertEqual(r.status_code, 400)
 
-    # ── 판정 정책 (G12 무접촉 확인 포함) ─────────────────────────────────
+    # ── 판정 정책 (G12 확정 사양 고정) ───────────────────────────────────
     def test_prediction_policy_branches(self) -> None:
-        """_apply_prediction_policy 3분기. fire_alarm 이 임계값 검사보다 앞이라는
-        현행 순서(G12)를 '바꾸지 않았음'의 회귀 고정이다.
+        """_apply_prediction_policy 분기. 신뢰도 비교가 fire_alarm early return 보다
+        **앞**이라는 순서를 고정한다.
 
-        ★ 이 순서는 decisions.md 카테고리 3 에 G12 로 등재된 미결이며, 사용자 판단
-          대기 중이다. 본 케이스는 "현행 동작 고정"이지 "확정 사양"이 아니다 —
-          여기서 통과한다는 사실이 이 순서를 옳다고 승인하지 않는다.
+        ★ 이 케이스는 원래 그 반대(fire_alarm 선행)를 "현행 동작 고정"으로 걸어둔
+          것이었고, decisions.md 카테고리 3 G12 미결이 걸려 "확정 사양 아님"으로
+          표기돼 있었다. **2026-09-08 사용자 결정으로 확정**됐다 — 신뢰도 비교를
+          앞으로 옮기고 fire_alarm 의 ToF 우회만 유지한다(근거유형 = 논증,
+          입력 실측 = 33.2 confusion `doorbell → fire_alarm` 오분류 10건 최다 /
+          실경로 재현 2026-09-05·2026-09-08). 케이스를 지우지 않고 갱신하는 이유 =
+          이 지점이 한때 미결이었다는 이력을 남기기 위해서다.
 
-        ★ G12 가 "threshold 선행"으로 결정되면 이 케이스는 실패하는 것이 정상이며,
-          그때 테스트를 새 결정에 맞춰 갱신할 것. 테스트를 먼저 지우고 로직을 고치지
-          말 것 — 순서가 바뀌었다는 사실을 이 실패가 드러내 주는 것이 고정의 목적이다.
+        ★ 이제 이 케이스가 깨지면 확정 사양이 뒤집힌 것이다. 테스트를 고쳐 통과시키지
+          말 것.
         """
         from ..constants import CONFIDENCE_THRESHOLD
         from ..utils import _apply_prediction_policy
 
         scores = {"doorbell": 0.1, "knock": 0.1, "fire_alarm": 0.8}
 
-        # 임계값 미만이어도 fire_alarm 이면 먼저 잡혀 발송된다.
-        # 현행 동작 고정 — G12 가 threshold 선행으로 결정되면 이 단언이 뒤집힌다
-        # (그때 갱신할 것. 위 docstring 참조).
+        # 신 사양: 임계값 미만이면 fire_alarm 도 1차 미발송이다.
+        # (구 사양에서는 여기서 primary_sent=True 였다 — G12 확정으로 뒤집힌 단언.)
         fire = _apply_prediction_policy("fire_alarm", CONFIDENCE_THRESHOLD - 0.1, scores)
-        self.assertTrue(fire["primary_sent"])
-        self.assertIsNone(fire["skip_reason"])
+        self.assertFalse(fire["primary_sent"])
+        self.assertEqual(fire["skip_reason"], "low_confidence")
+        self.assertEqual(fire["enrich_status"], "skipped")
+        # 우회 자체는 유지 — 게이트를 적용하지 않았다는 기록은 그대로 남는다.
         self.assertFalse(fire["tof"]["applied"])
 
         # 엄격 비교(<): 임계값 미만만 skip
@@ -270,6 +274,168 @@ class DetectRegressionTest(unittest.TestCase):
         at = _apply_prediction_policy("doorbell", CONFIDENCE_THRESHOLD, scores)
         self.assertTrue(at["primary_sent"])
         self.assertEqual(at["enrich_status"], "pending")
+
+    # ── G12 확정 사양 신규 케이스 (2026-09-08) ───────────────────────────
+    #
+    # 이 절이 고정하는 불변식 3개:
+    #   J1 신뢰도 게이트는 클래스 무관이다 — fire_alarm 도 0.70 미만이면 미발송.
+    #   J2 경계는 strict `<` 그대로다 — 정확히 0.70 은 fire_alarm 도 발송.
+    #   J3 ToF 우회는 살아 있다 — 임계값을 넘긴 fire_alarm 은 presence=false 여도 발송.
+    #
+    # ★ J1 과 J3 은 함께 걸어야 의미가 있다. J1 만 있으면 "threshold 와 함께 ToF
+    #   우회까지 지운" 과잉 수정이 통과하고, J3 만 있으면 순서를 되돌린 변형이 통과한다.
+
+    _TOF_META_ABSENT = None
+    _TOF_META_REJECT = {
+        "tof_presence": "false",
+        "tof_near_count": "1",
+        "tof_center_mm": "2953",
+        "tof_motion_ndet": "0",
+    }
+
+    @staticmethod
+    def _policy_with_tof(predicted_class, confidence, tof_form=None):
+        """_apply_prediction_policy 직접 호출 + ToF form 을 실제 파서에 통과시킨다."""
+        from ..tof_meta import parse_tof_meta
+        from ..utils import _apply_prediction_policy
+
+        scores = {"doorbell": 0.34, "knock": 0.33, "fire_alarm": 0.33}
+        meta = None if tof_form is None else parse_tof_meta(tof_form)
+        return _apply_prediction_policy(predicted_class, confidence, scores, meta)
+
+    def test_fire_alarm_below_threshold_is_not_sent(self) -> None:
+        """J1. fire_alarm 0.69 → 1차 미발송 + skip_reason=low_confidence.
+
+        0.69 = 임계값 0.70 바로 아래. 구 사양에서는 발송됐다.
+        """
+        r = self._policy_with_tof("fire_alarm", 0.69)
+        self.assertFalse(r["primary_sent"])
+        self.assertEqual(r["skip_reason"], "low_confidence")
+        self.assertEqual(r["enrich_status"], "skipped")
+
+    def test_fire_alarm_at_threshold_is_sent(self) -> None:
+        """J2. fire_alarm 0.70 → 발송. strict `<` 경계 보존(실증 3회: 9/03·9/05·9/08).
+
+        ★ 비교를 `<=` 로 바꾸는 변형은 0.69/0.71 만 검사해서는 잡히지 않는다.
+          경계값 자체를 여기서 고정한다.
+        """
+        from ..constants import CONFIDENCE_THRESHOLD
+
+        self.assertEqual(CONFIDENCE_THRESHOLD, 0.7)
+        r = self._policy_with_tof("fire_alarm", CONFIDENCE_THRESHOLD)
+        self.assertTrue(r["primary_sent"])
+        self.assertIsNone(r["skip_reason"])
+        self.assertEqual(r["enrich_status"], "skipped")  # 2차 미발송(카테고리 7)
+
+    def test_fire_alarm_above_threshold_still_bypasses_tof(self) -> None:
+        """J3. fire_alarm 0.71 + presence=false → 그래도 발송(ToF 우회 유지).
+
+        ★ 이 케이스가 깨지면 threshold 를 앞으로 옮기면서 ToF 우회까지 지운 것이다 —
+          카테고리 3 "화재경보: ToF 우회" 위배. 7.1 대피 수칙 발송이 사람 검증에
+          묶이면 안 된다.
+        """
+        r = self._policy_with_tof("fire_alarm", 0.71, self._TOF_META_REJECT)
+        self.assertTrue(r["primary_sent"])
+        self.assertIsNone(r["skip_reason"])
+        self.assertFalse(r["tof"]["applied"])
+        self.assertIsNone(r["tof"]["passed"])
+        self.assertTrue(r["tof"]["reason"].startswith("fire_alarm_bypass"))
+
+    def test_low_confidence_fire_alarm_with_tof_reject_is_not_sent(self) -> None:
+        """J1. fire_alarm 0.45 + presence=false → 미발송.
+
+        2026-09-08 실경로에서 `fire_alarm 0.45` 가 primary_sent=True 로 관찰된 바로
+        그 조합이다. 신 사양에서는 발송되지 않는다.
+        우회 기록(fire_alarm_bypass)은 남되 발송은 신뢰도에서 막힌다 —
+        skip_reason 은 먼저 걸린 low_confidence 다(tof_rejected 아님).
+        """
+        r = self._policy_with_tof("fire_alarm", 0.45, self._TOF_META_REJECT)
+        self.assertFalse(r["primary_sent"])
+        self.assertEqual(r["skip_reason"], "low_confidence")
+        self.assertFalse(r["tof"]["applied"])
+        self.assertTrue(r["tof"]["reason"].startswith("fire_alarm_bypass"))
+
+    def test_doorbell_and_knock_low_confidence_unchanged(self) -> None:
+        """초인종·노크 저신뢰는 무회귀 — 신 사양이 이 두 클래스를 건드리지 않는다."""
+        for cls in ("doorbell", "knock"):
+            with self.subTest(cls=cls):
+                r = self._policy_with_tof(cls, 0.69)
+                self.assertFalse(r["primary_sent"])
+                self.assertEqual(r["skip_reason"], "low_confidence")
+                at = self._policy_with_tof(cls, 0.70)
+                self.assertTrue(at["primary_sent"])
+                self.assertEqual(at["enrich_status"], "pending")
+
+    def test_policy_decision_table_is_total(self) -> None:
+        """전 분기 열거 — 클래스 3 × 신뢰도 4 × ToF 4상태 = 48조합.
+
+        고정하는 것 둘:
+          ① 미정의 동작 0 — 48조합 전부가 닫힌 값 도메인 안에서 끝난다.
+          ② 48조합이 고유 결정 4행으로 붕괴한다. 행이 늘면 분기가 새로 생긴 것이고,
+             줄면 분기 하나가 죽은 것이다 — 어느 쪽이든 여기서 드러나야 한다.
+        """
+        classes = ("doorbell", "knock", "fire_alarm")
+        # 경계 0.70 을 반드시 포함한다(<= 변형 검출용).
+        confidences = (0.45, 0.69, 0.70, 0.95)
+        tof_forms = {
+            "absent": None,
+            "pass": {
+                "tof_presence": "true",
+                "tof_near_count": "13",
+                "tof_center_mm": "1015",
+                "tof_motion_ndet": "1",
+            },
+            "reject": self._TOF_META_REJECT,
+            # 이탈: presence 를 읽을 수 없는 값 → tof_meta state="invalid"
+            "invalid": {
+                "tof_presence": "maybe",
+                "tof_near_count": "13",
+                "tof_center_mm": "1015",
+                "tof_motion_ndet": "1",
+            },
+        }
+
+        rows = {}
+        total = 0
+        for cls in classes:
+            for conf in confidences:
+                for tof_name, form in tof_forms.items():
+                    total += 1
+                    r = self._policy_with_tof(cls, conf, form)
+                    # ① 닫힌 도메인 — 미정의 값이 새어나오지 않는다
+                    self.assertIn(r["skip_reason"], (None, "low_confidence", "tof_rejected"))
+                    self.assertIn(r["enrich_status"], ("pending", "skipped"))
+                    self.assertIsInstance(r["primary_sent"], bool)
+                    self.assertIn(r["tof"]["passed"], (None, True, False))
+                    # 미발송이면 enrich 는 반드시 skipped (상태전이 일관)
+                    if not r["primary_sent"]:
+                        self.assertEqual(r["enrich_status"], "skipped")
+                    # 발송인데 skip_reason 이 붙는 조합은 없다
+                    if r["primary_sent"]:
+                        self.assertIsNone(r["skip_reason"])
+                    key = (r["primary_sent"], r["enrich_status"], r["skip_reason"])
+                    rows.setdefault(key, []).append((cls, conf, tof_name))
+
+        self.assertEqual(total, 48)
+        # ② 고유 결정 4행
+        self.assertEqual(
+            sorted(rows),
+            sorted(
+                [
+                    (False, "skipped", "low_confidence"),   # 저신뢰 전 클래스 (24)
+                    (False, "skipped", "tof_rejected"),     # 고신뢰 초인종·노크 + 거부 (4)
+                    (True, "skipped", None),                # 고신뢰 fire_alarm (8)
+                    (True, "pending", None),                # 고신뢰 초인종·노크 통과 (12)
+                ]
+            ),
+        )
+        self.assertEqual(len(rows[(False, "skipped", "low_confidence")]), 24)
+        self.assertEqual(len(rows[(True, "skipped", None)]), 8)
+        self.assertEqual(len(rows[(True, "pending", None)]), 12)
+        self.assertEqual(len(rows[(False, "skipped", "tof_rejected")]), 4)
+        # 저신뢰 24건에 fire_alarm 8건이 전부 포함된다 = 신뢰도 게이트가 클래스 무관
+        low_rows = rows[(False, "skipped", "low_confidence")]
+        self.assertEqual(sum(1 for c, _, _ in low_rows if c == "fire_alarm"), 8)
 
     # ── G14: primary_sent_at 분리 ────────────────────────────────────────
     def test_primary_sent_at_is_not_detected_at(self) -> None:

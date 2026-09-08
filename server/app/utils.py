@@ -90,17 +90,29 @@ def _apply_prediction_policy(predicted_class, confidence, all_scores, tof_meta=N
     pivot) — 랜덤 생성이든 ModelRunner 실추론이든 이 함수를 거치면 동일 판정을 받는다.
 
     분기(위에서부터 순서대로 — 먼저 걸린 사유가 skip_reason 이 된다):
+      - 신뢰도 < 임계값 → 1차 알림 skip (skip_reason="low_confidence"), 클래스 무관
       - fire_alarm → ToF 우회, 1차 알림만(enrich skipped) (카테고리 7 화재경보)
-      - 신뢰도 < 임계값 → 1차 알림 skip (skip_reason="low_confidence")
       - ToF 게이트 적용 + 미통과 → 1차 알림 skip (skip_reason="tof_rejected")
       - 그 외 → 1차 알림 발송, enrich 대기(pending)
 
-    ★ G12 무접촉: 위 1·2번 분기(fire_alarm early return ↔ 신뢰도 비교)의 상대 순서는
-      decisions.md 카테고리 3 에 미결로 등재돼 사용자 판단 대기 중이라 **건드리지
-      않았다.** ToF 게이트를 두 분기 사이가 아니라 신뢰도 비교 **뒤**에 넣은 것도
-      같은 이유다 — 사이에 끼우면 "현행 순서"가 무엇이었는지가 흐려진다.
-      부수 결과로 저신뢰 + ToF 미통과가 겹치면 skip_reason 은 low_confidence 로
-      기록된다(둘 다 미발송이라 발송 여부는 어느 순서든 동일).
+    ★ G12 확정 (결정일 2026-09-08, 근거유형 = 논증): 신뢰도 비교를 fire_alarm
+      early return **앞**으로 옮겼다. 화재경보도 신뢰도 0.70 미만이면 1차 미발송이고,
+      0.70 이상이면 ToF presence 와 무관하게 발송된다(ToF 우회 자체는 그대로 유지).
+      구 동작 = 저신뢰 화재경보도 1차 발송(decisions.md 카테고리 3 G12 미결 서술).
+      판단 근거 3:
+        ① 카테고리 3 ① "화재경보: ToF 우회 (무조건 발송)" 의 "무조건" 이 ToF 게이트
+           문맥인지 신뢰도 게이트까지인지 원 결정이 갈리지 않았다 → ToF 문맥으로 확정.
+        ② 부스 시연에서 초인종을 눌렀는데 화재 대피 알림이 나가면 그 자체가 사고다.
+        ③ 화재경보는 지속음이라 한 이벤트를 놓쳐도 후속 프레임에서 재포착되므로
+           miss 비용이 비대칭적이지 않다.
+      입력 실측: 33.2 confusion matrix `doorbell → fire_alarm` 오분류 **10건(최다)** /
+      실경로 재현 = 2026-09-05 mock `fire_alarm` 0.66·0.58·0.53·0.47 이 1차 발송,
+      2026-09-08 `fire_alarm 0.45` 가 primary_sent=True 로 재확인.
+      ★ 바꾼 것은 비교 **시점**뿐이다 — CONFIDENCE_THRESHOLD 값(0.7)도 strict `<`
+        경계도 불변이다(경계 실증 3회: 2026-09-03 / 09-05 / 09-08).
+      ToF 게이트를 신뢰도 비교 **뒤**에 두는 배치는 유지한다(6.2 pivot 기록 / PR #43
+        과 같은 이유 — 사이에 끼우면 이력이 흐려진다). 부수 결과로 저신뢰 + ToF
+        미통과가 겹치면 skip_reason 은 low_confidence 로 기록된다(둘 다 미발송).
 
     tof_meta = tof_meta.parse_tof_meta() 결과, 또는 None(= ToF 를 모르는 호출부).
     None 은 "부재"로 취급해 게이트를 적용하지 않는다(현행 동작 보존, fail-open).
@@ -110,16 +122,6 @@ def _apply_prediction_policy(predicted_class, confidence, all_scores, tof_meta=N
         tof_meta = tof_meta_wire.absent_meta()
     tof = _tof_decision(predicted_class, tof_meta)
 
-    if predicted_class == "fire_alarm":
-        return {
-            "predicted_class": predicted_class,
-            "confidence": confidence,
-            "all_scores": all_scores,
-            "tof": tof,
-            "primary_sent": True,
-            "enrich_status": "skipped",
-            "skip_reason": None,
-        }
     if confidence < CONFIDENCE_THRESHOLD:
         return {
             "predicted_class": predicted_class,
@@ -129,6 +131,16 @@ def _apply_prediction_policy(predicted_class, confidence, all_scores, tof_meta=N
             "primary_sent": False,
             "enrich_status": "skipped",
             "skip_reason": "low_confidence",
+        }
+    if predicted_class == "fire_alarm":
+        return {
+            "predicted_class": predicted_class,
+            "confidence": confidence,
+            "all_scores": all_scores,
+            "tof": tof,
+            "primary_sent": True,
+            "enrich_status": "skipped",
+            "skip_reason": None,
         }
     if tof["applied"] and not tof["passed"]:
         # 사람 없음 → 1차 알림 미발송. skip_reason 은 기존 enum 값 재사용
