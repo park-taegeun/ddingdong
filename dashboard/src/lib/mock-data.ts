@@ -5,7 +5,15 @@ import type { NotificationItem } from "@/types/notification"
 import type { StatsResponse } from "@/types/stats"
 import { DEVICE_ID } from "./constants"
 
-// 알림 5종: 도어벨(성공) / 노크(성공) / 화재경보(우회) / 도어벨(신뢰도 부족) / 노크(2차 처리중)
+// 알림 5종: 초인종(성공) / 노크(성공) / 화재경보(우회) / 초인종(신뢰도 부족) / 노크(2차 처리중)
+//
+// ★ tof_check.reason = 서버가 실제로 내는 어휘 형식(tof_meta.telemetry_summary):
+//   "presence=<true|false> near=<n>/64 center=<n>mm ndet=<n>/16" — 9.3(b) 펌웨어 시리얼
+//   로그 표기와 동형이다. 구 가짜 ToF 하드코딩 문자열은 서버 /detect 경로에서 이미
+//   소멸했으므로(6.4(e) 실측) 여기 남아 있으면 화면이 실물과 어긋난다(6.4(f) 미결).
+//   수치 자체는 개발용 픽스처지 실측값이 아니다 — 형식만 실물을 따른다.
+// ★ 3상태(통과 / 거부 / 미적용)가 모두 들어 있어야 NotificationTof 의 분기를 개발 중에
+//   눈으로 확인할 수 있다: 통과 3건 + 거부 1건(신뢰도 부족 건) + 미적용 1건(화재경보).
 export const MOCK_NOTIFICATIONS: NotificationItem[] = [
   {
     client_request_id: "esp_1716878531_0005",
@@ -17,7 +25,7 @@ export const MOCK_NOTIFICATIONS: NotificationItem[] = [
     tof_check: {
       applied: true,
       passed: true,
-      reason: "zone_count=11 >= 8 + motion=true",
+      reason: "presence=true near=11/64 center=1015mm ndet=4/16",
     },
     notification_status: {
       primary_sent: true,
@@ -44,7 +52,7 @@ export const MOCK_NOTIFICATIONS: NotificationItem[] = [
     tof_check: {
       applied: true,
       passed: true,
-      reason: "zone_count=12 >= 8 + motion=true",
+      reason: "presence=true near=13/64 center=980mm ndet=3/16",
     },
     notification_status: {
       primary_sent: true,
@@ -76,7 +84,7 @@ export const MOCK_NOTIFICATIONS: NotificationItem[] = [
     tof_check: {
       applied: true,
       passed: true,
-      reason: "zone_count=10 >= 8 + motion=true",
+      reason: "presence=true near=10/64 center=1150mm ndet=2/16",
     },
     notification_status: {
       primary_sent: true,
@@ -92,7 +100,8 @@ export const MOCK_NOTIFICATIONS: NotificationItem[] = [
     },
     stt: {
       transcript: "계세요? 옆집인데요.",
-      confidence: 0.88,
+      // 실 CSR 경로 재현 — 신뢰도 미제공(30.9). "0%" 가 아니라 "정보 없음"으로 떠야 한다.
+      confidence: null,
       language: "ko-KR",
       processed_at: "2026-05-28T14:12:17.900+09:00",
     },
@@ -133,9 +142,11 @@ export const MOCK_NOTIFICATIONS: NotificationItem[] = [
     confidence: 0.52,
     all_scores: { doorbell: 0.52, knock: 0.39, fire_alarm: 0.09 },
     tof_check: {
+      // 거부 상태(passed=false). 신뢰도 게이트가 ToF 보다 먼저 걸려(G12 확정, PR #46)
+      // skip_reason 은 low_confidence 지만, 게이트를 적용해 사람이 없었다는 기록은 남는다.
       applied: true,
-      passed: true,
-      reason: "zone_count=9 >= 8 + motion=true",
+      passed: false,
+      reason: "presence=false near=1/64 center=2953mm ndet=0/16",
     },
     notification_status: {
       primary_sent: false,
