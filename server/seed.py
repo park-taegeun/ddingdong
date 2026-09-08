@@ -31,6 +31,14 @@ from app.utils import to_kst_iso, utc_now
 _IMG_DOORBELL = "/static/captures/demo-doorbell.svg"
 _IMG_KNOCK = "/static/captures/demo-knock.svg"
 
+# tof_reason = 서버가 실제로 내는 어휘 형식(app/tof_meta.py telemetry_summary):
+#   "presence=<true|false> near=<n>/64 center=<n>mm ndet=<n>/16"
+# 9.3(b) 펌웨어 시리얼 로그 필드 표기와 동형이라 통합 후 서버 기록 ↔ 시리얼 로그를 같은
+# 어휘로 대조할 수 있다(6.4(b)). 구 가짜 ToF 하드코딩 문자열은 /detect 경로에서 이미
+# 소멸했으나(6.4(e) 실측) 시드에는 남아 있었다(6.4(f) 미결) — 부스 데모에서 시드가
+# 화면에 뜨면 관람객에게 그 가짜 문자열이 그대로 보인다.
+# ★ 수치 자체는 데모 픽스처지 실측값이 아니다. 형식만 실물을 따른다.
+#
 # 삽입 명세 5건 — 오래된 순(minutes_ago 큰 값)으로 나열해 뒤에 삽입될수록
 # id(=cursor 정렬 키)가 커지고, 대시보드(id desc)에서 최신이 위로 온다.
 _SEED_SPECS = [
@@ -44,7 +52,7 @@ _SEED_SPECS = [
         "all_scores": {"doorbell": 0.87, "knock": 0.09, "fire_alarm": 0.04},
         "tof_applied": True,
         "tof_passed": True,
-        "tof_reason": "zone_count=12 >= 8 + motion=true",
+        "tof_reason": "presence=true near=13/64 center=980mm ndet=3/16",
         "primary_sent": True,
         "enrich_status": "completed",
         "secondary_sent": True,
@@ -65,7 +73,7 @@ _SEED_SPECS = [
         "all_scores": {"doorbell": 0.12, "knock": 0.81, "fire_alarm": 0.07},
         "tof_applied": True,
         "tof_passed": True,
-        "tof_reason": "zone_count=10 >= 8 + motion=true",
+        "tof_reason": "presence=true near=10/64 center=1150mm ndet=2/16",
         "primary_sent": True,
         "enrich_status": "completed",
         "secondary_sent": True,
@@ -108,7 +116,7 @@ _SEED_SPECS = [
         "all_scores": {"doorbell": 0.52, "knock": 0.31, "fire_alarm": 0.17},
         "tof_applied": True,
         "tof_passed": True,
-        "tof_reason": "zone_count=9 >= 8 + motion=true",
+        "tof_reason": "presence=true near=9/64 center=1240mm ndet=1/16",
         "primary_sent": False,
         "enrich_status": "skipped",
         "secondary_sent": False,
@@ -129,7 +137,7 @@ _SEED_SPECS = [
         "all_scores": {"doorbell": 0.10, "knock": 0.84, "fire_alarm": 0.06},
         "tof_applied": True,
         "tof_passed": True,
-        "tof_reason": "zone_count=11 >= 8 + motion=true",
+        "tof_reason": "presence=true near=11/64 center=1015mm ndet=4/16",
         "primary_sent": True,
         "enrich_status": "processing",
         "secondary_sent": False,

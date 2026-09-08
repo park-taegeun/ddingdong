@@ -11,6 +11,7 @@ import type { NotificationItem } from "@/types/notification"
 import { NotificationImage } from "./NotificationImage"
 import { NotificationStatusBadge } from "./NotificationStatusBadge"
 import { NotificationSTT } from "./NotificationSTT"
+import { NotificationTof } from "./NotificationTof"
 
 export function NotificationCard({
   notification,
@@ -73,6 +74,12 @@ export function NotificationCard({
               보내지 않았어요.
             </p>
           )}
+
+          {/* 거리 센서(ToF) 검증 결과 — 통과/거부/미적용 3상태를 항상 표시한다.
+              숨기면 "ToF 부재"가 "통과"와 같아 보인다(6.4(c) 불변식). */}
+          <div className="mt-3">
+            <NotificationTof tof={notification.tof_check} />
+          </div>
 
           {/* STT 자막 */}
           {notification.stt && (

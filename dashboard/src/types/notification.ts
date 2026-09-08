@@ -46,7 +46,9 @@ export interface NotificationMedia {
 
 export interface NotificationStt {
   transcript: string
-  confidence: number
+  // number | null — 실 CSR 은 신뢰도를 주지 않아 서버가 null 을 낸다(2026-09-08 ④런타임,
+  // server/app/routes.py _stt_from_audio: `"confidence": None`). mock 경로만 숫자다.
+  confidence: number | null
   language: string
   processed_at: string
 }
