@@ -31,6 +31,14 @@ class Config:
     KAKAO_ACCESS_TOKEN = os.environ.get("KAKAO_ACCESS_TOKEN", "")
     KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN", "")
 
+    # 카테고리 7 STT / 30.9: Naver CSR 자격증명. `.env` 에는 이미 두 키가 있었으나
+    # Config 가 읽지 않아 앱에서는 존재하지 않는 값이었다(2026-09-08 실측 —
+    # "env 에 키가 있다 ≠ Config 가 그 키를 읽는다", 학습 14).
+    # 미설정 = 빈 문자열 → stt.is_real_mode() False → CSR 미호출 + mock 자막 유지
+    # (MODEL_PATH 게이트와 같은 패턴, 카테고리 6.2). 한쪽만 설정도 mock 취급이다.
+    NCP_CLIENT_ID = os.environ.get("NCP_CLIENT_ID", "")
+    NCP_CLIENT_SECRET = os.environ.get("NCP_CLIENT_SECRET", "")
+
     # 카테고리 6: SQLite + Flask-SQLAlchemy. 미설정 시 server/ddingdong.db (*.db = gitignore)
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         "DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'ddingdong.db')}"
