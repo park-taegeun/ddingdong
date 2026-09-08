@@ -1,7 +1,7 @@
 """API v1 엔드포인트 4종 (카테고리 6.1).
 
   POST /api/v1/detect         ESP32 1차: multipart 오디오 수신+디코딩 + mock 추론 + notification 저장 (Device Token)
-  POST /api/v1/enrich         ESP32 2차: 사진/STT mock 채움 (Device Token)
+  POST /api/v1/enrich         ESP32 2차: 사진 실저장 + STT(CSR, env 게이트) + 카카오 2차 발송 (Device Token)
   GET  /api/v1/notifications  대시보드 폴링: cursor pagination (Dashboard Token)
   GET  /api/v1/stats          대시보드 폴링: period=today 집계 (Dashboard Token)
 """
@@ -13,7 +13,7 @@ import numpy as np
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import select
 
-from . import image_store, kakao, model_serving, rate_limit, tof_meta
+from . import image_store, kakao, model_serving, rate_limit, stt, tof_meta
 from .auth import dashboard_auth, device_auth
 from .constants import (
     AUDIO_FILE_FIELD,
@@ -287,14 +287,24 @@ def enrich():
         decode_ms,
     )
 
-    # enrich 실처리 중 STT(Clova)·오디오 호스팅은 mock 유지 — wire 계약 절반만(11주차).
+    # enrich 실처리 중 오디오 호스팅은 mock 유지 — wire 계약 절반만(11주차).
     enr = mock_enrichment(notif.request_id)
+    # STT 소스 전환(카테고리 7 / 30.9): NCP 자격증명이 설정돼 있으면 mock 문구 대신 실
+    # CSR 인식 결과를 쓴다. 게이트는 model_serving 의 실추론 게이트와 같은 패턴이고,
+    # 미설정이면 mock_enrichment 의 자막이 그대로 남는다(오프라인 개발·회귀 경로 보존).
+    if stt.is_real_mode():
+        stt_result = _stt_from_audio(audio_bytes)
+    else:
+        # 로그에서 "호출했는데 결과가 없다"와 "아예 호출하지 않았다"가 갈려야 한다
+        # (6.4 의 "통과 vs 부재로 미적용" 불변식과 동형).
+        current_app.logger.info("enrich stt: mode=mock called=no (NCP 자격증명 미설정)")
+        stt_result = enr["stt"]
     # 이미지 = 실 로컬 저장 + opaque public URL 로 실코드화(카테고리 7, image_store 스켈레톤).
     # 카카오 memo 는 image_url(public URL)만 수신하므로 서버가 스스로 호스팅한 URL 을 싣는다.
     # thumbnail_url/audio_url 은 mock 유지(리사이즈·오디오 호스팅 = 11주차).
     opaque_id = image_store.store_image(image_bytes)
     image_url = image_store.public_url(opaque_id)
-    caption = _caption_from_stt(enr["stt"])
+    caption = _caption_from_stt(stt_result)
 
     # 2차 알림 실발송 (카테고리 7). 사진(feed) → 자막(text) 2건 분할.
     # ★ 호출 지점: 아래 notif 필드 수정보다 반드시 앞이어야 한다. 토큰 갱신·401 표시가
@@ -312,7 +322,7 @@ def enrich():
     notif.image_url = image_url
     notif.image_thumbnail_url = enr["media"]["image_thumbnail_url"]
     notif.audio_url = enr["media"]["audio_url"]
-    notif.stt = enr["stt"]
+    notif.stt = stt_result
     # 2차 발송 결과의 상태 표현 (§2-E). to_dict() 키를 늘리지 않고 **기존 3키의 값
     # 조합**으로 4조합을 구분한다 — 프론트 NotificationItem 11필드 계약 무변경.
     #   secondary_sent    = 의도한 발송이 **전부** 성공했는가
@@ -333,16 +343,73 @@ def enrich():
     return jsonify(notif.to_dict()), 200
 
 
+def _stt_from_audio(audio_bytes):
+    """실 CSR 1회 호출 → stt dict, 또는 None(= 자막 부재).
+
+    🔴 **최우선 불변식 — STT 실패는 enrich_status="failed" 가 아니다.**
+      7.6(d)에서 "failed" 는 **자막 발송 실패**를 뜻하고, 7.6(e)는 **"자막 없음 ≠
+      실패"**로 이미 구분해 뒀다(자막 부재 시 feed 1건만 발송). 따라서 STT 의 모든
+      실패 모드 — 타임아웃 / API 오류 / 인증 거부 / 빈 텍스트 — 는 여기서 None 으로
+      접혀 **기존 "자막 부재" 경로에 합류**한다. 사진은 정상 발송되고 상태는
+      secondary_sent=True / enrich_status="completed" 로 남는다.
+      깨면 PR #44 가 세운 4조합 상태 표현이 통째로 무너진다(회귀로 고정돼 있다).
+
+    ★ 세 상태가 로그에서 갈린다: 미호출(mode=mock, 호출부) / result=ok / result=empty
+      / result=failed. "호출했는데 인식이 비었다"와 "호출이 실패했다"를 섞지 않는다.
+
+    ★ 재시도 없음 — stt.transcribe 를 정확히 1회 부른다(근거 = stt.py docstring:
+      15초 단위 과금 + 소프트 한도). 여기에 루프를 두면 그 근거가 무력화된다.
+
+    ★ confidence=None (신규 미결): CSR 응답은 `{"text": ...}` 뿐이라 신뢰도를 주지
+      않는다(30.9 실측). 없는 값을 지어내지 않고 None 으로 남긴다 — 프론트
+      NotificationStt.confidence 타입은 `number` 라서 대시보드는 이 값을 "0%"로
+      렌더한다(formatConfidence). 카카오톡 자막 경로에는 영향이 없다.
+      판정 방법 = 대시보드에서 실 STT 건의 신뢰도 표기를 1회 확인하고, "0%" 로
+      보이면 프론트에 null 가드 1줄을 넣는다(8.3 뱃지 과소 표기와 같은 대시보드
+      소액 PR 소관 — 본 PR 은 프론트 무변경이 제약이라 여기서 고치지 않는다).
+    """
+    started = time.monotonic()
+    try:
+        transcript = stt.transcribe(audio_bytes)
+    except (stt.SttAuthError, stt.SttRequestError) as exc:
+        # 전문·시크릿 없이 원인만. 자막 부재로 흡수되므로 요청은 200 으로 계속된다.
+        current_app.logger.warning(
+            "enrich stt: mode=real result=failed elapsed_ms=%.2f cause=%s",
+            (time.monotonic() - started) * 1000,
+            exc,
+        )
+        return None
+    elapsed_ms = (time.monotonic() - started) * 1000
+    if not transcript:
+        current_app.logger.info(
+            "enrich stt: mode=real result=empty elapsed_ms=%.2f", elapsed_ms
+        )
+        return None
+    current_app.logger.info(
+        "enrich stt: mode=real result=ok elapsed_ms=%.2f transcript_len=%d",
+        elapsed_ms,
+        len(transcript),
+    )
+    return {
+        "transcript": transcript,
+        "confidence": None,  # CSR 미제공 — 위 docstring 참조
+        "language": "ko-KR",
+        "processed_at": kst_now_iso(),
+    }
+
+
 def _caption_from_stt(stt):
     """STT 결과 → 2차 자막 문자열. 없으면 None(= text 발송 자체를 건너뛴다).
 
-    ★ defer (G23, STT 미구현): 지금 들어오는 stt 는 utils.mock_enrichment 가 만든 mock
-      이다. 실 STT(CSR / CLOVA Speech, 카테고리 7)가 붙으면 mock_enrichment 를 실호출로
-      교체하는 것만으로 이 배선은 그대로 동작한다 — 본 함수도 send_secondary 도 "누가
-      transcript 를 만들었는지"를 묻지 않기 때문이다.
-      판정 방법 = 실 STT 배선 후 /enrich 를 1회 실호출해 ① 카카오톡에 도착한 자막이
-      mock 문구(utils._MOCK_TRANSCRIPTS 4종)가 아닌 실제 발화인지 ② 무음 클립에서
-      transcript 가 비어 caption_sent=None(미발송)으로 떨어지는지 두 가지를 확인한다.
+    ★ defer (G23, STT 미구현) → **소스 배선 CLOSE (2026-09-08)**: 위 defer 가 예고한
+      대로 "mock_enrichment 를 실호출로 교체하는 것만으로 배선이 그대로 동작"함이
+      확인됐다 — 본 함수도 send_secondary 도 무변경이고, 바뀐 것은 들어오는 stt dict 의
+      **출처**뿐이다(_stt_from_audio, stt.is_real_mode() 게이트). 자격증명 미설정이면
+      여전히 mock_enrichment 의 dict 가 들어온다.
+      ⚠️ 남은 defer = **④런타임 미실증**. 판정 방법(원 defer 그대로) = 실 CSR 자격증명을
+      넣고 /enrich 를 1회 실호출해 ① 카카오톡에 도착한 자막이 mock 문구
+      (utils._MOCK_TRANSCRIPTS 4종)가 아닌 실제 발화인지 ② 무음 클립에서 transcript 가
+      비어 caption_sent=None(미발송)으로 떨어지는지 두 가지를 확인한다.
 
     빈 문자열·공백만 있는 transcript 를 None 으로 접는 이유: 카카오 text 템플릿에 빈
     본문을 실어 보내면 사용자에게 빈 말풍선이 도착한다. "보낼 자막이 없다"와 같은 상태다.

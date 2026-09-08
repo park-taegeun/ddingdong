@@ -1582,6 +1582,453 @@ class DetectRegressionTest(unittest.TestCase):
             },
         )
 
+    # ── 실 STT 소스 배선 (CSR, 카테고리 7 / 30.9 — 실호출 없음, 전부 스텁) ──
+    #
+    # 이 절이 고정하는 불변식:
+    #   T1. 🔴 STT 실패는 enrich_status="failed" 가 **아니다**. 모든 실패 모드(빈 텍스트
+    #       / API 오류 / 타임아웃 / 인증 거부)가 7.6(e) "자막 없음 ≠ 실패" 경로로
+    #       합류한다 — 사진 1건만 나가고 secondary_sent 는 True 로 남는다.
+    #   T2. 세 상태가 갈린다: 미호출(자격증명 미설정) / 호출 성공 / 호출 실패.
+    #   T3. CSR 호출은 **정확히 1회**다(재시도 없음 — 15초 단위 과금, 30.9).
+    #   T4. CSR 로 나가는 바이트는 **WAV 컨테이너**다(raw PCM 직송 미검증 경로 금지).
+    #   T5. 자격증명 미설정이면 기존 mock 자막 경로가 그대로 유지된다(무회귀).
+    #
+    # ★ 스텁 지점은 urlopen 한 층뿐이다. app.stt 와 app.kakao 는 같은
+    #   urllib.request 모듈을 공유하므로 하나의 스텁이 CSR·카카오 요청을 **한 시퀀스로**
+    #   받는다 — 덕분에 "CSR → feed → text" 순서와 호출 횟수를 wire 로 직접 볼 수 있다
+    #   (7.6(g) NC-4 가 남긴 교훈: 결과만 보는 케이스는 순서·횟수 변형을 놓친다).
+
+    # 자리표시 NCP 자격증명. 실값 아님 — _TestConfig 는 Config 를 상속하지만
+    # 개발자 로컬 .env 값이 들어올 수 있으므로 real 모드 케이스에서만 patch.dict 로
+    # 이 더미를 덮어 쓴다(카카오 _FAKE_KAKAO_CREDS 컨벤션 동형).
+    _FAKE_NCP_CREDS = {
+        "NCP_CLIENT_ID": "test-ncp-client-id-not-real",
+        "NCP_CLIENT_SECRET": "test-ncp-client-secret-not-real",
+    }
+
+    def _csr_and_kakao(self, csr_result):
+        """CSR + 카카오 요청을 한 시퀀스로 받는 urlopen 스텁.
+
+        csr_result = _FakeResponse(...) 이면 그 응답을, 예외 인스턴스면 raise.
+        반환 (side_effect 함수, captured 리스트). captured 원소 = ("csr", 요청바이트)
+        또는 ("kakao", template_object dict) — 순서가 그대로 보존된다.
+        """
+        from ..constants import STT_CSR_URL
+
+        captured = []
+
+        def _side_effect(req, timeout=None):
+            if req.full_url.startswith(STT_CSR_URL):
+                captured.append(("csr", req.data))
+                if isinstance(csr_result, Exception):
+                    raise csr_result
+                return csr_result()
+            form = urllib.parse.parse_qs(req.data.decode("utf-8"))
+            captured.append(("kakao", json.loads(form["template_object"][0])))
+            return _FakeResponse({"result_code": 0})
+
+        return _side_effect, captured
+
+    def _run_enrich_real(self, key, csr_result):
+        """자격증명이 설정된(real) 상태로 /enrich 1회. (응답 json, captured) 반환."""
+        side_effect, captured = self._csr_and_kakao(csr_result)
+        with self.app.app_context(), mock.patch.dict(
+            self.app.config, self._FAKE_NCP_CREDS
+        ), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch("app.kakao.urllib.request.urlopen", side_effect=side_effect):
+            r = self._enrich(key)
+            self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+            return r.get_json(), captured
+
+    @staticmethod
+    def _kinds(captured):
+        return [kind for kind, _ in captured]
+
+    # ── T4 · NC-3: WAV 컨테이너 합성 ─────────────────────────────────────
+    def test_wav_header_fields_are_derived_from_input(self) -> None:
+        """생성 바이트를 직접 뜯어 헤더 필드를 검사한다.
+
+        ★ NC-3 함정: 실 API 를 부르지 않는 테스트에서 샘플레이트를 16000→8000 으로
+          바꿔도 **인식 결과는 동일**하다(응답이 스텁이므로). 그래서 결과가 아니라
+          **생성된 바이트**를 본다. 아래 assert 중 하나라도 빼면 NC-3 이 통과해 버린다.
+        """
+        from ..stt import wav_from_pcm16
+
+        pcm = _pcm16_sine(1600)  # 0.1초 @16kHz = 3,200 bytes
+        wav = wav_from_pcm16(pcm)
+
+        self.assertEqual(len(wav), 44 + len(pcm))          # 헤더 44바이트 + 원본
+        self.assertEqual(wav[0:4], b"RIFF")
+        self.assertEqual(wav[8:12], b"WAVE")
+        self.assertEqual(wav[12:16], b"fmt ")
+        self.assertEqual(wav[36:40], b"data")
+        self.assertEqual(wav[44:], pcm)                    # 원본 바이트 무손실
+
+        (chunk_size,) = struct.unpack("<I", wav[4:8])
+        (fmt_size, audio_fmt, channels, rate, byte_rate, block_align, bits) = struct.unpack(
+            "<IHHIIHH", wav[16:36]
+        )
+        (data_size,) = struct.unpack("<I", wav[40:44])
+        self.assertEqual(chunk_size, len(wav) - 8)         # 입력 길이에서 산출
+        self.assertEqual(fmt_size, 16)
+        self.assertEqual(audio_fmt, 1)                     # PCM
+        self.assertEqual(channels, 1)                      # mono
+        self.assertEqual(rate, 16000)                      # ★ NC-3 가 겨냥하는 필드
+        self.assertEqual(bits, 16)
+        self.assertEqual(block_align, channels * bits // 8)
+        self.assertEqual(byte_rate, rate * block_align)
+        self.assertEqual(data_size, len(pcm))              # 하드코딩이면 여기서 깨진다
+
+    def test_wav_size_fields_track_a_different_length(self) -> None:
+        """길이가 다른 입력에서도 산출된다 — 한 길이에 맞춘 하드코딩 헤더 검출용."""
+        from ..stt import wav_from_pcm16
+
+        short, long = _pcm16_sine(160), _pcm16_sine(16000)
+        for pcm in (short, long):
+            wav = wav_from_pcm16(pcm)
+            self.assertEqual(struct.unpack("<I", wav[40:44])[0], len(pcm))
+            self.assertEqual(struct.unpack("<I", wav[4:8])[0], len(wav) - 8)
+
+    def test_odd_length_pcm_is_rejected_not_silently_truncated(self) -> None:
+        """프레임 경계에 맞지 않는 입력 = 조용한 손상 대신 예외."""
+        from ..stt import wav_from_pcm16
+
+        with self.assertRaises(ValueError):
+            wav_from_pcm16(b"\x01\x02\x03")
+
+    def test_csr_receives_wav_not_raw_pcm(self) -> None:
+        """T4 — wire 로 나가는 본문이 WAV 다. raw PCM 직송은 미검증 경로(30.9)."""
+        self._seed_pending("regr-stt-wav")
+        _, captured = self._run_enrich_real(
+            "regr-stt-wav", lambda: _FakeResponse({"text": "택배 왔습니다"})
+        )
+        kind, body = captured[0]
+        self.assertEqual(kind, "csr")
+        self.assertEqual(body[0:4], b"RIFF")
+        self.assertEqual(len(body), 44 + len(self.pcm))
+
+    def test_csr_request_carries_lang_and_credential_headers(self) -> None:
+        """요청 조립 — lang 쿼리 + 헤더 2종. 값 SSoT = 30.9 왕복 실측."""
+        from ..constants import STT_CLIENT_ID_HEADER, STT_CLIENT_SECRET_HEADER
+        from ..stt import build_request
+
+        req = build_request(b"RIFFwav", "id-not-real", "secret-not-real")
+        self.assertTrue(req.full_url.endswith("/recog/v1/stt?lang=Kor"))
+        self.assertEqual(req.get_method(), "POST")
+        # urllib 은 헤더 이름을 capitalize 해 보관한다 — 이름 자체를 대조한다.
+        headers = {k.lower(): v for k, v in req.header_items()}
+        self.assertEqual(headers[STT_CLIENT_ID_HEADER.lower()], "id-not-real")
+        self.assertEqual(headers[STT_CLIENT_SECRET_HEADER.lower()], "secret-not-real")
+        self.assertEqual(headers["content-type"], "application/octet-stream")
+
+    # ── T1: 성공 경로 ────────────────────────────────────────────────────
+    def test_real_transcript_reaches_kakao_caption(self) -> None:
+        """STT 성공 → CSR → feed → text 3요청, 자막은 **실 인식 문자열**.
+
+        ★ NC-4 함정 대응: _caption_from_stt 를 우회해 원문을 그대로 넘기는 변형은
+          가공이 항등인 입력에서는 무해하다. 그래서 앞뒤 공백이 있는 CSR 응답을 골라
+          **가공이 실제로 값을 바꾸게** 만든다(" … " → strip).
+        """
+        self._seed_pending("regr-stt-ok")
+        body, captured = self._run_enrich_real(
+            "regr-stt-ok", lambda: _FakeResponse({"text": "  옆집 사람인데 잠깐 나와 보실래요?  "})
+        )
+        self.assertEqual(self._kinds(captured), ["csr", "kakao", "kakao"])
+        self.assertEqual(
+            [t["object_type"] for _, t in captured[1:]], ["feed", "text"]
+        )
+        # 우회 변형이면 여기서 공백이 남는다.
+        self.assertEqual(captured[2][1]["text"], "옆집 사람인데 잠깐 나와 보실래요?")
+        # mock 문구가 아니다 — 실 소스로 갈아탄 것이 이 대조로 증명된다.
+        from ..utils import _MOCK_TRANSCRIPTS
+
+        self.assertNotIn(captured[2][1]["text"], _MOCK_TRANSCRIPTS)
+        self.assertEqual(body["stt"]["transcript"], "옆집 사람인데 잠깐 나와 보실래요?")
+        st = self._status(body)
+        self.assertTrue(st["secondary_sent"])
+        self.assertEqual(st["enrich_status"], "completed")
+
+    # ── T1 · NC-1: 실패는 전부 "자막 부재"로 합류한다 ────────────────────
+    #
+    # ★ NC-1 함정: enrich_status 만 검사하면 "failed 로 올리는" 변형이 부분적으로만
+    #   잡힌다. secondary_sent 와 secondary_sent_at 까지 함께 고정해야 4조합 표현이
+    #   무너지는 것을 검출한다(7.6(d): derive() 가 secondary_sent 를 먼저 본다).
+    def _assert_caption_absent_path(self, body, captured, *, expect_csr=True):
+        """자막 부재 경로 = CSR 1회(선택) + feed 1건, text 없음, 상태는 완전 성공."""
+        expected = (["csr"] if expect_csr else []) + ["kakao"]
+        self.assertEqual(self._kinds(captured), expected)
+        self.assertEqual(captured[-1][1]["object_type"], "feed")
+        st = self._status(body)
+        self.assertTrue(st["secondary_sent"])            # ← NC-1 이 겨냥
+        self.assertIsNotNone(st["secondary_sent_at"])    # ← NC-1 이 겨냥
+        self.assertEqual(st["enrich_status"], "completed")
+        self.assertNotEqual(st["enrich_status"], "failed")
+        self.assertIsNone(body["stt"])
+
+    def test_empty_transcript_is_caption_absent_not_failed(self) -> None:
+        """T1 (1/4) — 빈 인식 결과(무음 클립)."""
+        self._seed_pending("regr-stt-empty")
+        body, captured = self._run_enrich_real(
+            "regr-stt-empty", lambda: _FakeResponse({"text": "   "})
+        )
+        self._assert_caption_absent_path(body, captured)
+
+    def test_api_error_is_caption_absent_not_failed(self) -> None:
+        """T1 (2/4) — CSR 5xx."""
+        self._seed_pending("regr-stt-5xx")
+        err = urllib.error.HTTPError(
+            KAKAO_MEMO_URL_FOR_TEST, 500, "server error", {}, None
+        )
+        body, captured = self._run_enrich_real("regr-stt-5xx", err)
+        self._assert_caption_absent_path(body, captured)
+
+    def test_timeout_is_caption_absent_not_failed(self) -> None:
+        """T1 (3/4) — 소켓 타임아웃."""
+        self._seed_pending("regr-stt-timeout")
+        body, captured = self._run_enrich_real("regr-stt-timeout", TimeoutError())
+        self._assert_caption_absent_path(body, captured)
+
+    def test_auth_refusal_is_caption_absent_not_failed(self) -> None:
+        """T1 (4/4) — CSR 401. 카카오 401 과 달리 2차 발송을 막지 않는다."""
+        self._seed_pending("regr-stt-401")
+        err = urllib.error.HTTPError(KAKAO_MEMO_URL_FOR_TEST, 401, "unauthorized", {}, None)
+        body, captured = self._run_enrich_real("regr-stt-401", err)
+        self._assert_caption_absent_path(body, captured)
+
+    def test_malformed_response_is_caption_absent_not_failed(self) -> None:
+        """T1 (보강) — 200 인데 text 키가 없는 계약 위반 응답."""
+        self._seed_pending("regr-stt-nokey")
+        body, captured = self._run_enrich_real(
+            "regr-stt-nokey", lambda: _FakeResponse({"result": "?"})
+        )
+        self._assert_caption_absent_path(body, captured)
+
+    # ── T3 · NC-2: 재시도 없음 ───────────────────────────────────────────
+    def test_failed_csr_call_is_not_retried(self) -> None:
+        """T3 — 실패해도 CSR 호출은 1회다.
+
+        ★ NC-2 함정: 성공 케이스에서는 재시도 루프를 넣어도 호출이 1회라 무해하게
+          통과한다. **실패 케이스에서 호출 횟수를 세야** 잡힌다. 15초 단위 과금이라
+          재시도 1회 = 과금·한도 소진 2배다(30.9).
+        """
+        self._seed_pending("regr-stt-noretry")
+        _, captured = self._run_enrich_real("regr-stt-noretry", TimeoutError())
+        self.assertEqual(self._kinds(captured).count("csr"), 1)
+
+    def test_no_backoff_constant_exists(self) -> None:
+        """재시도가 없으므로 백오프 상수도 없다(죽은 상수 회피, §5 Step 1-d)."""
+        from .. import constants
+
+        self.assertEqual(
+            [n for n in dir(constants) if "BACKOFF" in n or "STT_MAX_ATTEMPTS" in n], []
+        )
+
+    # ── T2 · T5: 미호출 상태는 성공·실패와 갈린다 ────────────────────────
+    def test_credentials_absent_keeps_mock_caption_and_skips_csr(self) -> None:
+        """T5 — 자격증명 미설정이면 CSR 을 부르지 않고 mock 자막이 그대로 나간다.
+
+        ⚠️ 위임 §5 Step 4-b 는 "자격증명 미설정 → 자막 부재 경로"를 요구했으나, 기존
+          mock/real 게이트 컨벤션(model_serving: MODEL_PATH 미설정 = mock 유지)을
+          따르면 미설정은 **real 모드 진입 자체가 없는 상태**라 자막 부재가 아니라
+          기존 mock 경로다. 학습 16(기존 컨벤션 우선)에 따라 컨벤션을 택했고,
+          "자격증명 없이 transcribe 를 부르면 SttAuthError" 계약은 아래 케이스가
+          따로 고정한다.
+        """
+        from .. import stt as stt_mod
+
+        self._seed_pending("regr-stt-nocreds")
+        side_effect, captured = self._csr_and_kakao(
+            lambda: _FakeResponse({"text": "불려서는 안 되는 값"})
+        )
+        with self.app.app_context(), mock.patch.dict(
+            self.app.config, {"NCP_CLIENT_ID": "", "NCP_CLIENT_SECRET": ""}
+        ), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch(
+            "app.kakao.urllib.request.urlopen", side_effect=side_effect
+        ), mock.patch.object(
+            stt_mod, "transcribe", wraps=stt_mod.transcribe
+        ) as transcribe:
+            r = self._enrich("regr-stt-nocreds")
+            self.assertEqual(r.status_code, 200)
+            body = r.get_json()
+
+        transcribe.assert_not_called()                       # T2: 미호출
+        self.assertNotIn("csr", self._kinds(captured))
+        from ..utils import _MOCK_TRANSCRIPTS
+
+        self.assertIn(body["stt"]["transcript"], _MOCK_TRANSCRIPTS)  # T5: mock 유지
+        self.assertEqual(self._status(body)["enrich_status"], "completed")
+
+    def test_half_credentials_is_not_real_mode(self) -> None:
+        """NC-5(자체) — 한쪽만 설정된 상태로 real 모드에 들어가면 401 왕복만 태운다."""
+        from .. import stt as stt_mod
+
+        with self.app.app_context():
+            for creds in (
+                {"NCP_CLIENT_ID": "id-not-real", "NCP_CLIENT_SECRET": ""},
+                {"NCP_CLIENT_ID": "", "NCP_CLIENT_SECRET": "secret-not-real"},
+                {"NCP_CLIENT_ID": "", "NCP_CLIENT_SECRET": ""},
+            ):
+                with mock.patch.dict(self.app.config, creds):
+                    self.assertFalse(stt_mod.is_real_mode())
+            with mock.patch.dict(self.app.config, self._FAKE_NCP_CREDS):
+                self.assertTrue(stt_mod.is_real_mode())
+
+    def test_transcribe_without_credentials_raises_auth_error(self) -> None:
+        """Step 1-f 계약 — 자격증명 없이 부르면 예외(호출부가 자막 부재로 흡수)."""
+        from .. import stt as stt_mod
+
+        with self.app.app_context(), mock.patch.dict(
+            self.app.config, {"NCP_CLIENT_ID": "", "NCP_CLIENT_SECRET": ""}
+        ):
+            with self.assertRaises(stt_mod.SttAuthError):
+                stt_mod.transcribe(self.pcm)
+
+    def test_audio_part_missing_skips_stt_entirely(self) -> None:
+        """T2 — 오디오 부재는 /enrich 게이트에서 400 이라 STT 에 도달하지 않는다.
+
+        ⚠️ 위임 §5 Step 4-b 의 "오디오 부재 → STT 미호출"은 이 형태로만 실재한다:
+          /enrich 는 오디오 파트를 **required** 로 받으므로(routes.enrich), "오디오
+          없이 본문 처리에 들어가는" 상태는 코드에 존재하지 않는다.
+        """
+        from .. import stt as stt_mod
+
+        self._seed_pending("regr-stt-noaudio")
+        with self.app.app_context(), mock.patch.dict(
+            self.app.config, self._FAKE_NCP_CREDS
+        ), mock.patch.object(stt_mod, "transcribe") as transcribe:
+            r = self.client.post(
+                "/api/v1/enrich",
+                headers={"Authorization": f"Bearer {_DEVICE_TOKEN}"},
+                data={
+                    "client_request_id": "regr-stt-noaudio",
+                    "image": (io.BytesIO(self._JPEG), "a.jpg"),
+                },
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(r.status_code, 400)
+        transcribe.assert_not_called()
+
+    # ── 예외 계층 · 응답 파싱 (NC-6 · NC-7 자체 설계) ────────────────────
+    def test_error_layers_are_distinguishable(self) -> None:
+        """NC-6(자체) — 인증 거부와 그 외 실패가 같은 예외로 뭉개지지 않는다.
+
+        뭉개지면 로그에서 "자격증명이 틀렸다"와 "네트워크가 흔들렸다"가 구분되지 않아
+        운영 중 원인 규명이 불가능해진다(kakao 의 Token/Send 2계층과 같은 이유).
+        """
+        from .. import stt as stt_mod
+
+        cases = {
+            401: stt_mod.SttAuthError,
+            403: stt_mod.SttAuthError,
+            500: stt_mod.SttRequestError,
+            429: stt_mod.SttRequestError,
+        }
+        for code, expected in cases.items():
+            err = urllib.error.HTTPError(KAKAO_MEMO_URL_FOR_TEST, code, "x", {}, None)
+            with self.app.app_context(), mock.patch.dict(
+                self.app.config, self._FAKE_NCP_CREDS
+            ), mock.patch("app.stt.urllib.request.urlopen", side_effect=err):
+                with self.assertRaises(expected):
+                    stt_mod.transcribe(self.pcm)
+        # 두 계층이 서로를 삼키지 않는다(한쪽이 다른 쪽의 부모면 위 대조가 무의미해진다)
+        self.assertFalse(issubclass(stt_mod.SttAuthError, stt_mod.SttRequestError))
+        self.assertFalse(issubclass(stt_mod.SttRequestError, stt_mod.SttAuthError))
+
+    def test_parse_transcript_does_not_swallow_contract_breaks(self) -> None:
+        """NC-7(자체) — text 키 부재를 "자막 없음"으로 흡수하면 스펙 변경이 무음이 된다."""
+        from .. import stt as stt_mod
+
+        self.assertEqual(stt_mod.parse_transcript(b'{"text": " \xea\xb0\x80 "}'), "가")
+        self.assertEqual(stt_mod.parse_transcript(b'{"text": ""}'), "")
+        with self.assertRaises(stt_mod.SttRequestError):
+            stt_mod.parse_transcript(b'{"result": 0}')
+        with self.assertRaises(stt_mod.SttRequestError):
+            stt_mod.parse_transcript(b"not json")
+
+    def test_secrets_do_not_leak_into_logs(self) -> None:
+        """NC-8(자체) — 자격증명 값과 인식 전문이 로그에 남지 않는다(§7 시크릿 제약).
+
+        transcript 전문이 로그에 흐르면 방문자 발화가 서버 로그에 영구 기록된다.
+        """
+        from .. import stt as stt_mod
+
+        secret_text = "여기는 로그에 남으면 안 되는 발화입니다"
+        with self.app.app_context(), mock.patch.dict(
+            self.app.config, self._FAKE_NCP_CREDS
+        ), mock.patch(
+            "app.stt.urllib.request.urlopen",
+            side_effect=lambda req, timeout=None: _FakeResponse({"text": secret_text}),
+        ), self.assertLogs(self.app.logger, level="INFO") as logs:
+            self.assertEqual(stt_mod.transcribe(self.pcm), secret_text)
+
+        blob = "\n".join(logs.output)
+        self.assertNotIn(secret_text, blob)
+        self.assertNotIn(self._FAKE_NCP_CREDS["NCP_CLIENT_ID"], blob)
+        self.assertNotIn(self._FAKE_NCP_CREDS["NCP_CLIENT_SECRET"], blob)
+        self.assertIn("transcript_len=", blob)  # 길이는 남는다(성공 여부 추적용)
+
+    def test_stt_timeout_constant_fits_secondary_budget(self) -> None:
+        """§5 Step 2-b 역산 검산 — 최악 총합이 2차 예산 15초 안이다.
+
+        입력은 전부 실측·문서 인용값이다(7.6(f) 7.5초 / 7.6(h) 2.61초 / 7.3 490ms).
+        ⚠️ ESP32 캡처·업로드 구간은 미측정이라 이 검산은 **서버측 구간 기준**이다.
+        """
+        from ..constants import KAKAO_HTTP_TIMEOUT_SECONDS, STT_HTTP_TIMEOUT_SECONDS
+
+        kakao_worst = KAKAO_HTTP_TIMEOUT_SECONDS * 5      # 토큰 1 + 사진 2 + 자막 2
+        server_side = 2.61 - 0.49 * 2                     # 7.6(h) − 카카오 정상 왕복분
+        worst = kakao_worst + server_side + STT_HTTP_TIMEOUT_SECONDS
+        self.assertLess(worst, 15.0)
+        self.assertGreater(STT_HTTP_TIMEOUT_SECONDS, 0.892)  # CSR 왕복 실측을 자르지 않는다
+
+    def test_caption_always_passes_through_caption_from_stt(self) -> None:
+        """NC-4 — 자막은 소스가 무엇이든 _caption_from_stt 가공을 거쳐 나간다.
+
+        ★ NC-4 함정 정면 대응: 실 CSR 경로에서는 stt.parse_transcript 가 경계에서 이미
+          strip 해 넘기므로 _caption_from_stt 의 가공이 **항등**이 된다 — 그 경로만 보면
+          "가공을 우회하는" 변형이 무해하게 통과한다(2026-09-08 실측: 우회 변형을 심고
+          돌렸더니 82건 전건 OK). 가공이 실제로 값을 바꾸는 입력은 가공되지 않은 소스
+          쪽에 있으므로, mock 소스에 앞뒤 공백을 실어 **wire 로** 검사한다.
+        """
+        self._seed_pending("regr-stt-nc4")
+        captured = []
+
+        def _capture(req, timeout=None):
+            form = urllib.parse.parse_qs(req.data.decode("utf-8"))
+            captured.append(json.loads(form["template_object"][0]))
+            return _FakeResponse({"result_code": 0})
+
+        with self.app.app_context(), mock.patch.dict(
+            self.app.config, {"NCP_CLIENT_ID": "", "NCP_CLIENT_SECRET": ""}
+        ), mock.patch(
+            "app.routes.mock_enrichment", side_effect=self._stt("  가공 전 자막  ")
+        ), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch("app.kakao.urllib.request.urlopen", side_effect=_capture):
+            r = self._enrich("regr-stt-nc4")
+            self.assertEqual(r.status_code, 200)
+
+        self.assertEqual([t["object_type"] for t in captured], ["feed", "text"])
+        # 우회 변형이면 앞뒤 공백이 그대로 카카오로 나간다.
+        self.assertEqual(captured[1]["text"], "가공 전 자막")
+
+    def test_stt_wiring_does_not_change_to_dict_contract(self) -> None:
+        """§2 제약 — 실 STT 경로에서도 to_dict() 최상위 키 11개 / 상태값 집합 불변."""
+        self._seed_pending("regr-stt-keys")
+        body, _ = self._run_enrich_real(
+            "regr-stt-keys", lambda: _FakeResponse({"text": "택배 왔습니다"})
+        )
+        self.assertEqual(len(body), 11)
+        self.assertEqual(sorted(body.keys()), sorted(_NOTIFICATION_ITEM_KEYS))
+        self.assertIn(
+            self._status(body)["enrich_status"], ("completed", "skipped", "failed", "pending")
+        )
+        self.assertEqual(
+            sorted(body["stt"]), ["confidence", "language", "processed_at", "transcript"]
+        )
 
 if __name__ == "__main__":
     unittest.main()
