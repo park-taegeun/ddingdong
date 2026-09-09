@@ -1,4 +1,4 @@
-// 알림 클래스 3종 메타데이터 — 도어벨/노크/화재경보 분기 DRY 단일 출처.
+// 알림 클래스 3종 메타데이터 — 초인종/노크/화재경보 분기 DRY 단일 출처.
 // NotificationCard / ClassDistributionCard / 차트 등에서 공통 참조.
 
 import { Bell, Flame, Hand } from "lucide-react"
