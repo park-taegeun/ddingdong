@@ -1,7 +1,7 @@
 import { ShieldCheck } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
-import type { SystemHealth } from "@/types/stats"
+import type { SystemHealth, TokenStatus } from "@/types/stats"
 
 function statusInfo(status: string): { color: string; label: string } {
   switch (status) {
@@ -28,13 +28,30 @@ function statusInfo(status: string): { color: string; label: string } {
   }
 }
 
+// 카카오 토큰 보조 문구. 서버가 만료 후 잔여 분을 음수(= 경과 분)로 내므로 상태별로
+// 분기한다 — expired 에 "-4320분 후 만료"를 그대로 렌더하면 화면이 거짓말을 한다.
+// 경과 분은 분/시간/일로 환산: 부스에서 "10분 전"과 "3일 전"은 대응이 갈린다
+// (전자는 재발송, 후자는 refresh 체인 단절). 어느 상태에서도 문구를 비우지 않는다 —
+// 비우면 행이 정상 상태와 구분되지 않는다.
+function tokenExtra(status: TokenStatus, minutes: number): string {
+  if (status !== "expired") return `${minutes}분 후 만료`
+  if (minutes >= 0) return "만료 — 재발급 필요" // 방금 만료 / 토큰 행 부재(경과 시간 미상)
+  const elapsed = -minutes
+  if (elapsed < 60) return `${elapsed}분 전 만료`
+  if (elapsed < 60 * 24) return `${Math.floor(elapsed / 60)}시간 전 만료`
+  return `${Math.floor(elapsed / (60 * 24))}일 전 만료`
+}
+
 export function SystemHealthCard({ health }: { health: SystemHealth }) {
   const rows = [
     { label: "디바이스", status: health.device_status, extra: undefined },
     {
       label: "카카오 토큰",
       status: health.kakao_token_status,
-      extra: `${health.kakao_token_expires_in_minutes}분 후 만료`,
+      extra: tokenExtra(
+        health.kakao_token_status,
+        health.kakao_token_expires_in_minutes,
+      ),
     },
     { label: "음성 인식(Clova)", status: health.clova_api_status, extra: undefined },
     { label: "데이터베이스", status: health.db_status, extra: undefined },

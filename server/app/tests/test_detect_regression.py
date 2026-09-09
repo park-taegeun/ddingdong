@@ -32,6 +32,7 @@ import tempfile
 import unittest
 import urllib.error
 import urllib.parse
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
@@ -1030,6 +1031,231 @@ class DetectRegressionTest(unittest.TestCase):
             headers={"Authorization": f"Bearer {_DEVICE_TOKEN}"},
         )
         self.assertEqual(r.status_code, 401)
+
+    # ── 카카오 토큰 상태 실배선 (system_health) ───────────────────────────
+    #
+    # 이 절이 고정하는 불변식 5개:
+    #   T1 만료된 토큰은 절대 valid 로 나오지 않는다(초록불 거짓 표시 = 본 배선의 사고 형태).
+    #   T2 만료 임박은 valid 로 뭉개지지 않는다 — 임계 = KAKAO_REFRESH_MARGIN 재사용.
+    #   T3 토큰 행 부재는 valid 가 아니라 expired 로 합류한다(부트스트랩 전 = 발송 불가).
+    #   T4 상태 어휘는 TokenStatus 3값을 넘지 않는다(4번째 상태 = 프론트 default 분기 노출).
+    #   T5 만료 후 잔여 분은 음수(경과 분)로 보존된다 — 0 클램프 금지.
+    #      "10분 전 만료"(재발송)와 "3일 전 만료"(refresh 체인 단절)는 대응이 갈린다.
+    #
+    # 시각은 전부 고정 주입(now_utc 인자) — 실시간 utc_now() 에 의존하면 간헐 실패한다.
+
+    @staticmethod
+    def _token_row(access_expires_at):
+        """세션에 넣지 않는 KakaoToken 인스턴스(파생 로직 입력용). 실값 없음."""
+        from ..models import KakaoToken
+
+        return KakaoToken(access_expires_at=access_expires_at)
+
+    def test_token_status_grid_collapses_to_three(self) -> None:
+        """(행 유무 × 잔여 구간 × 경계값) 전수 → 고유 상태 3개로 붕괴한다(T4).
+
+        축을 넓혀도 새 상태 어휘가 생기지 않는다는 것이 설계의 증명이다.
+        """
+        from datetime import timedelta
+
+        from ..constants import KAKAO_REFRESH_MARGIN
+        from ..routes import _kakao_token_health
+
+        now = datetime(2026, 9, 9, 12, 0, 0)
+        second = timedelta(seconds=1)
+        # 잔여 구간 8종: 음수 深 / 음수 淺 / 정확히 0 / 양수 淺 / 임계 직전 /
+        #                임계 정확히 / 임계 직후 / 정상
+        deltas = [
+            -timedelta(days=3),
+            -second,
+            timedelta(0),
+            second,
+            KAKAO_REFRESH_MARGIN - second,
+            KAKAO_REFRESH_MARGIN,
+            KAKAO_REFRESH_MARGIN + second,
+            timedelta(hours=6),
+        ]
+        rows = [None] + [self._token_row(now + d) for d in deltas]  # 축 = 9행
+
+        with self.app.app_context():
+            statuses = [_kakao_token_health(r, now)[0] for r in rows]
+
+        self.assertEqual(len(rows), 9)
+        self.assertEqual(
+            set(statuses), {"valid", "expiring", "expired"}
+        )  # 9행 → 고유 3행
+        # stats.ts TokenStatus 유니온과 1:1 (신규 어휘 발명 X)
+        self.assertEqual(
+            statuses,
+            [
+                "expired",  # 행 부재
+                "expired",  # -3d
+                "expired",  # -1s
+                "expired",  # 정확히 0  (비교가 <= 0 임을 고정)
+                "expiring",  # +1s
+                "expiring",  # 임계 -1s
+                "expiring",  # 임계 정확히 (비교가 <= MARGIN 임을 고정)
+                "valid",  # 임계 +1s
+                "valid",  # +6h
+            ],
+        )
+
+    def test_expired_token_is_not_reported_valid(self) -> None:
+        """만료된 토큰이 valid 로 나오면 대시보드가 초록불로 거짓말한다(T1)."""
+        from datetime import timedelta
+
+        from ..routes import _kakao_token_health
+
+        now = datetime(2026, 9, 9, 12, 0, 0)
+        with self.app.app_context():
+            status, minutes = _kakao_token_health(
+                self._token_row(now - timedelta(days=3)), now
+            )
+        self.assertEqual(status, "expired")
+        self.assertNotEqual(status, "valid")
+        self.assertEqual(minutes, -3 * 24 * 60)  # T5: 경과 4320분이 음수로 보존
+
+    def test_expiring_is_not_collapsed_into_valid(self) -> None:
+        """임계 이내는 expiring — valid 로 뭉개면 "곧 만료" 경고가 사라진다(T2)."""
+        from datetime import timedelta
+
+        from ..constants import KAKAO_REFRESH_MARGIN
+        from ..routes import _kakao_token_health
+
+        now = datetime(2026, 9, 9, 12, 0, 0)
+        with self.app.app_context():
+            at_threshold = _kakao_token_health(
+                self._token_row(now + KAKAO_REFRESH_MARGIN), now
+            )
+            past_threshold = _kakao_token_health(
+                self._token_row(now + KAKAO_REFRESH_MARGIN + timedelta(seconds=1)), now
+            )
+        self.assertEqual(at_threshold, ("expiring", 10))
+        self.assertEqual(past_threshold[0], "valid")
+
+    def test_missing_token_row_is_expired_not_valid(self) -> None:
+        """행 부재(부트스트랩 전) = 발송 불가 → expired 합류. 4번째 상태를 만들지 않는다(T3/T4)."""
+        from ..routes import _kakao_token_health
+
+        with self.app.app_context():
+            status, minutes = _kakao_token_health(None, datetime(2026, 9, 9, 12, 0, 0))
+        self.assertEqual(status, "expired")
+        self.assertEqual(minutes, 0)  # 만료 시각 자체를 모른다 — 경과 분을 지어내지 않는다
+
+    def test_expired_minutes_are_not_clamped_to_zero(self) -> None:
+        """0 클램프 금지(T5). 클램프하면 "3일 전"과 "방금"이 화면에서 구분 불가가 된다."""
+        from datetime import timedelta
+
+        from ..routes import _kakao_token_health
+
+        now = datetime(2026, 9, 9, 12, 0, 0)
+        with self.app.app_context():
+            just = _kakao_token_health(self._token_row(now), now)[1]
+            ten = _kakao_token_health(self._token_row(now - timedelta(minutes=10)), now)[1]
+            days = _kakao_token_health(self._token_row(now - timedelta(days=3)), now)[1]
+        self.assertEqual(just, 0)
+        self.assertEqual(ten, -10)
+        self.assertEqual(days, -4320)
+        self.assertEqual(len({just, ten, days}), 3)  # 세 상황이 서로 구분된다
+
+    def test_stats_token_status_comes_from_db_row(self) -> None:
+        """/stats 가 하드코딩이 아니라 DB 행을 읽는다 — 행을 심으면 잔여 분이 따라 움직인다."""
+        with self.app.app_context():
+            self._seed_kakao_token(6)  # access 만료 = 6시간 후
+
+        r = self.client.get(
+            "/api/v1/stats?period=today",
+            headers={"Authorization": f"Bearer {_DASHBOARD_TOKEN}"},
+        )
+        health = r.get_json()["system_health"]
+        self.assertEqual(health["kakao_token_status"], "valid")
+        # 하드코딩 240 이 아니라 실제 잔여(6시간 = 359~360분)여야 한다
+        self.assertIn(health["kakao_token_expires_in_minutes"], (359, 360))
+
+    def test_stats_without_token_row_is_expired(self) -> None:
+        """토큰 행이 없는 서버에서 /stats 가 초록불을 내보내지 않는다(T3 wire)."""
+        self._drop_kakao_token()
+        r = self.client.get(
+            "/api/v1/stats?period=today",
+            headers={"Authorization": f"Bearer {_DASHBOARD_TOKEN}"},
+        )
+        health = r.get_json()["system_health"]
+        self.assertEqual(health["kakao_token_status"], "expired")
+
+    def test_stats_key_count_unchanged(self) -> None:
+        """값 소스만 교체한다 — /stats 응답 키 집합은 불변(위임 §7-c)."""
+        r = self.client.get(
+            "/api/v1/stats?period=today",
+            headers={"Authorization": f"Bearer {_DASHBOARD_TOKEN}"},
+        )
+        body = r.get_json()
+        self.assertEqual(
+            sorted(body),
+            sorted(
+                [
+                    "period",
+                    "period_start",
+                    "period_end",
+                    "server_time",
+                    "summary",
+                    "class_distribution",
+                    "timing_metrics",
+                    "skip_reasons",
+                    "system_health",
+                    "hourly_distribution",
+                ]
+            ),
+        )
+        self.assertEqual(
+            sorted(body["system_health"]),
+            sorted(
+                [
+                    "device_last_seen_at",
+                    "device_status",
+                    "signal_strength",
+                    "kakao_token_status",
+                    "kakao_token_expires_in_minutes",
+                    "clova_api_status",
+                    "db_status",
+                ]
+            ),
+        )
+
+    def test_token_status_read_is_side_effect_free(self) -> None:
+        """관측 전용 — /stats 호출이 토큰 행을 갱신·무효화하지 않는다(위임 §7-h)."""
+        from ..extensions import db
+        from ..models import KakaoToken
+
+        with self.app.app_context():
+            self._seed_kakao_token(6)
+            before = db.session.get(KakaoToken, KakaoToken.SINGLETON_ID)
+            snapshot = (before.access_token, before.access_expires_at, before.updated_at)
+
+        self.client.get(
+            "/api/v1/stats?period=today",
+            headers={"Authorization": f"Bearer {_DASHBOARD_TOKEN}"},
+        )
+
+        with self.app.app_context():
+            db.session.expire_all()
+            after = db.session.get(KakaoToken, KakaoToken.SINGLETON_ID)
+            self.assertEqual(
+                (after.access_token, after.access_expires_at, after.updated_at), snapshot
+            )
+
+    def test_token_value_never_reaches_stats_response(self) -> None:
+        """응답에 나가는 것은 상태와 잔여 시간뿐 — 토큰 문자열·일부가 새지 않는다(위임 §7-b)."""
+        with self.app.app_context():
+            self._seed_kakao_token(6)
+
+        r = self.client.get(
+            "/api/v1/stats?period=today",
+            headers={"Authorization": f"Bearer {_DASHBOARD_TOKEN}"},
+        )
+        body = r.get_data(as_text=True)
+        self.assertNotIn(_FAKE_ACCESS_TOKEN, body)
+        self.assertNotIn(_FAKE_REFRESH_TOKEN, body)
+        self.assertNotIn(_FAKE_ACCESS_TOKEN[:8], body)
 
     # ── ToF 메타 wire (카테고리 6.2 G10) ──────────────────────────────────
     #
