@@ -22,6 +22,7 @@ from .constants import (
     DEVICE_RATE_LIMIT_SECONDS,
     IMAGE_FILE_FIELD,
     IMAGE_MAX_BYTES,
+    KAKAO_REFRESH_MARGIN,
     KST,
     MAX_PAGE_LIMIT,
     PREDICTED_CLASSES,
@@ -29,7 +30,7 @@ from .constants import (
 )
 from .errors import ApiError
 from .extensions import db
-from .models import IdempotencyKey, Notification
+from .models import IdempotencyKey, KakaoToken, Notification
 from .utils import (
     _apply_prediction_policy,
     kst_now_iso,
@@ -504,6 +505,40 @@ def stats():
     return jsonify(_build_stats(rows, start_kst, end_kst)), 200
 
 
+def _kakao_token_health(row, now_utc):
+    """`kakao_tokens` 단일 행 → (kakao_token_status, kakao_token_expires_in_minutes).
+
+    상태는 `stats.ts` TokenStatus 3값(valid/expiring/expired)으로 완전 분할한다.
+    행 부재는 4번째 상태를 만들지 않고 expired 로 합류시킨다 — 화면이 알려야 할 것은
+    "지금 토큰을 못 쓴다" 하나이고, 어휘를 늘리면 프론트 statusInfo 가 default 분기로
+    떨어져 원시 문자열이 그대로 노출된다. 단 원인(행 부재 vs 만료)은 로그로 구분한다.
+
+    "만료 임박" 임계는 KAKAO_REFRESH_MARGIN 을 재사용한다 — 서버 자신이 그 마진으로
+    "이 토큰은 그대로 못 쓴다"를 이미 판정하고 있으므로(models.KakaoToken.needs_refresh)
+    화면 표기만 다른 숫자를 쓰면 두 개의 진실이 생긴다.
+
+    잔여 분은 만료 후 음수(= 경과 분)를 그대로 낸다. 0 으로 클램프하면 "3일 전 만료"가
+    "0분"으로 뭉개져, 재발송으로 끝날 일인지 refresh 체인이 끊긴 것인지를 가를 정보가
+    응답에서 사라진다(로그는 현장에서 볼 수 없다).
+
+    now_utc·access_expires_at 양변 모두 naive UTC (utils.utc_now / models 컬럼 주석).
+    조회는 읽기 전용 — 세션에 객체를 추가하거나 commit 하지 않는다.
+    """
+    if row is None:
+        current_app.logger.warning("kakao token status: 행 부재(부트스트랩 전) → expired")
+        return "expired", 0
+
+    remaining = row.access_expires_at - now_utc
+    # floor. 잔여는 올려잡지 않고, 경과는 줄여잡지 않는다(양방향으로 보수적).
+    minutes = int(remaining.total_seconds() // 60)
+    if remaining <= timedelta(0):
+        current_app.logger.warning("kakao token status: 만료 %d분 경과", -minutes)
+        return "expired", minutes
+    if remaining <= KAKAO_REFRESH_MARGIN:
+        return "expiring", minutes
+    return "valid", minutes
+
+
 def _build_stats(rows, start_kst, end_kst):
     """오늘 알림 목록 → StatsResponse(stats.ts). 단일 쿼리 결과로 파이썬 집계(N+1 없음)."""
     total = len(rows)
@@ -544,6 +579,11 @@ def _build_stats(rows, start_kst, end_kst):
     hourly_distribution = [{"hour": h, "count": c} for h, c in buckets.items()]
 
     last_seen = max((n.detected_at for n in rows), default=None)
+
+    # 카카오 토큰 상태 = DB 단일 행(SSoT) 실조회. 읽기 전용(get 만, add/commit 없음).
+    kakao_status, kakao_minutes = _kakao_token_health(
+        db.session.get(KakaoToken, KakaoToken.SINGLETON_ID), utc_now()
+    )
 
     # 알림 지연 계측 (ms) — detected_at → 발송까지. 목표: 1차 5초 / 2차 15초 이내.
     # 미발송(primary)·2차 미완료(secondary)건은 sent_at 이 None 이라 각 집계에서 자동
@@ -596,7 +636,8 @@ def _build_stats(rows, start_kst, end_kst):
         # 발송 타임스탬프(detected_at↔primary/secondary_sent_at)에서 실계측 (위 집계)
         "timing_metrics": timing_metrics,
         "skip_reasons": skip_reasons,
-        # system_health: device_last_seen 만 실데이터, 외부 연동값은 11~14주차 전까지 mock
+        # system_health: device_last_seen + kakao_token_* 만 실데이터.
+        # 나머지(device_status/signal_strength/clova_api_status/db_status)는 아직 mock.
         # device_status/signal_strength = 기기 liveness·신호(센서 heartbeat) → 실연동 11주차.
         # 감지 0건(조용한 하루)에도 기기는 살아있으므로 detection 유무와 분리해 online mock 고정
         # (빈 상태 "시스템 정상" 안심 카드 전제). 11주차에 실제 heartbeat 로 대체.
@@ -606,8 +647,8 @@ def _build_stats(rows, start_kst, end_kst):
             else to_kst_iso(last_seen),
             "device_status": "online",
             "signal_strength": "strong",
-            "kakao_token_status": "valid",
-            "kakao_token_expires_in_minutes": 240,
+            "kakao_token_status": kakao_status,
+            "kakao_token_expires_in_minutes": kakao_minutes,
             "clova_api_status": "ok",
             "db_status": "ok",
         },
