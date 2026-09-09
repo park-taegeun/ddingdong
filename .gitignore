@@ -34,8 +34,10 @@ build/
 .DS_Store
 
 # === 환경변수 (실 파일은 절대 push 금지) ===
-.env
-.env.local
+# .env.bak 등 파생 사본이 새어나가던 갭을 막기 위해 .env* 로 확대.
+.env*
+# .env.example 은 키 이름만 담은 템플릿이라 commit 대상 — 위 확대에서 제외.
+!.env.example
 
 # === 펌웨어 자격증명 (실 파일은 절대 push 금지, template만 commit) ===
 firmware/include/secrets.h
