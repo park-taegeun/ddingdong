@@ -1257,6 +1257,52 @@ class DetectRegressionTest(unittest.TestCase):
         self.assertNotIn(_FAKE_REFRESH_TOKEN, body)
         self.assertNotIn(_FAKE_ACCESS_TOKEN[:8], body)
 
+    # ── Clova STT 상태 실배선 (system_health.clova_api_status) ────────────
+    #
+    # 8.5(i) 후보 1순위 — 판정 재료(stt.is_real_mode, PR #45)는 이미 있었고 표시
+    # 어휘(ServiceStatus)도 이미 있었다. 이 절이 고정하는 불변식:
+    #   C1 real 모드(자격증명 둘 다 설정)면 "ok".
+    #   C2 mock 모드(둘 중 하나라도 미설정/빈 문자열)면 "degraded" — "error" 아님
+    #      (7.7(k): "안 불렀다"와 "불렀는데 실패"를 어휘로 섞지 않는다).
+    #   C3 어느 쪽이든 NCP 자격증명 문자열 자체는 응답에 나가지 않는다.
+    # is_real_mode() 자체의 (ID×SECRET×빈문자열) 전수 분기는 이미
+    # test_half_credentials_is_not_real_mode 가 고정한다 — 여기서는 그 판정이
+    # /stats 응답까지 실제로 이어지는지만 본다(중복 재검증 금지).
+
+    def test_stats_clova_status_is_ok_when_real_mode(self) -> None:
+        """C1 — 자격증명이 둘 다 설정되면 화면이 'ok'를 낸다."""
+        with mock.patch.dict(self.app.config, self._FAKE_NCP_CREDS):
+            r = self.client.get(
+                "/api/v1/stats?period=today",
+                headers={"Authorization": f"Bearer {_DASHBOARD_TOKEN}"},
+            )
+        self.assertEqual(r.get_json()["system_health"]["clova_api_status"], "ok")
+
+    def test_stats_clova_status_is_degraded_when_mock_mode(self) -> None:
+        """C2 — 자격증명 미설정(mock 자막)이면 'degraded'다. 'ok' 로 위장하지 않는다."""
+        with mock.patch.dict(
+            self.app.config, {"NCP_CLIENT_ID": "", "NCP_CLIENT_SECRET": ""}
+        ):
+            r = self.client.get(
+                "/api/v1/stats?period=today",
+                headers={"Authorization": f"Bearer {_DASHBOARD_TOKEN}"},
+            )
+        health = r.get_json()["system_health"]
+        self.assertEqual(health["clova_api_status"], "degraded")
+        self.assertNotEqual(health["clova_api_status"], "ok")
+        self.assertNotEqual(health["clova_api_status"], "error")  # 8.5(i)/7.7(k)
+
+    def test_stats_clova_status_never_leaks_ncp_credentials(self) -> None:
+        """C3 — 응답에 나가는 것은 ok/degraded 뿐, 자격증명 문자열은 새지 않는다."""
+        with mock.patch.dict(self.app.config, self._FAKE_NCP_CREDS):
+            r = self.client.get(
+                "/api/v1/stats?period=today",
+                headers={"Authorization": f"Bearer {_DASHBOARD_TOKEN}"},
+            )
+        body = r.get_data(as_text=True)
+        self.assertNotIn(self._FAKE_NCP_CREDS["NCP_CLIENT_ID"], body)
+        self.assertNotIn(self._FAKE_NCP_CREDS["NCP_CLIENT_SECRET"], body)
+
     # ── ToF 메타 wire (카테고리 6.2 G10) ──────────────────────────────────
     #
     # 이 절이 고정하는 불변식 5개:
