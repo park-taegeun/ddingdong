@@ -539,7 +539,8 @@ def send_secondary(predicted_class, image_url, caption, detected_at_utc):
     """2차 알림을 발송한다 — 사진(feed) 먼저, 자막(text) 나중.
 
     caption 이 None/빈 문자열이면 **text 발송을 아예 호출하지 않는다**(§2-C).
-    현 시점 자막 소스는 mock 이다 — 실 STT(G23)는 미구현이고 본 PR 범위 밖이다.
+    자막 소스는 실 STT 배선 완료(PR #45, `9b3e3a2`) — 자격증명 미설정 시 mock 으로 폴백한다.
+    ⚠️ 배선 CLOSE ≠ 실 육성 인식률·2차 15초 체인 검증(④런타임 미실증. routes._caption_from_stt 주석 참조).
 
     반환 dict:
       photo_sent      bool         사진 발송 성공 여부
