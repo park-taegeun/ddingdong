@@ -636,8 +636,8 @@ def _build_stats(rows, start_kst, end_kst):
         # 발송 타임스탬프(detected_at↔primary/secondary_sent_at)에서 실계측 (위 집계)
         "timing_metrics": timing_metrics,
         "skip_reasons": skip_reasons,
-        # system_health: device_last_seen + kakao_token_* 만 실데이터.
-        # 나머지(device_status/signal_strength/clova_api_status/db_status)는 아직 mock.
+        # system_health: device_last_seen + kakao_token_* + clova_api_status 만 실데이터.
+        # 나머지(device_status/signal_strength/db_status)는 아직 mock.
         # device_status/signal_strength = 기기 liveness·신호(센서 heartbeat) → 실연동 11주차.
         # 감지 0건(조용한 하루)에도 기기는 살아있으므로 detection 유무와 분리해 online mock 고정
         # (빈 상태 "시스템 정상" 안심 카드 전제). 11주차에 실제 heartbeat 로 대체.
@@ -649,7 +649,10 @@ def _build_stats(rows, start_kst, end_kst):
             "signal_strength": "strong",
             "kakao_token_status": kakao_status,
             "kakao_token_expires_in_minutes": kakao_minutes,
-            "clova_api_status": "ok",
+            # env 게이트(stt.is_real_mode)만 본다 — 실 CSR 핑 금지(30.9 미규명 301건
+            # 위에 원인불명 호출을 더 얹지 않는다). "안 불렀다"(mock)와 "불렀는데
+            # 실패"를 어휘로 섞지 않기 위해 error 가 아니라 degraded 를 쓴다(7.7(k)).
+            "clova_api_status": "ok" if stt.is_real_mode() else "degraded",
             "db_status": "ok",
         },
         "hourly_distribution": hourly_distribution,
