@@ -1716,3 +1716,40 @@
 
 **관련 카테고리**: **8.6 (Clova STT 상태 실배선 신설)** / **8.5(k) (④런타임 CLOSE 신설)** / 8.5 ((d) 로그 실동작 · (f) 경계 · (g) 단언 해소 · (i) mock 잔여 부분 해소 + 신규 미결) / 8.4(f) (SSR NC 하네스 repo 편입 부분 해소 · 학습 21 5번째 유형 · ESM 캐시 · segments) / 8.3 (안심 카드 전제 — `device_status` 판정 사안의 충돌 대상) / 8.1 (폴러 3중 실증) / 7.7 ((e) env 게이트 침묵 해소 · (i) `mode=real` · (k) 「폴백」 미결 **미해소**) / 7.5(i) (회귀 누적 현재값 99→102) / 7.4 (터널 · 사진 미표시 리허설 항목) / 20 (계보 3층에 ESM 추가 · **Squash `-D` 신설** · 브랜치 명명 SSoT · NC 4단계 보장의 메모리 캐시 한계) / 21 (`.env` 위생 · 중복 미결) / **27.8 ((g) 인용 오기 6건 신설 · (f) 표 열 교체 + (f-2) 신설 · (d) 누적 19건)** / **29.6 (학습 16 반대 방향 1호 신설)** / 30.9 (CSR 미규명 301건 — 핑 금지 근거) / 26 (부스 대응 — 기동 체크리스트) / 6.1 (`StatsResponse` 키 계약 무변경)
 **관련 commit**: 코드 PR #50 `ca276a9` + PR #51 `8d574dd`(기 머지) + 문서 반영 = 본 Set 1 커밋(docs-only, PR 없음). 선행 = `2d17bbc`(같은 날 PoC-(43) 반영)
+
+## 2026-09-10 (목) — PoC-(45) 프로젝트 지침 8절 미등재 사실 10건 SSoT 최초 등재 + 역방향 stale 단서 3건 (카테고리 5.1/6.1/6.3/7.5/7.6/7.7/8.4/8.5/27.8)
+
+프로젝트 지침(repo 밖 문서) 슬림화 과정에서 "decisions.md에 없어 지우면 안 되는 사실"로 지침 8절에 모아 뒀던 항목 10건을 `decisions.md`에 최초 등재해, 지침에서 그 절을 지울 수 있게 만드는 작업. **코드 무접촉**(읽기만), 대상은 `docs/decisions.md`·`docs/decisions-log.md` 두 파일뿐.
+
+**Step 0 가정 대조 — 전건 O**: HEAD `ecf5f47` / 워킹트리 clean(A1). `12.1` decisions.md 0건 + 7.6에 `HTTP_TIMEOUT_MS=10000` 안 문구 정확히 1건(A2). `DASHBOARD_TOKEN` decisions.md 0건 + `/stats`는 `@dashboard_auth`(`_require_token("DASHBOARD_TOKEN")`)(A3). `/stats`가 KST 당일 00:00~23:59:59.999 집계(`routes.py` `period_start`/`period_end`)(A4). `KOE` decisions.md 0건 + 7.5(e) OAuth 부트스트랩 절차 실존(A5). `음량조절` decisions.md 0건 + 5.1에 7/09 4유닛 녹음 프로토콜 실존(A6). `MIC_TASK_STACK_SIZE` decisions.md 0건 + `mic_common.h` 값 = `4096`(A7). (6)ⓐ~ⓕ **전건 코드 실존 확인**(A8 — 상세 아래). `$&` decisions.md 0건 + `run.mjs`가 치환자 함수(`() => c.patch`) 사용(A9). 27.8(g)⑤ "repo 전역 0건" 문구 1건 실존 + **재실행 결과 ≠ 0**(5건 — 8.6(d)가 세 표현을 등재했기 때문, A10). 8.5(i)에 "11주차" 표기 실존(A11). G07·G15·G16·G17·G19·G20 decisions.md 각 0건(A12). **정지 임계(A1·A2·A10·A11) 전건 O → 착수.**
+
+**find-skills**: `decision log markdown` / `changelog` 둘 다 결과 있음(decision-log·changelog-generator 계열) — 과거 판정 ②(단일 decisions.md 누적 + 한국어 이모지 규약과 워크플로 불일치) **재사용, 재평가 불요**(동일 skill류 확인).
+
+**A8 세부 검증(코드 실존, 6건 전부 real — 유령 0건)**: ⓐ `upload_spike_common.cpp`에 POST/multipart 실코드 실존(TLS 변형 `upload_spike_tls_common.cpp`는 별개 프로즌 파일) ⓑ 필드명 `client_request_id`/`device_id`/`audio`가 `constants.py`(`AUDIO_FILE_FIELD="audio"`)와 1:1 ⓒ `DEVICE_RATE_LIMIT_SECONDS=5` + 429(`constants.py`/`rate_limit.py`/`routes.py`) ⓓ `client_request_id`가 ESP32 `upload_spike_main.cpp`에서 `"spike-" + millis() + iterationSeq`로 생성 — millis() 기반 확인 ⓔ `rate_limit.py` docstring 자백 = "11주차 다중 워커(Gunicorn) 배포 시 Redis 등 공유 저장소로 교체 필요" ⓕ `server/app/*.py` 전역 `"processing"` 리터럴 0건.
+
+**Step 1 — (1) 12.1초 출처 추적**: `grep -rn "12\.1" docs/` = 0건(decisions.md·decisions-log.md 어디에도 없음). `gh pr view 45 --json body`에서 발견 — "신규 미결 2건" ②: "펌웨어 상한 충돌 — 최악 총합 **12.1초**(카카오 7.5 + 서버 자체 1.6 + STT 3.0)가 기존 하네스 상한 `HTTP_TIMEOUT_MS=10,000`을 넘는다". **단일 출처, 다른 수치로 나오는 두 번째 곳 없음**(§9-c 미해당). `gh pr view 44`엔 12.1 언급 없음(7.6(f)의 7.5초 최악값만). decisions-log.md 2026-09-08 엔트리에도 12.1 미등재. → 근거유형 = **PR 본문 서술(③ 계층) · 미실측** — 구성 성분별 실측 근거는 SSoT에서 추적 불가.
+
+**등재 10건**:
+
+| # | 위치 | 근거유형 | 앵커 count | 비고 |
+|---|---|---|---|---|
+| (1) | 7.6(f) 단서 append + **7.7(l) 신규** | PR 본문 서술·미실측 | 1/1 | 해결책·타임아웃 신설 0, "I2 설계 시점 판단"으로 못박음 |
+| (2) | 6.1 (인증 분리 + stats period 두 지점) | 실측 (`auth.py`/`routes.py`) | 1/1 | 신규 |
+| (3) | 7.5(e) append | 문서 인용·미실측 | 1 | 신규 |
+| (4) | 5.1 (7/09 프로토콜 append) | 사용자 확정(2026-09-03) | 1 | 신규 |
+| (5)+(6) | **6.3(l) 신규**(7항목으로 병합) | 실측 코드 대조 | 1 | M5-d 착수 전 체크리스트 |
+| (7) | 8.4(f) append | 실측 (`run.mjs`) | 1 | 신규 |
+| (8) | 27.8(g)⑤ append | 실측 재실행 | 1 | 단서(정정 아님), (f-2)와 동형 재발 |
+| (9) | 8.5(i) append | 논증 | 1 | 단서(정정 아님), 기존 문구 보존 |
+| (10) | 27.8(f) append | 문서 인용·미실측 | 1 | 단서(정정 아님) — 유령 여부 미확정, ③ 계층으로만 취급 |
+
+**스코프 제외 재확인(미접촉)**: 인용 오기 누적 수 정정(27.8(g) 19건 그대로) / PoC-(44) Set 3 인용 오기 4건 / 「압축 손실」 등재 위치(27.8(g)② 그대로) / 지침 슬림화 자체 / 노션 / 코드 전 파일.
+
+**Step 4 검증**: 취소선 총수 **착수 전 62줄/140개 → 종료 62줄/140개(무변화)** — 본 Set 10건 전부 **순수 append**(취소선 0건, 기존 서술 취소선 대상 아님). **삭제 0줄**: `git diff --stat` = 23 insertions / 1 deletion, 그 1 deletion은 7.6(f) 한 줄을 **원문 그대로 보존한 채 문장 뒤에 단서를 이어붙인 것**(원문이 신문 라인의 완전한 접두사임을 대조 확인, 실질 삭제 아님) — 나머지 9곳은 순수 라인 삽입. **앵커 10건 전건 `count == 1` assert 통과**(패턴 매칭, 라인 번호 미사용). 요일 `date -j -f "%Y-%m-%d" "2026-09-10" "+%A"` = **Thursday = 목** 검산. `.env`·토큰·자격증명 전부 미기록.
+
+**학습 적용**: 학습 13(grep 후 인용 — 위 10건 전부 grep 실물 대조 후 등재) / 학습 14(repo 가정 검증 — Step 0 12항목) / 학습 16(기존 컨벤션 우선 — 새 절 번호는 `^### ` grep으로 결정, 임의 추정 0) / 학습 21(유령 미결 5분류 — A8 6건 전부 real 확인, (10)은 유령 여부 미확정 상태로 단서만 등재해 §9-d 성격의 신중 처리).
+
+**비범위**: **코드 0 수정**(읽기만, `git diff --name-only` = `docs/` 2파일뿐). §9 트리거 **미발동**(정지 임계 전건 O, 위치 충돌 없음, (1) 출처 단일, 기존 서술과 정면 충돌 0건). 해결책·정책·수치 신설 **0건**(전부 등재만). 22주 일정표 평가 미착수.
+
+**관련 카테고리**: 5.1(도어벨 4유닛 구매 요건) / 6.1(`DASHBOARD_TOKEN`/`DEVICE_TOKEN` 분리 · `/stats` 당일 집계) / 6.3(l)(M5-d 착수 전 체크리스트 7건 신설) / 7.5(e)(KOE 에러코드) / 7.6(f)(역방향 stale 단서) / 7.7(l)(펌웨어 12.1초 신규 미결) / 8.4(f)(`$&` 치환자 함수) / 8.5(i)(11주차 표기 단서) / 27.8(f)(G-ID 미확인 6종 단서) / 27.8(g)⑤(0건 측정 시점값 단서)
+**관련 commit**: 문서 전용 — 본 엔트리가 곧 해당 커밋(PR 없음, main 직 push). 선행 = `ecf5f47`(같은 날짜 이전 PoC-(44) 반영)
