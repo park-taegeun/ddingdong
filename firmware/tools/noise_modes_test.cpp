@@ -6,7 +6,7 @@
 // 비교는 diffCount() 한 곳에서만 하고, 모든 I1 단언이 그것을 쓴다.
 //
 // negative control 3종(m5 풀다운 해제 / m5 클럭 오염 / m2 풀다운 오염)은
-// MIC_NOISEPROBE_RUNBOOK.md 8절 참조 — 각각 반드시 실패해야 한다.
+// MIC_NOISEPROBE_RUNBOOK.md 7절 참조 — 각각 반드시 실패해야 한다.
 #include <cassert>
 #include <cstdio>
 
