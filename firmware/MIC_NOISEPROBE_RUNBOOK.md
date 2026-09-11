@@ -48,13 +48,14 @@ cd firmware
 
 부팅 로그 기대:
 ```
-[BOOT] ddingdong mic noiseprobe (PoC-45 진단, 키: 0~4 모드 / s 스냅샷)
+[BOOT] ddingdong mic noiseprobe (PoC-45 진단, 키: 0~6 모드 / s 스냅샷)
 [BOOT] diag buffers 131072+65536+131072 B PSRAM free=…
 [mic][M5a] ring alloc OK: 32 slots x 1024 samples = 65536 bytes (2048ms) | …
+[noise][m2] sd_pd req=0 reg=0 gpio=7
 [BOOT] micProbeTask started (Core 0, prio 4) — mic_uplink 와 동일 배치
 [tof] VL53L5CX ready (8x8, 15Hz, continuous)
 [BOOT] tofProbe0/1 started (prio 3) — 활성 = m2 Core 0 @400k (현행 재현)
-[noise] ring filled — 's' 스냅샷 / '0'~'4' 모드
+[noise] ring filled — 's' 스냅샷 / '0'~'6' 모드
 ```
 `[BOOT] tof init 실패` 가 뜨면 모드 전환이 불가하다(마이크 기준선만 측정 가능). 9.1(b) PWREN/LPn 결선을 먼저 본다.
 
@@ -71,7 +72,7 @@ cd firmware
 | `4` | m4 | ON | ON | 400k | **Core 1** | m2 대비 코어만 |
 | `5` | m5 | ON | ON | 400k | Core 0 | **m2 대비 SD 내부 풀다운만** (2026-09-11 추가) |
 | `6` | m6 | **OFF** | OFF | 400k(무관) | – | **m0 대비 SD 내부 풀다운만** (풀다운 부작용 대조군) |
-| `s` | – | 2.048초 스냅샷 + 보드 내 분석 (4절 로그 7줄) | | | | |
+| `s` | – | 2.048초 스냅샷 + 보드 내 분석 (4절 로그 8줄) | | | | |
 | `h` | – | 키 요약 1줄 | | | | |
 
 **m5/m6 가 가르는 것 (근거유형 = 논증, 미실측)**: INMP441 은 LSB 출력 직후 SD 를 tri-state 한다
@@ -137,7 +138,7 @@ ESP32-S3 **내부** 풀다운을 SD(GPIO7)에 걸어 **결선 변경 0**으로 �
 
 ## 5. 절차 (모드별 조용한 스냅샷 3회)
 
-① 부팅 → `ring filled` 확인 → 5초 대기(m2 안정) → `s` ×3 (각 3초 간격) → 7줄×3 기록.
+① 부팅 → `ring filled` 확인 → 5초 대기(m2 안정) → `s` ×3 (각 3초 간격) → 8줄×3 기록.
 ② `0` → 확인 줄 `ok=1` → 5초 대기 → `s` ×3.
 ③ `1` → 확인 줄 → 5초 대기 → `s` ×3. 그 다음 `2` 를 눌러 **`first frame … sc a->b`** 의 a≠b 를 확인해 기록(a = m1 진입 시 sc, b = 첫 프레임 sc. **전진했으면 m1 동안 센서가 계속 측정했다는 실측 증거** = m1 전제 확인. 같으면 m1 결과를 "센서 정지 상태"로 재해석해야 한다).
 ④ `2` → `s` ×3 (①과 재현되는지).
@@ -164,12 +165,12 @@ ESP32-S3 **내부** 풀다운을 SD(GPIO7)에 걸어 **결선 변경 0**으로 �
 | 2 | m5 | / | 1 | | | | | | | | | |
 | … | | | | | | | | | | | | |
 
-**기록 표 양식** (스냅샷 1회 = 1행. 7줄에서 옮겨 적는다):
+**기록 표 양식** (스냅샷 1회 = 1행. 8줄에서 옮겨 적는다):
 
-| 모드 | # | peak | rms | rms_x | clip(+/−) | burst | len_max | gap min/mode/max | tof_mult | bad | low6nz | iso_hi | tz | dt_ms min/avg/max | in | slot_dt min/max | gaps |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| m2 | 1 | | | | | | | | | | | | | | | | |
-| … | | | | | | | | | | | | | | | | | |
+| 모드 | # | sd_pd req/reg | peak | rms | rms_x | clip(+/−) | burst | len_max | gap min/mode/max | tof_mult | bad | low6nz | iso_hi | tz | dt_ms min/avg/max | in | slot_dt min/max | gaps |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| m2 | 1 | / | | | | | | | | | | | | | | | | |
+| … | | | | | | | | | | | | | | | | | | |
 
 m1 전제 확인: `sc a->b` = ____ → ____ (전진 O/X)
 
