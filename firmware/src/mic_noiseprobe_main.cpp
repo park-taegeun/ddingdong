@@ -15,6 +15,8 @@
 //   m2 측정 ON + 읽기 ON @400kHz, tofTask Core 0            → 현행 재현 (mic_uplink 와 동일 조건)
 //   m3 = m2, I2C 100kHz                                      → 엣지 수/속도 의존 (H1)
 //   m4 = m2, tofTask Core 1                                  → 코어 경합 (H3)
+//   m5 = m2, 마이크 SD 핀 내부 풀다운 ON                      → SD tri-state 부유 (H1 하위, 2026-09-11 추가)
+//   m6 = m0, 마이크 SD 핀 내부 풀다운 ON                      → 풀다운 자체의 부작용 대조군
 //   's' = 2초 스냅샷 + 보드 내 분석 (noise_stats.h)
 //
 // ★ m1 의 전제(근거유형 = 문서인용 + 코드 논증, 실측 미확인 → Runbook 에서 sc 로 확인):
@@ -37,8 +39,15 @@
 #include <string.h>
 
 #include "mic_common.h"
+#include "noise_modes.h"
 #include "noise_stats.h"
 #include "tof_common.h"
+
+// SD 풀다운 재독용 — IO_MUX 레지스터 직독 (경로 판정 근거는 아래 applySdPulldown 주석)
+#include "driver/gpio.h"
+#include "soc/gpio_periph.h"
+#include "soc/io_mux_reg.h"
+#include "soc/soc.h"
 
 extern SparkFun_VL53L5CX tofImager;  // tof_common.cpp 소유
 
@@ -86,8 +95,38 @@ static uint32_t g_snapStackFree = 0;
 static uint32_t g_bursts[NOISE_MAX_BURSTS];
 
 static const char* modeTag(int m) {
-  static const char* t[5] = {"[noise][m0]", "[noise][m1]", "[noise][m2]", "[noise][m3]", "[noise][m4]"};
-  return (m >= 0 && m < 5) ? t[m] : "[noise][m?]";
+  static const char* t[NOISE_MODE_N] = {"[noise][m0]", "[noise][m1]", "[noise][m2]", "[noise][m3]",
+                                        "[noise][m4]", "[noise][m5]", "[noise][m6]"};
+  return (m >= 0 && m < NOISE_MODE_N) ? t[m] : "[noise][m?]";
+}
+
+// ── 마이크 SD 핀 내부 풀다운 (진단 전용 — mic_common 초기화 함수는 건드리지 않는다) ─────
+//
+// ★ 적용 경로 판정 (설치 헤더 실물 근거, 학습 15 2단계):
+//   - GPIO7 은 ESP32-S3 의 RTC IO 겸용이다(soc_caps.h `SOC_RTCIO_PIN_COUNT 22` = GPIO0~21).
+//   - 그러나 같은 파일에 `SOC_GPIO_SUPPORT_RTC_INDEPENDENT (1)` 이 있다 → S3 는 디지털 IO_MUX 와
+//     RTC 의 pull 설정이 독립이고, `gpio_pulldown_en`(driver/gpio.h:267)은 **IO_MUX 경로**를 탄다.
+//   - 그 경로의 실체 = hal/esp32s3/include/hal/gpio_ll.h:74 `gpio_ll_pulldown_en` →
+//     `REG_SET_BIT(GPIO_PIN_MUX_REG[gpio_num], FUN_PD)`, FUN_PD = BIT(7)(io_mux_reg.h:50).
+//   → 재독도 **같은 레지스터의 같은 비트**를 읽는다. 아래 sdPulldownReg().
+//   ⚠️ gpio.c 본문은 Arduino-ESP32 가 IDF 를 사전 컴파일해 배포하므로 읽을 수 없다(논증까지).
+//      만에 하나 RTC 경로를 탔다면 IO_MUX 비트가 서지 않으므로 로그가 `req=1 reg=0` 으로 드러난다
+//      — 판별은 런타임 증거에 맡긴다.
+static bool sdPulldownReg() {
+  return REG_GET_BIT(GPIO_PIN_MUX_REG[MIC_SD_PIN], FUN_PD) != 0;
+}
+
+// ★ 반드시 I2S 핀 설정(initMicI2S 의 i2s_set_pin) **이후**에 부른다 — i2s_set_pin 이 핀을
+//   재구성하면 먼저 건 풀다운이 날아간다. 모드 전환마다 재적용 + 재독한다.
+static void applySdPulldown(bool on) {
+  if (on) gpio_pulldown_en((gpio_num_t)MIC_SD_PIN);
+  else    gpio_pulldown_dis((gpio_num_t)MIC_SD_PIN);
+}
+
+// "[noise][m5] sd_pd req=1 reg=1 gpio=7" = 36B (80B 상한 여유)
+static void logSdPulldown(int m, bool req) {
+  Serial.printf("%s sd_pd req=%d reg=%d gpio=%d\n", modeTag(m), (int)req, (int)sdPulldownReg(),
+                MIC_SD_PIN);
 }
 
 // ── 마이크 태스크: 적재(int16 링 = mic_common, raw 링 = 진단) + 요청 시 스냅샷 ──
@@ -126,7 +165,7 @@ static void micProbeTask(void* parameter) {
 
     if (!g_ringFull && ring.slots_filled >= MIC_RING_SLOTS) {
       g_ringFull = true;
-      Serial.println("[noise] ring filled — 's' 스냅샷 / '0'~'4' 모드");
+      Serial.println("[noise] ring filled — 's' 스냅샷 / '0'~'6' 모드");
     }
 
     // 스냅샷 = micRingAdvance 직후(이 태스크가 유일한 쓰기 주체 → 복사 중 쓰기 부재. mic_uplink 동형)
@@ -191,12 +230,13 @@ static void tofProbeTask(void* parameter) {
 // ── 모드 전환 (loop 전용). 뮤텍스 안에서만 stop/start/setClock ────────────────
 static void applyMode(int m) {
   if (!g_tofAvail) { Serial.println("[noise] tof 없음 — 모드 전환 불가(m0 상태로 간주)"); return; }
-  if (m < 0 || m > 4) return;
+  if (m < 0 || m >= NOISE_MODE_N) return;
 
-  const bool want_rng  = (m >= 1);
-  const bool want_poll = (m >= 2);
-  const uint32_t want_hz = (m == 3) ? I2C_SLOW_HZ : I2C_FAST_HZ;
-  const int  want_core = (m == 4) ? 1 : 0;
+  const NoiseModeCfg cfg = noiseModeCfg(m, I2C_FAST_HZ, I2C_SLOW_HZ);   // noise_modes.h (호스트 검증 대상)
+  const bool want_rng  = cfg.ranging;
+  const bool want_poll = cfg.poll;
+  const uint32_t want_hz = cfg.i2c_hz;
+  const int  want_core = cfg.core;
 
   static uint32_t cur_hz = I2C_FAST_HZ;                  // initToF 가 400k 로 시작 (tof_common.cpp)
 
@@ -219,9 +259,13 @@ static void applyMode(int m) {
   g_tofPoll = want_poll;
   xSemaphoreGive(g_busMux);
 
+  // 풀다운은 OFF 모드에서도 **명시적으로** 끈다 — m5→m2 교대 측정 시 이전 상태가 남으면 대조군 오염.
+  applySdPulldown(cfg.sd_pd);
+
   // "[noise][m3] rng=1 poll=1 i2c=100k core=0 ok=1 sc=255" ≤ 55B
   Serial.printf("%s rng=%d poll=%d i2c=%uk core=%d ok=%d sc=%u\n", modeTag(m), (int)g_tofRanging,
                 (int)want_poll, (unsigned)(cur_hz / 1000), want_core, (int)ok, (unsigned)g_scLast);
+  logSdPulldown(m, cfg.sd_pd);
 }
 
 // ── 스냅샷 분석 + 로그 (loop 전용, 한 줄 ≤80B — decisions.md 6.3(j) 실측 상한) ──
@@ -286,12 +330,14 @@ static void reportSnapshot() {
   // L7 최악 "[noise][m2] slot_dt_us min=4294967295 max=4294967295 gaps=4294967295 stk=65535" = 79B
   Serial.printf("%s slot_dt_us min=%u max=%u gaps=%u stk=%u\n", modeTag(m), (unsigned)dt_min,
                 (unsigned)dt_max, (unsigned)g_snapGaps, (unsigned)g_snapStackFree);
+  // L8 = 측정 조건 동반 기록. req≠reg 면 그 스냅샷은 무효(Runbook 1절).
+  logSdPulldown(m, noiseModeCfg(m, I2C_FAST_HZ, I2C_SLOW_HZ).sd_pd);
 }
 
 void setup() {
   Serial.begin(115200);
   delay(MIC_SERIAL_BOOT_DELAY_MS);
-  Serial.println("\n[BOOT] ddingdong mic noiseprobe (PoC-45 진단, 키: 0~4 모드 / s 스냅샷)");
+  Serial.println("\n[BOOT] ddingdong mic noiseprobe (PoC-45 진단, 키: 0~6 모드 / s 스냅샷)");
 
   g_rawRing = (int32_t*)ps_malloc(SNAP_RAW_BYTES);
   g_snap16  = (int16_t*)ps_malloc(SNAP_I16_BYTES);
@@ -307,6 +353,9 @@ void setup() {
   g_busMux = xSemaphoreCreateMutex();
 
   if (!initMicI2S()) { Serial.println("[BOOT] mic init 실패 — 중단"); return; }
+  // i2s_set_pin 이후에 건다(순서 보장). 부팅 모드 = m2 → 풀다운 OFF 를 명시적으로 박고 재독한다.
+  applySdPulldown(noiseModeCfg(g_mode, I2C_FAST_HZ, I2C_SLOW_HZ).sd_pd);
+  logSdPulldown(g_mode, noiseModeCfg(g_mode, I2C_FAST_HZ, I2C_SLOW_HZ).sd_pd);
   discardMicWarmup();
   xTaskCreatePinnedToCore(micProbeTask, "micProbeTask", MIC_TASK_STACK_SIZE, nullptr,
                           MIC_TASK_PRIORITY, nullptr, MIC_TASK_CORE);
@@ -328,7 +377,7 @@ void setup() {
 
 void loop() {
   const int c = Serial.read();
-  if (c >= '0' && c <= '4') {
+  if (c >= '0' && c <= '6') {
     applyMode(c - '0');
   } else if (c == 's' || c == 'S') {
     if (g_snap16 == nullptr || g_snapRaw == nullptr) Serial.println("[noise] 버퍼 없음");
@@ -336,7 +385,7 @@ void loop() {
     else if (g_snapReq || g_snapReady)                Serial.println("[noise] 이전 스냅샷 처리 중");
     else { g_snapReq = true; Serial.printf("%s snapshot 요청\n", modeTag(g_mode)); }
   } else if (c == 'h' || c == '?') {
-    Serial.println("[noise] 0 stop | 1 rng only | 2 rng+rd 400k c0 | 3 100k | 4 core1 | s snap");
+    Serial.println("[noise] 0 stop|1 rng|2 rd400k c0|3 100k|4 core1|5 m2+sdpd|6 m0+sdpd|s snap");
   }
 
   if (g_snapReady) {
