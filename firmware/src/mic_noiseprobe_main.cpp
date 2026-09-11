@@ -9,7 +9,7 @@
 // ★ 성격 = 방법론 자산(decisions.md 8.4(f) / 9.1(e) tof_pinscan·tof_lineprobe 선례). 제품 코드
 //   (mic_common / tof_common / mic_uplink) 무수정 — import 만. 해결책 0줄. 판정표는 Runbook.
 //
-// ★ 모드 (시리얼 '0'~'4', 재플래시 없음 — 한 번에 한 변수)
+// ★ 모드 (시리얼 '0'~'6', 재플래시 없음 — 한 번에 한 변수)
 //   m0 측정 정지(stopRanging, init·전원·버스 결선 동일)      → 대조군
 //   m1 측정 ON + 읽기 OFF(발광만, 호스트 I2C 트래픽 0)       → H2 격리 (센서 동작 전원)
 //   m2 측정 ON + 읽기 ON @400kHz, tofTask Core 0            → 현행 재현 (mic_uplink 와 동일 조건)
