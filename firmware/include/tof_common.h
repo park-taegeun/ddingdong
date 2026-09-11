@@ -201,6 +201,41 @@ constexpr uint32_t    TOF_LOOP_IDLE_LOG_MS    = 5000;
 constexpr uint32_t    TOF_SERIAL_BOOT_DELAY_MS = 200;
 constexpr uint32_t    TOF_LOG_EVERY_N_FRAMES  = 30;     // 15Hz × 2초
 
+// ============================================================================
+// === Stage A/B-2 판정 상태·출력 (2026-09-11 PoC-(45) 승격) ===
+// ============================================================================
+// ★ 배치 정정 — 종전 컨벤션(PR #39, 학습 16)은 "판정 로직 = tof_test.cpp의 static inline /
+//   tof_common.cpp = init·진단 전용, 판정 0건"이었다. M5-d ToF 메타 송신(env:mic_uplink)이
+//   같은 판정을 소비하게 되면서 소비처가 2곳(tof_dummy 로그 / /detect 4필드)이 됐고, 두 벌로
+//   복제하면 서버가 받는 tof_presence 와 시리얼 로그의 presence 가 서로 다른 판정이 될 수 있다.
+//   → 사용자 확정(2026-09-11, D2): tofTask 내부 로직을 **순수 이동**(로직·상수·로그 포맷 0변경).
+//   상태는 종전 tofTask 내 static 4개 + 지역 frame_count 를 그대로 구조체로 묶은 것이다.
+//   (이동 동일성 = PR 본문의 줄 단위 diff 로 증명.)
+struct TofJudgeState {
+  uint32_t frame_count     = 0;      // 성공 프레임 누계 (로그 주기 게이트 + B-2 frame# 표기)
+  bool     presence_state  = false;  // Stage A 디바운스 통과한 "확정" 상태
+  uint8_t  presence_streak = 0;      // 확정 상태와 다른 raw 판정의 연속 프레임 수 ∈ {0,1,2}
+  uint8_t  motion_latch    = 0;      // Stage B-2 남은 유지 프레임 수 ∈ [0, TOF_MOTION_LATCH_FRAMES]
+  bool     fused_state     = false;  // presence_state && latch_active 의 직전 프레임 값(전이 감지용)
+};
+
+// 한 프레임 판정 후 출력 (관측·전송 소비용. 판정에 되먹이지 않는다).
+//   wire 매핑 근거 = decisions.md 6.4(b): "Stage A 디바운스 3프레임(9.2)과 Stage B-2 latch
+//   75프레임(9.4)은 시간축 판정이라 ... presence는 펌웨어가 판정한 결과를 그대로 신뢰" →
+//   tof_presence = 두 계층을 모두 거친 값 = fused (presence_state 단독이 아니다).
+struct TofFrameResult {
+  bool     fused;          // presence_state && motion_latch_active  → tof_presence
+  bool     presence_state; // Stage A 확정 상태 (로그 대조용)
+  uint8_t  near_count;     // ∈ [0, 64]                              → tof_near_count
+  bool     center_valid;   // false = center 4 zone 전부 무효(로그 "n/a") → tof_center_mm 생략
+  uint16_t center_mm;      // center_valid 일 때만 유효               → tof_center_mm
+  uint8_t  motion_ndet;    // nb_of_detected_aggregates ∈ [0, 16]     → tof_motion_ndet
+};
+
+// 한 프레임 처리: Stage A near/디바운스 → center → B-1 관측 로그 → B-2 latch/융합 (+ 로그).
+//   종전 tof_test.cpp tofTask 의 getRangingData 성공 분기 본문 그대로.
+TofFrameResult tofJudgeFrame(TofJudgeState* st, const VL53L5CX_ResultsData& measurementData);
+
 // === API ===
 bool initToF();
 // Stage B-1: Motion Indicator 초기화(번들 ULD 함수 imager.Dev 직접 호출). best-effort —

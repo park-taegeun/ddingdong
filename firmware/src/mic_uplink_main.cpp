@@ -14,6 +14,12 @@
 //
 // ★ 페이로드 = 링버퍼 최근 2.048초(32슬롯 = 65,536 bytes)를 **오래된→최신 순서 그대로**.
 //   pre/post 비율 개념을 도입하지 않는다(도입하면 그 자체가 M5-c 판정이다).
+//
+// ★ 2026-09-11 PoC-(45) ToF 메타 4필드 송신 (G10 송신측). 역시 **배관**이다:
+//   tofTask(tof_common.cpp tofJudgeFrame — tof_dummy 와 같은 판정, 복제 아님)가 매 프레임 최신
+//   판정 한 벌을 공유 구조체에 쓰고, 's' 입력 **시점**의 한 벌을 그대로 4필드로 싣는다(D1).
+//   2초 창 집계·다수결·신선도 임계 같은 새 판정은 0줄(D1/D4). ToF init 실패 = 4필드 미전송 =
+//   PR #52 동작(서버 tof_absent)으로 degrade(D3).
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -22,7 +28,10 @@
 #include "esp_random.h"
 #include "mic_common.h"
 #include "secrets.h"
+#include "tof_common.h"
 #include "uplink_common.h"
+
+extern SparkFun_VL53L5CX tofImager;  // tof_common.cpp 소유 (tof_test.cpp 와 동형)
 
 // ── PSRAM 버퍼 (setup에서 1회 할당, 이후 불변) ──────────────────────────────
 // 링버퍼 본체(64KB, initMicRingBuffer)는 micUplinkTask 지역변수 = mic_common.h 컨벤션 그대로.
@@ -50,6 +59,29 @@ static volatile int32_t  g_snapRms  = 0;
 static volatile int32_t  g_snapPeak = 0;
 static volatile uint32_t g_snapBytes = 0;
 static volatile uint32_t g_taskStackFree = 0;
+static volatile uint32_t g_ringGaps      = 0;  // task → loop : ring.gaps 누적 사본(스냅샷마다 갱신)
+
+// ── ToF 최신 판정 공유 (tofTask → loop) ───────────────────────────────────
+// ★ 보호 방식 = portMUX 크리티컬 섹션(spinlock). 근거:
+//   - 쓰기 = tofTask(Core 0) 15Hz, 읽기 = loop(Core 1) 's' 1회당 1번. 양쪽 다 12B 구조체 복사 1회라
+//     점유 시간이 수백 ns — 뮤텍스(블로킹·컨텍스트 스위치)는 과하고, volatile 만으로는 4값이
+//     **서로 다른 프레임에서 섞이는** torn read 를 막지 못한다(구조체 복사는 원자적이지 않다).
+//   - portMUX 는 두 코어 사이에서도 유효하다(taskENTER_CRITICAL 이 spinlock + 로컬 인터럽트 마스크).
+//     Core 0 에서 수백 ns 인터럽트 마스크는 I2S DMA ISR 지연으로 무시 가능(DMA 는 8×64ms 버퍼링).
+//   ⚠️ 신선도(staleness) 정책은 신설하지 않는다(D4). g_tofLatestMs 는 age_ms 관측 전용이다.
+//     [defer] age_ms 임계 도입 여부 판정 방법: Runbook 9절 (b) 에서 age_ms 분포를 수집한다.
+//       15Hz 정상이면 상시 < 100ms. 수백 ms 이상이 반복되면 I2C 정체(getRangingData 지연)가
+//       실재하는 것이고, 그때 "age_ms > N 이면 4필드 미전송" 규칙을 근거(분포)와 함께 도입한다.
+static portMUX_TYPE   g_tofMux      = portMUX_INITIALIZER_UNLOCKED;
+static TofFrameResult g_tofLatest   = {};  // g_tofMux 보호
+static uint32_t       g_tofLatestMs = 0;   // g_tofMux 보호. 0 = 아직 프레임 없음(millis 0ms 에 프레임 불가)
+static bool           g_tofAvailable = false;  // setup 이 1회 쓰고 이후 읽기만 (init 실패 = degrade)
+static volatile uint32_t g_tofStackFree = 0;
+
+// 's' 시점 캡처본 (loop 전용 — 이후 sendSnapshot 이 읽는다)
+static TofFrameResult g_tofAtS      = {};
+static bool           g_tofAtSValid = false;
+static uint32_t       g_tofAgeMs    = 0;
 
 // ── client_request_id (decisions.md 6.3(l) ⑤ 처리) ─────────────────────────
 // 하네스(upload_spike_main.cpp)는 "spike-<millis()>-<seq>" 를 쓴다. millis()는 **매 부팅
@@ -189,6 +221,7 @@ static void micUplinkTask(void* parameter) {
       g_snapPeak  = peak;
       g_snapRms   = (ns > 0) ? (int32_t)sqrt((double)acc / (double)ns) : 0;
       g_taskStackFree = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
+      g_ringGaps      = ring.gaps;
 
       g_snapReq = false;
 
@@ -200,6 +233,67 @@ static void micUplinkTask(void* parameter) {
       g_snapReady = true;  // ★ 반드시 마지막 — 이 줄 앞의 모든 쓰기가 loop 에 보여야 한다
     }
   }
+}
+
+// ── ToF 태스크: 폴링 + 판정 + 최신 한 벌 공유 ─────────────────────────────
+// tof_test.cpp tofTask 와 동형(폴링·에러 카운트·주기). 판정 본문은 tofJudgeFrame 공유(복제 0).
+static void tofUplinkTask(void* parameter) {
+  (void)parameter;
+  logToFMemoryDiagnostics("tofTask-entry");
+  static VL53L5CX_ResultsData measurementData;  // ~1356B → BSS (tof_test.cpp 동형)
+  static TofJudgeState        judge;
+  uint32_t err_count = 0;
+
+  for (;;) {
+    if (tofImager.isDataReady()) {
+      if (tofImager.getRangingData(&measurementData)) {
+        const TofFrameResult r   = tofJudgeFrame(&judge, measurementData);
+        const uint32_t       now = millis();
+        taskENTER_CRITICAL(&g_tofMux);
+        g_tofLatest   = r;    // 4값 + 시각을 한 벌로 — 섞임 불가
+        g_tofLatestMs = now;
+        taskEXIT_CRITICAL(&g_tofMux);
+        g_tofStackFree = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
+      } else {
+        if ((++err_count % 10) == 1) {
+          Serial.printf("[tof] getRangingData failed #%u\n", (unsigned)err_count);
+        }
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(TOF_PERIOD_MS));
+  }
+}
+
+// 's' 입력 시점의 ToF 최신 판정 한 벌을 캡처 + 로그 1줄(≤80B). D1: 집계 없이 그대로.
+static void captureTofAtTrigger() {
+  g_tofAtSValid = false;
+  if (!g_tofAvailable) {
+    Serial.println("[tof][M5d] tof 없음 — 4필드 미전송(서버 tof_absent)");
+    return;
+  }
+  uint32_t ms;
+  taskENTER_CRITICAL(&g_tofMux);
+  g_tofAtS = g_tofLatest;
+  ms       = g_tofLatestMs;
+  taskEXIT_CRITICAL(&g_tofMux);
+  if (ms == 0) {
+    Serial.println("[tof][M5d] 첫 프레임 전 — 4필드 미전송(서버 tof_absent)");
+    return;
+  }
+  g_tofAtSValid = true;
+  g_tofAgeMs    = millis() - ms;
+
+  char center[8];
+  if (g_tofAtS.center_valid) {
+    snprintf(center, sizeof(center), "%umm", (unsigned)g_tofAtS.center_mm);
+  } else {
+    snprintf(center, sizeof(center), "n/a");
+  }
+  // 최악 "[tof][M5d] presence=false near=64/64 center=4000mm ndet=16/16 age_ms=4294967295" = 79B.
+  Serial.printf("[tof][M5d] presence=%s near=%u/%u center=%s ndet=%u/%u age_ms=%u\n",
+                g_tofAtS.fused ? "true" : "false", (unsigned)g_tofAtS.near_count,
+                (unsigned)TOF_ZONE_COUNT, center, (unsigned)g_tofAtS.motion_ndet,
+                (unsigned)TOF_MOTION_AGG_COUNT_8X8, (unsigned)g_tofAgeMs);
 }
 
 // ── 전송 (loop 태스크에서 수행) ────────────────────────────────────────────
@@ -228,8 +322,10 @@ static void sendSnapshot() {
 
   Serial.printf("[mic][M5d] id=%s bytes=%u rms=%d peak=%d\n", id, (unsigned)bytes,
                 (int)g_snapRms, (int)g_snapPeak);
-  Serial.printf("[mic][M5d] stk_free=%u psram_free=%u\n", (unsigned)g_taskStackFree,
-                (unsigned)ESP.getFreePsram());
+  // gaps = i2s_read 실패 누적(④ (b) 동시 구동 부하에서 증가 0 이어야 함) / tof_stk = tofTask 스택 최저 여유.
+  Serial.printf("[mic][M5d] stk_free=%u psram_free=%u gaps=%u tof_stk=%u\n",
+                (unsigned)g_taskStackFree, (unsigned)ESP.getFreePsram(), (unsigned)g_ringGaps,
+                (unsigned)g_tofStackFree);
 
   // WiFi 끊김: 재시도하지 않는다(1차 재시도 없음 정책). 로그만 남기고 이번 건은 버린다.
   if (WiFi.status() != WL_CONNECTED) {
@@ -241,7 +337,7 @@ static void sendSnapshot() {
   const UplinkResult r =
       uplinkPostAudio(SPIKE_SERVER_HOST, SPIKE_SERVER_PORT, id, g_snap, UPLINK_AUDIO_BYTES,
                       g_body, UPLINK_AUDIO_BYTES + UPLINK_MULTIPART_OVERHEAD_BYTES, resp,
-                      sizeof(resp));
+                      sizeof(resp), g_tofAtSValid ? &g_tofAtS : nullptr);
 
   if (r.httpStatus <= 0) {
     // 타임아웃·소켓 실패. 재시도 없음 — 429/401 과 동일하게 로그만 남긴다.
@@ -252,16 +348,18 @@ static void sendSnapshot() {
 
   char cls[16] = "?";
   char conf[8] = "?";
-  char tof[24] = "?";
+  char tof[72] = "?";
   jsonPeek(resp, "predicted_class", cls, sizeof(cls));
   jsonPeek(resp, "confidence", conf, sizeof(conf));
   jsonPeek(resp, "reason", tof, sizeof(tof));
 
   // 줄 길이 상한 80B (decisions.md 6.3: ≤80B 구간에서 시리얼 줄 손상 0건 실측).
-  // 최악값(http=-9999 rtt=4294967295ms cls 12자 conf 6자 tof 16자)에서도 80B 이내가
-  // 되도록 각 필드를 정밀도 지정으로 자른다.
-  Serial.printf("[mic][M5d] http=%d rtt=%ums cls=%.12s conf=%.6s tof=%.16s\n", r.httpStatus,
-                (unsigned)r.roundTripMs, cls, conf, tof);
+  // PoC-(45): tof reason 이 "presence=true near=13/64 center=1015mm ndet=1/16"(≈45자)로 길어져
+  // 한 줄 80B 를 넘으므로 **줄 분리** — 1줄째는 PR #52 와 동일 필드에서 tof 만 뺀 것, 2줄째가 tof.
+  // 최악값(http=-9999 rtt=4294967295ms cls 12자 conf 6자)에서도 1줄째 80B 이내.
+  Serial.printf("[mic][M5d] http=%d rtt=%ums cls=%.12s conf=%.6s\n", r.httpStatus,
+                (unsigned)r.roundTripMs, cls, conf);
+  Serial.printf("[mic][M5d] tof=%.64s\n", tof);  // "[mic][M5d] tof=" 15B + 64B = 79B
 }
 
 void setup() {
@@ -296,6 +394,20 @@ void setup() {
   xTaskCreatePinnedToCore(micUplinkTask, "micUplinkTask", MIC_TASK_STACK_SIZE, nullptr,
                           MIC_TASK_PRIORITY, nullptr, MIC_TASK_CORE);
   Serial.println("[BOOT] micUplinkTask started (Core 0) — POST 는 loop 태스크");
+
+  // ── ToF (PoC-(45)) — 마지막에 기동한다: begin() 이 I2C 로 ~86KB FW 를 수 초간 올리는 동안
+  //   위 마이크 태스크는 이미 Core 0 에서 적재 중이고(prio 4 > tofTask 3), 실패해도 앞선 부팅
+  //   단계에 영향이 없다. 실패 = 4필드 미전송(서버 tof_absent = PR #52 동작)으로 degrade.
+  //   메모리: SparkFun begin() = new VL53L5CX_Configuration(≈5.4KB, 내부 heap). PSRAM 버퍼
+  //   (snapshot/multipart/ring)와 풀이 달라 상호 영향 없음 — post-init [MEM] 로그로 확인 가능.
+  if (initToF()) {
+    g_tofAvailable = true;
+    xTaskCreatePinnedToCore(tofUplinkTask, "tofTask", TOF_TASK_STACK_SIZE, nullptr,
+                            TOF_TASK_PRIORITY, nullptr, TOF_TASK_CORE);
+    Serial.println("[BOOT] tofTask started (Core 0, prio 3) — ToF 4필드 송신 활성");
+  } else {
+    Serial.println("[BOOT] tof init 실패 — 4필드 미전송(서버 tof_absent 로 degrade)");
+  }
 }
 
 void loop() {
@@ -308,6 +420,7 @@ void loop() {
     } else if (g_snapReq || g_snapReady) {
       Serial.println("[mic][M5d] 이전 스냅샷 처리 중 — 무시");
     } else {
+      captureTofAtTrigger();  // 's' 시점 ToF 한 벌 (D1) — 오디오 스냅샷 요청보다 먼저 확정
       g_snapReq = true;
       Serial.println("[mic][M5d] snapshot 요청");
     }
