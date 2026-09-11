@@ -354,8 +354,9 @@ void setup() {
 
   if (!initMicI2S()) { Serial.println("[BOOT] mic init 실패 — 중단"); return; }
   // i2s_set_pin 이후에 건다(순서 보장). 부팅 모드 = m2 → 풀다운 OFF 를 명시적으로 박고 재독한다.
-  applySdPulldown(noiseModeCfg(g_mode, I2C_FAST_HZ, I2C_SLOW_HZ).sd_pd);
-  logSdPulldown(g_mode, noiseModeCfg(g_mode, I2C_FAST_HZ, I2C_SLOW_HZ).sd_pd);
+  const bool boot_pd = noiseModeCfg(g_mode, I2C_FAST_HZ, I2C_SLOW_HZ).sd_pd;
+  applySdPulldown(boot_pd);
+  logSdPulldown(g_mode, boot_pd);
   discardMicWarmup();
   xTaskCreatePinnedToCore(micProbeTask, "micProbeTask", MIC_TASK_STACK_SIZE, nullptr,
                           MIC_TASK_PRIORITY, nullptr, MIC_TASK_CORE);
