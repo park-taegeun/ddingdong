@@ -63,48 +63,69 @@ bool uplinkConnectWifi() {
   return false;
 }
 
+// form field 파트 1개를 head 끝에 이어 쓴다. 반환 = 누적 길이(잘림·오류 시 cap 이상 → 호출부 가드).
+static size_t appendField(char* head, size_t cap, size_t len, const char* name, const char* value) {
+  if (len >= cap) {
+    return cap;
+  }
+  const int n = snprintf(head + len, cap - len,
+                         "--%s\r\n"
+                         "Content-Disposition: form-data; name=\"%s\"\r\n\r\n"
+                         "%s\r\n",
+                         UPLINK_BOUNDARY, name, value);
+  return (n < 0) ? cap : len + static_cast<size_t>(n);
+}
+
 size_t uplinkBuildMultipart(uint8_t* dest, size_t destCapacity,
                             const char* clientRequestId, const char* deviceId,
-                            const uint8_t* audioBytes, size_t audioLen) {
-  char head[512];
-  const int headLen = snprintf(
-      head, sizeof(head),
-      "--%s\r\n"
-      "Content-Disposition: form-data; name=\"client_request_id\"\r\n\r\n"
-      "%s\r\n"
-      "--%s\r\n"
-      "Content-Disposition: form-data; name=\"device_id\"\r\n\r\n"
-      "%s\r\n"
-      "--%s\r\n"
-      "Content-Disposition: form-data; name=\"%s\"; filename=\"audio.pcm\"\r\n"
-      "Content-Type: %s\r\n\r\n",
-      UPLINK_BOUNDARY, clientRequestId, UPLINK_BOUNDARY, deviceId, UPLINK_BOUNDARY,
-      UPLINK_AUDIO_FIELD, UPLINK_AUDIO_CONTENT_TYPE);
+                            const uint8_t* audioBytes, size_t audioLen,
+                            const TofFrameResult* tof) {
+  // head 조립 순서 = client_request_id / device_id / [ToF 4필드] / audio 파트 헤더.
+  // tof==nullptr 이면 PR #52 의 단일 snprintf 와 **같은 바이트열**이 나온다(파트 문자열 동일, 순서 동일).
+  char   head[1024];
+  size_t headLen = 0;
+  headLen = appendField(head, sizeof(head), headLen, "client_request_id", clientRequestId);
+  headLen = appendField(head, sizeof(head), headLen, "device_id", deviceId);
 
-  // ── [uplink][defer] ToF 메타 4필드 전송: 미구현 (통합 env:prod 소관) ──
-  //   현 상태 : 본 env는 마이크 단독이라 ToF 센서 상태 자체가 없다 → 4필드를 보내지 않는다.
-  //             서버는 "4필드 전부 부재 = absent = 게이트 미적용(fail-open)"으로 처리하고
-  //             응답 tof_check.reason 에 "tof_absent" 를 넣는다
-  //             (server/app/tof_meta.py absent_meta()/evaluate_gate(), PR #43).
-  //   붙일 자리: 위 snprintf 의 form field 블록 — client_request_id/device_id 와 **동형**으로
-  //             tof_presence / tof_near_count / tof_center_mm / tof_motion_ndet 4개를 추가한다
-  //             (파트명은 server/app/constants.py 의 TOF_*_FIELD 를 실grep 해 맞출 것).
-  //   판정 방법: 통합 env 에서 4필드를 실어 보낸 뒤 **응답의 tof_check.reason 이 더 이상
-  //             "tof_absent" 가 아니게 되는지**를 본다. 그대로 tof_absent 면 필드명 불일치나
-  //             form field 미첨부이고, "presence=... near=.../64 ..." 텔레메트리 요약이 나오면
-  //             수신 성공이다. "tof_invalid(...)" 면 값 표기가 서버 허용표 밖이다.
-  //   ⚠️ 부분 전송 금지: tof_presence 없이 나머지만 보내면 서버가 invalid 로 떨어뜨린다.
+  // ── ToF 메타 4필드 (decisions.md 6.2 G10 / 6.4, PoC-(45) 송신측) ──
+  //   파트명 = server/app/constants.py:151~154 TOF_*_FIELD 실grep 값 그대로(신규 필드 0).
+  //   값 표기 = tof_meta.py 허용표: presence "true"/"false" / 정수는 십진 문자열.
+  //   ★ tof_presence ↔ 펌웨어 신호 매핑 = **fused**(presence_state && motion latch). 근거 =
+  //     6.4(b) "Stage A 디바운스 3프레임(9.2)과 Stage B-2 latch 75프레임(9.4)은 시간축 판정이라
+  //     … presence는 펌웨어가 판정한 결과를 그대로 신뢰" — 두 계층을 모두 거친 값이 presence 다.
+  //   ★ 부분 전송 금지(tof_presence 없이 나머지만 = invalid): presence 는 항상 싣는다.
+  //     center 만 예외 — center 4 zone 전부 무효(로그 "n/a")면 파트를 생략 → 서버 telemetry n/a.
+  if (tof != nullptr) {
+    char num[8];
+    headLen = appendField(head, sizeof(head), headLen, "tof_presence", tof->fused ? "true" : "false");
+    snprintf(num, sizeof(num), "%u", static_cast<unsigned>(tof->near_count));
+    headLen = appendField(head, sizeof(head), headLen, "tof_near_count", num);
+    if (tof->center_valid) {
+      snprintf(num, sizeof(num), "%u", static_cast<unsigned>(tof->center_mm));
+      headLen = appendField(head, sizeof(head), headLen, "tof_center_mm", num);
+    }
+    snprintf(num, sizeof(num), "%u", static_cast<unsigned>(tof->motion_ndet));
+    headLen = appendField(head, sizeof(head), headLen, "tof_motion_ndet", num);
+  }
+
+  if (headLen < sizeof(head)) {
+    const int n = snprintf(head + headLen, sizeof(head) - headLen,
+                           "--%s\r\n"
+                           "Content-Disposition: form-data; name=\"%s\"; filename=\"audio.pcm\"\r\n"
+                           "Content-Type: %s\r\n\r\n",
+                           UPLINK_BOUNDARY, UPLINK_AUDIO_FIELD, UPLINK_AUDIO_CONTENT_TYPE);
+    headLen = (n < 0) ? sizeof(head) : headLen + static_cast<size_t>(n);
+  }
 
   char tail[64];
   const int tailLen = snprintf(tail, sizeof(tail), "\r\n--%s--\r\n", UPLINK_BOUNDARY);
 
-  if (headLen < 0 || static_cast<size_t>(headLen) >= sizeof(head) || tailLen < 0 ||
-      static_cast<size_t>(tailLen) >= sizeof(tail)) {
+  if (headLen >= sizeof(head) || tailLen < 0 || static_cast<size_t>(tailLen) >= sizeof(tail)) {
     Serial.println("[uplink] multipart head/tail snprintf 잘림");
     return 0;
   }
 
-  const size_t total = static_cast<size_t>(headLen) + audioLen + static_cast<size_t>(tailLen);
+  const size_t total = headLen + audioLen + static_cast<size_t>(tailLen);
   if (total > destCapacity) {
     Serial.printf("[uplink] multipart build FAILED (need=%u cap=%u)\n",
                   static_cast<unsigned>(total), static_cast<unsigned>(destCapacity));
@@ -125,14 +146,15 @@ UplinkResult uplinkPostAudio(const char* host, uint16_t port,
                              const char* clientRequestId,
                              const uint8_t* audioBytes, size_t audioLen,
                              uint8_t* bodyBuf, size_t bodyBufCapacity,
-                             char* respOut, size_t respCapacity) {
+                             char* respOut, size_t respCapacity,
+                             const TofFrameResult* tof) {
   UplinkResult result{-1, 0};
   if (respOut != nullptr && respCapacity > 0) {
     respOut[0] = '\0';
   }
 
   const size_t bodyLen = uplinkBuildMultipart(bodyBuf, bodyBufCapacity, clientRequestId,
-                                              UPLINK_DEVICE_ID, audioBytes, audioLen);
+                                              UPLINK_DEVICE_ID, audioBytes, audioLen, tof);
   if (bodyLen == 0) {
     return result;
   }

@@ -20,13 +20,15 @@
 //     decisions.md 7.7(l)(2차 12.1초 vs 타임아웃)은 **정책 미확정**이며 판정 시점은
 //     I2(/enrich 2차 클라이언트) 설계 시점이다. 여기서 값을 바꾸거나 근거를 만들지 않는다.
 //   - RMS 트리거 임계값 / pre-post 비율(M5-c): 본 PR의 트리거는 **시리얼 수동 키**다.
-//   - ToF 메타 4필드: 전송하지 않는다(서버 fail-open 경로 사용, mic_uplink_main.cpp 주석).
+//   - ~~ToF 메타 4필드: 전송하지 않는다~~ → 2026-09-11 PoC-(45) 송신 배선(아래 tof 인자).
+//     ToF 부재·init 실패 시에는 tof=nullptr 로 종전 동작(4필드 미전송 = 서버 tof_absent) 유지.
 
 #pragma once
 
 #include <Arduino.h>
 
 #include "mic_common.h"
+#include "tof_common.h"   // TofFrameResult (PoC-(45): ToF 4필드 wire 값의 출처)
 
 // === 페이로드 크기 (mic_common.h 슬롯 산술에서 유도 — 새 상수 신설이 아니라 파생) ===
 // MIC_RING_SLOTS(32) × MIC_DMA_BUF_LEN(1024) 샘플 × 2 bytes(int16) = 65,536 bytes = 2.048초.
@@ -46,8 +48,10 @@ constexpr const char* UPLINK_AUDIO_CONTENT_TYPE = "application/octet-stream";
 // 같은 값을 쓰면 두 env가 서로의 429를 유발하므로 분리한다(하네스가 분리한 것과 동형).
 constexpr const char* UPLINK_DEVICE_ID = "ddingdong-mic-uplink-001";
 
-// head(필드 3개 boilerplate) + tail 여유폭. 원본 MULTIPART_OVERHEAD_BYTES(640) 동일 근거.
-constexpr size_t UPLINK_MULTIPART_OVERHEAD_BYTES = 640;
+// head(필드 boilerplate) + tail 여유폭. 원본 MULTIPART_OVERHEAD_BYTES 는 640(필드 3개 ≈ 370B).
+// PoC-(45) ToF 4필드 추가 = 파트당 ≈ 100B(경계 35 + 헤더 ~55 + 값 ≤5 + CRLF) × 4 ≈ 400B → 합 ≈ 770B
+// 가 640 을 넘으므로 1024 로 상향(head 버퍼도 동일 상향). 값은 여유폭이지 판정 상수가 아니다.
+constexpr size_t UPLINK_MULTIPART_OVERHEAD_BYTES = 1024;
 
 // === 타임아웃·WiFi 상수 (원본 upload_spike_common.h 값 그대로 복제) ===
 // ⚠️ HTTP_TIMEOUT_MS 는 **정책 확정이 아니다** — 상단 주석의 7.7(l) 참조.
@@ -75,14 +79,22 @@ uint8_t* uplinkAllocPsram(size_t bytes, const char* tag);
 bool uplinkConnectWifi();
 
 // multipart 바디 조립. 반환 = 조립된 총 바이트(0 = 실패). 원본 buildMultipartBody 복제.
+// tof: nullptr 이면 ToF 4필드를 싣지 않는다(PR #52 바이트열과 동일 = 서버 tof_absent).
+//      non-null 이면 decisions.md 6.2 G10/6.4 의 4필드를 device_id 파트 뒤에 form field 로 싣는다
+//      (파트명 = server/app/constants.py TOF_*_FIELD 실grep 값). center_valid=false 면
+//      tof_center_mm 파트를 **생략**한다 — 서버 계약(tof_meta.py parse_tof_meta)에서 "필드 부재 =
+//      telemetry n/a" 이고, 빈 문자열은 invalid 로 떨어진다(2026-09-11 서버 함수 직접 호출로 확인).
 size_t uplinkBuildMultipart(uint8_t* dest, size_t destCapacity,
                             const char* clientRequestId, const char* deviceId,
-                            const uint8_t* audioBytes, size_t audioLen);
+                            const uint8_t* audioBytes, size_t audioLen,
+                            const TofFrameResult* tof);
 
 // POST /api/v1/detect. respOut 에 응답 바디 앞부분을 NUL 종료로 담는다(nullptr 허용).
 // ★ 재시도하지 않는다 — 429/401/타임아웃/끊김 모두 호출부가 로그만 남긴다(1차 재시도 없음).
+// tof 는 uplinkBuildMultipart 로 그대로 전달(nullptr 허용).
 UplinkResult uplinkPostAudio(const char* host, uint16_t port,
                              const char* clientRequestId,
                              const uint8_t* audioBytes, size_t audioLen,
                              uint8_t* bodyBuf, size_t bodyBufCapacity,
-                             char* respOut, size_t respCapacity);
+                             char* respOut, size_t respCapacity,
+                             const TofFrameResult* tof);

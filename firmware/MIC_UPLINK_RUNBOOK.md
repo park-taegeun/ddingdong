@@ -1,6 +1,7 @@
 # 마이크 2초 스냅샷 업로드 ④런타임 Runbook (M5-d, `env:mic_uplink`)
 
 > 2026-09-11 작성. **실행은 학부생**, 본 문서는 절차서다.
+> 2026-09-11 PoC-(45) 갱신: ToF 메타 4필드 송신(9절) 추가 + 로그 줄 분리(5절 기대 로그 갱신).
 > 네트워크 prereq(핫스팟 함정 5건 / 포트 / 토큰 3곳 일치)는 `firmware/UPLOAD_TEST_RUNBOOK.md`
 > 1~3절과 **완전히 동일**하므로 여기서 복제하지 않는다. 먼저 그 문서대로 환경을 세운 뒤 아래로 온다.
 
@@ -67,8 +68,17 @@ cd server && source venv/bin/activate && DEVICE_TOKEN=<토큰> flask --app run r
 [uplink] WiFi connected SSID=... RSSI=-52 IP=172.20.10.x
 [BOOT] client_request_id nonce=3f8a1c07
 [BOOT] micUplinkTask started (Core 0) — POST 는 loop 태스크
+[tof] I2C ready (SDA=GPIO5/SCL=GPIO6, clock=400000Hz)
+[tof][StageB-1] motion indicator ready (8x8, 400~1500mm, 16 aggregates)
+[tof] VL53L5CX ready (8x8, 15Hz, continuous)
+[BOOT] tofTask started (Core 0, prio 3) — ToF 4필드 송신 활성
 [mic][M5d] ring filled — 's' 키로 스냅샷 전송 가능
 ```
+
+ToF 가 결선되지 않았거나 init 에 실패하면 `[BOOT] tof init 실패 — 4필드 미전송(서버 tof_absent 로 degrade)`
+가 뜨고 **나머지는 PR #52 와 동일하게 동작**한다(응답 `tof=tof_absent`). 이것은 오류가 아니라 degrade 다.
+ToF 가 살아 있으면 `[tof][StageA]`(2초 주기) / `[tof][StageB-1]`(1초 주기) 줄이 상시 흐른다 — tof_dummy 와
+같은 포맷이며 9절 (a)(d) 의 관측 채널이다.
 
 `ring filled` 가 뜨기 전(부팅 후 약 2초)에 `s` 를 누르면 `ring 미충전` 이 뜬다 — 정상 가드다.
 
@@ -102,9 +112,11 @@ detect audio decoded: samples=32768 ... rms=0.0653 ...   ← 손뼉
 
 기대 (양쪽 모두):
 ```
-[mic][M5d] http=201 rtt=842ms cls=knock conf=0.51 tof=tof_absent
+[mic][M5d] http=201 rtt=842ms cls=knock conf=0.51
+[mic][M5d] tof=presence=false near=0/64 center=n/a ndet=0/16
 ```
-- ✅ **둘 다 `http=201`**, 둘 다 `tof=tof_absent`(본 env 는 ToF 필드를 보내지 않는다 → 서버 fail-open).
+- ✅ **둘 다 `http=201`**. `tof=` 줄은 PoC-(45)부터 **별도 줄**이다(reason 이 길어져 80B 분리).
+  ToF 결선 시 `presence=… near=…` 텔레메트리, ToF 미결선/init 실패 시 `tof=tof_absent`(fail-open).
 - ✅ **DB 행이 1건씩 증가**:
   ```
   cd server && venv/bin/python3 -c "import sqlite3;print(sqlite3.connect('ddingdong.db').execute('select count(*) from notifications').fetchone())"
@@ -118,8 +130,10 @@ detect audio decoded: samples=32768 ... rms=0.0653 ...   ← 손뼉
 
 기대:
 ```
-[mic][M5d] http=201 rtt=812ms cls=... conf=... tof=tof_absent
-[mic][M5d] http=429 rtt=18ms cls=? conf=? tof=?
+[mic][M5d] http=201 rtt=812ms cls=... conf=...
+[mic][M5d] tof=presence=...
+[mic][M5d] http=429 rtt=18ms cls=? conf=?
+[mic][M5d] tof=?
 ```
 - ✅ 두 번째가 **429**(`DEVICE_RATE_LIMIT_SECONDS=5`, `rate_limit.py`).
 - ✅ `cls`/`conf`/`tof` 가 전부 **`?`** — 429 에러 바디에는 그 키가 없어서 파싱이 실패한 것이고,
@@ -149,12 +163,14 @@ detect audio decoded: samples=32768 ... rms=0.0653 ...   ← 손뼉
 ## 6. 추가 관측 (매 전송 자동 출력)
 
 ```
-[mic][M5d] stk_free=1824 psram_free=8123456
+[mic][M5d] stk_free=1824 psram_free=8123456 gaps=0 tof_stk=4100
 ```
 - `stk_free` = `micUplinkTask` 스택 최저 여유(bytes). `MIC_TASK_STACK_SIZE=4096` 기준
   (decisions.md 6.3(l) ① 경고 항목). **0 에 근접하면 보고** — 다만 POST 는 이 태스크가 아니라
   loop 태스크에서 돌므로 큰 여유가 나오는 것이 정상이다.
 - `psram_free` = 전송마다 같은 값이어야 한다(버퍼는 부팅 시 1회 할당). **단조 감소하면 누수**다.
+- `gaps` = `i2s_read` 실패 누적(링버퍼 구멍). 9절 (b) 동시 구동에서 **증가 0** 이어야 한다.
+- `tof_stk` = `tofTask` 스택 최저 여유(`TOF_TASK_STACK_SIZE=6144` 기준). ToF 없으면 0.
 
 ## 7. 실패 시 로그 대응표
 
@@ -175,3 +191,98 @@ c++ -std=c++17 -Wall -o /tmp/jpt firmware/tools/jsonpeek_test.cpp && /tmp/jpt
 ```
 `mic_uplink_main.cpp` 의 `jsonPeek` 를 실제 `/detect` 201 응답 바디로 검증한다
 (`"skip_reason"` 오매치 / 키 부재 / 에러 바디 / 버퍼 초과 negative control 포함).
+
+```
+c++ -std=c++17 -Wall -I firmware/include -I firmware/tools/host_stubs \
+    -o /tmp/tjt firmware/tools/tof_judge_test.cpp firmware/src/tof_common.cpp && /tmp/tjt
+```
+`tof_common.cpp` 의 `tofJudgeFrame`(승격된 Stage A/B-1/B-2 판정 본문)을 **실제 소스 그대로 링크**해
+합성 프레임으로 검증한다(디바운스 N=3 / 임계 8·1000mm / center 27·28·35·36 / latch 75 / ndet≥1 /
+프레임 단위 AND / 전이 로그 verbatim). 스텁 = `firmware/tools/host_stubs/`(Serial·Wire·SparkFun 표면만).
+
+negative control(각각 **반드시 실패**해야 통과. 변형 후 원복 필수 — `git diff` 로 0 확인):
+| # | 변형(파일 · 1건 치환) | 검출 위치(2026-09-11 실측) |
+|---|---|---|
+| ① | `tof_common.h` `TOF_PRESENCE_DEBOUNCE_FRAMES = 3` → `2` | T2 2프레임째 `!r.presence_state` |
+| ② | `tof_common.h` `TOF_MOTION_LATCH_FRAMES = 75` → `74` | T6 74프레임째 `r.fused` |
+| ③ | `tof_common.h` `TOF_CENTER_ZONES` `{27,…}` → `{26,…}` | T5 `center_mm == 500` |
+| ④ | `tof_common.cpp` `presence_state && latch_active` → `\|\|` | T2 전이 로그 verbatim(B-2 줄이 먼저 뜸) / T7 |
+①~③은 `static_assert` 가 컴파일 단계에서 먼저 잡는다. **행동 단언**이 잡는지를 보려면
+`-DTOF_TEST_NO_CONST_PIN` 을 붙여 컴파일한다.
+
+---
+
+## 9. ★ ToF 메타 4필드 송신 (PoC-(45)) — ④런타임 대조 실험 4건
+
+### 9.0 이 절이 증명하려는 것
+PR #52 까지 응답은 **항상** `tof=tof_absent` 였다(4필드 미전송). 이 PR 이후 ToF 가 결선된 상태에서는
+응답이 **달라져야** 한다. 변경 전 값(`tof_absent`)과 같으면 아무것도 증명되지 않는다.
+
+**결과 판정은 서버 access log 시각 기준**으로 한다 — 보드 모니터의 `http=` 줄은 다음 입력 시점까지
+지연 출력된 선례가 있다(PR #52 댓글 "모니터 결과 줄 지연 출력", CDC 출력 지연 추정). 서버 터미널의
+`detect tof meta: state=… applied=… passed=… reason=…` 줄과 짝지어 읽을 것.
+
+### 9.1 전제
+- **결선 변경 금지.** ToF = `tof_dummy` 와 같은 SDA=GPIO5(D4)/SCL=GPIO6(D5), PWREN/LPn=3V3
+  (decisions.md 9.1(d)). 마이크 I2S1(GPIO2/3/7)과 핀 겹침 없음.
+- **센서 앞 1.5m 이상 빈 공간** 확보. 9.2(e) 시야 가장자리 오염(near 가 2~8/64 로 상시, center `n/a`)
+  이 나오면 무자극 기준선이 서지 않는다 — 책상 위 물건·모니터를 시야에서 치울 것.
+- 핫스팟 설정 화면을 열어 둔다(1~3절 동일).
+- 전송 사이 **5초 이상** 간격(rate limit).
+
+### 9.2 (a) 센서 앞 비움 vs 손·사람 40~150cm — presence 가 바뀌고 서버 게이트가 **적용**되는가
+1. 센서 앞을 비운 채 5초 이상 기다린 뒤 `s`.
+2. 5초 대기. 손(또는 사람)을 센서 앞 40~150cm 에 두고 **움직이면서**(latch 재충전) `s`.
+3. 손을 그대로 둔 채 **정지** 5초 이상(latch 75프레임 만료) 후 `s`.
+
+기대 (펌웨어, `s` 직후 즉시 1줄):
+```
+[tof][M5d] presence=false near=0/64 center=n/a ndet=0/16 age_ms=41        ← 1. 비움
+[tof][M5d] presence=true near=31/64 center=612mm ndet=3/16 age_ms=12      ← 2. 손 움직임
+[tof][M5d] presence=false near=30/64 center=608mm ndet=0/16 age_ms=55     ← 3. 손 정지 5초+
+```
+- `presence` = **fused**(Stage A presence ∧ motion latch, decisions.md 6.4(b)). 3번에서 `near` 는
+  높은데 `presence=false` 인 것이 **정상**이다(9.4(d) "latch 만료" 사례 재현). 이것이 wire 매핑 증거다.
+- `age_ms` = 마지막 ToF 프레임 → `s` 까지 경과. 15Hz 면 **상시 < 100ms**. 수백 ms 가 반복되면 보고
+  (신선도 정책은 미도입 — 분포를 적어 두는 것이 판정 재료다).
+
+기대 (응답 + 서버 로그):
+```
+[mic][M5d] tof=presence=false near=0/64 center=n/a ndet=0/16           ← 1
+[mic][M5d] tof=presence=true near=31/64 center=612mm ndet=3/16         ← 2
+detect tof meta: state=present applied=True passed=True reason=presence=true near=31/64 center=612mm ndet=3/16
+```
+- ✅ **`tof_absent` 가 사라진다** → `applied=True`. 1·3번은 `passed=False`(doorbell/knock 이면
+  `skip_reason=tof_rejected`), 2번은 `passed=True`. `fire_alarm` 이 뜨면 `fire_alarm_bypass (…)` 로
+  우회된다(카테고리 3) — mock 난수라 클래스는 고를 수 없으니 여러 번 눌러 3클래스가 한 번씩은 나오게.
+- ✅ 펌웨어 `[tof][M5d]` 줄의 4값과 서버 reason 의 4값이 **정확히 같다**(같은 어휘 `near=n/64` /
+  `center=NNNNmm` / `ndet=n/16`). 다르면 필드 매핑 버그다 — 즉시 보고.
+- ❌ 여전히 `tof_absent` 면: `[BOOT] tof init 실패` 였는지(degrade 경로) 먼저 확인.
+- ❌ `tof_invalid(…)` 면 값 표기가 서버 허용표 밖 — 즉시 보고(도달해서는 안 되는 경로).
+
+### 9.3 (b) 동시 구동 부하 — ToF 15Hz + 마이크 + WiFi 수 분 가동 중 5회 이상 전송
+5분 이상 켜 둔 채 30~60초 간격으로 `s` 를 **5회 이상**. 매회 아래 줄을 적는다:
+```
+[mic][M5d] stk_free=1824 psram_free=8123456 gaps=0 tof_stk=4100
+[tof][M5d] … age_ms=23
+```
+- ✅ `gaps` 가 5회 내내 **0 (증가 0)** — tofTask(prio 3)가 micUplinkTask(prio 4)의 DMA 적재를
+  밀어내지 않는다는 증거. 1 이라도 오르면 보고(ToF I2C 읽기 ≈ 수십 ms 가 원인 후보).
+- ✅ `age_ms` 상시 작음(< 100ms). ✅ `psram_free` 불변. ✅ `stk_free` / `tof_stk` 가 회차 간
+  **단조 감소하지 않음**(최저 여유라 첫 회차 이후 고정되는 것이 정상). 두 값 모두 기록.
+
+### 9.4 (c) PR #52 회귀 요약
+- `s` 후 **2초 안에** 다시 `s` → 두 번째 `http=429` + `tof=?` + **재전송 줄 없음**(재시도 없음).
+- RESET 후 `[BOOT] client_request_id nonce=` 가 **달라지고** 다음 전송이 `http=201`(200 replay 아님).
+- (a) 의 `bytes=65536` / 서버 `samples=32768` 불변.
+
+### 9.5 (d) 승격 회귀 — `tof_dummy` 재플래시
+```
+~/.platformio/penv/bin/pio run -d firmware -e tof_dummy -t upload
+```
+- ✅ 부팅~2초 주기 `[tof][StageA] frame #N near=…/64 presence=… center=…` / 1초 주기
+  `[tof][StageB-1] mi: g1=… ndet=…/16 st=… aggmax=… | near=… center=…` 가 **PR #39 와 같은 포맷**.
+- ✅ 사람 접근 시 `[tof][StageA] presence: NONE -> DETECTED (near=…, center=…, streak=3)` 전이와
+  `[tof][StageB-2] fused #N: NONE -> PERSON (…, latch=75/75, ndet=…)` 전이가 관측된다.
+- 판정 본문은 `mic_uplink` 와 **같은 함수**(`tofJudgeFrame`)라 여기서 포맷이 같으면 승격이 로직을
+  바꾸지 않았다는 ④ 증거다(호스트 테스트 8절이 ③ 증거).
