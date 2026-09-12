@@ -1,198 +1,293 @@
 // 랜딩(`/`) — 부스 관람객이 대시보드보다 먼저 보는 화면.
-// 대시보드 테마 토큰과 분리된 잉크 팔레트(index.css `--ink*` / `--signal*`)를 쓴다.
+//
+// 화면의 주인공 = **실제로 도착하는 카카오톡 알림의 재현**이다. 좌 텍스트 / 우 일러스트
+// 2분할을 버리고 세로 한 축(마스트헤드 → 대화 → 해설)으로 세웠다. 말풍선 문구는
+// 지어낸 것이 아니라 서버 상수 실물이다:
+//   `server/app/constants.py` PRIMARY_MESSAGES["doorbell"] / SECONDARY_FEED_TITLES["doorbell"]
+//   / KAKAO_FEED_BUTTON_TITLE, `kakao.py` _feed_description 의 "{월}월 {일}일 {HH:MM} 감지"
+//   형식, `utils.py` _MOCK_TRANSCRIPTS 의 첫 문구.
 // 문구 원칙: 제품에 없는 기능(초인종 등록/해제)은 쓰지 않는다. 성능 수치 인용 없음.
+// 카카오 로고·브랜드 자산은 쓰지 않는다 — 말풍선 레이아웃만 재현한다(상표).
 
-import { useEffect } from "react"
-import { BellRing, MessageSquareText, ScanEye } from "lucide-react"
-import type { LucideIcon } from "lucide-react"
+import { Bell } from "lucide-react"
 import { Link } from "react-router-dom"
 import { useReducedMotion } from "@/hooks/useReducedMotion"
 import { cn } from "@/lib/utils"
 
-interface Step {
-  icon: LucideIcon
-  accent: string
-  title: string
-  body: string
-}
-
-// 파이프라인 실제 순서(decisions.md 카테고리 26.3 진입점 1·3 / 33.5 「USP 2층 재정립」).
-const STEPS: Step[] = [
-  {
-    icon: ScanEye,
-    accent: "text-signal",
-    title: "문 앞에 사람이 있는지 먼저 확인합니다",
-    body: "소리가 나면 거리 센서로 현관 앞을 살핍니다. 벽 너머로 새어 들어온 옆집 초인종 소리와 우리 집 방문을 갈라내기 위한 단계입니다.",
-  },
-  {
-    icon: BellRing,
-    accent: "text-signal-amber",
-    title: "무슨 소리였는지 먼저 알립니다",
-    body: "초인종·노크·화재경보를 구분해 짧은 알림을 보냅니다. 화재경보는 사람 확인을 건너뛰고 바로, 대피 수칙과 함께 보냅니다.",
-  },
-  {
-    icon: MessageSquareText,
-    accent: "text-signal-ember",
-    title: "이어서 사진과 자막을 보냅니다",
-    body: "현관 사진과, 방문자가 한 말을 받아쓴 자막을 두 번째 알림으로 보냅니다. 누가 왔고 뭐라고 했는지 읽어서 확인합니다.",
-  },
+// 제품이 갈라내는 3종. 색은 대시보드 클래스 색과 같은 의미를 유지한다
+// (초인종 --primary / 노크 --warning / 화재경보 --danger 의 대비 보정분).
+const CLASSES = [
+  { label: "초인종", tint: "bg-lp-blue/10 text-lp-blue" },
+  { label: "노크", tint: "bg-lp-amber/10 text-lp-amber" },
+  { label: "화재경보", tint: "bg-lp-red/10 text-lp-red" },
 ]
 
-// 링 3겹 — 초인종에서 소리가 퍼지는 모습. 굵기가 바깥으로 갈수록 얇아진다.
+// 링 = 알림이 퍼지는 소리. 발신 아바타(종)를 원점으로, 바깥으로 갈수록 얇고 옅어진다.
+// 대화 카드가 불투명해서 카드 안쪽은 가려지고 **카드 밖으로 나간 호(弧)만** 보인다.
 const RINGS = [
-  { r: 40, width: 2, delay: "0s" },
-  { r: 62, width: 1.5, delay: "0.12s" },
-  { r: 86, width: 1, delay: "0.24s" },
+  { r: 300, width: 2, opacity: 0.34, delay: "0.54s" },
+  { r: 430, width: 1.5, opacity: 0.2, delay: "0.66s" },
+  { r: 580, width: 1.25, opacity: 0.11, delay: "0.78s" },
 ]
+
+const SENT_AT = "오후 1:39"
 
 export function LandingPage() {
   const reduced = useReducedMotion()
   // 모션이 꺼져 있으면 클래스를 아예 붙이지 않는다 → 최종 상태로 즉시 렌더.
   const rise = reduced ? undefined : "motion-rise"
+  const bubble = reduced ? undefined : "motion-bubble"
   const at = (delay: string) => (reduced ? undefined : { animationDelay: delay })
 
-  // 랜딩이 떠 있는 동안만 문서 캔버스를 잉크로(스크롤 바운스 흰 바닥 방지).
-  useEffect(() => {
-    document.documentElement.classList.add("landing-canvas")
-    return () => document.documentElement.classList.remove("landing-canvas")
-  }, [])
-
   return (
-    <main className="min-h-screen bg-ink text-ink-paper">
-      <div className="mx-auto w-full max-w-5xl px-6 py-16 lg:py-24">
-        <section className="grid items-center gap-12 lg:grid-cols-[1.15fr_1fr]">
-          <div>
-            <p
-              className={cn("text-caption font-medium tracking-wide text-signal", rise)}
-              style={at("0.05s")}
-            >
-              띵동
-            </p>
-            <h1
-              className={cn(
-                "mt-3 text-[clamp(2rem,6vw,3.5rem)] font-extrabold leading-[1.15] tracking-[-0.02em]",
-                rise,
-              )}
-              style={at("0.15s")}
-            >
-              현관에서 난 소리를
-              <br />
-              눈으로 확인합니다
-            </h1>
-            <p
-              className={cn(
-                "mt-5 max-w-[46ch] text-[clamp(1.0625rem,2vw,1.25rem)] leading-relaxed text-ink-mist",
-                rise,
-              )}
-              style={at("0.28s")}
-            >
-              소리가 들리지 않아도 현관 상황은 알아야 합니다. 띵동은 현관에서 난
-              소리를 구분해 스마트폰으로 알리고, 누가 왔는지 사진과 자막으로
-              이어서 전합니다.
-            </p>
-            <div
-              className={cn("mt-9 flex flex-wrap items-center gap-x-6 gap-y-4", rise)}
-              style={at("0.4s")}
-            >
-              <Link
-                to="/home"
-                className="inline-flex h-btn items-center rounded-xl bg-signal px-7 text-body font-bold text-ink outline-none transition-colors hover:bg-signal/90 focus-visible:ring-[3px] focus-visible:ring-ink-paper focus-visible:ring-offset-2 focus-visible:ring-offset-ink"
-              >
-                대시보드 열기
-              </Link>
-              <Link
-                to="/help"
-                className="rounded-md text-body font-medium text-ink-mist underline-offset-4 outline-none hover:text-ink-paper hover:underline focus-visible:ring-[3px] focus-visible:ring-ink-paper focus-visible:ring-offset-2 focus-visible:ring-offset-ink"
-              >
-                사용법 보기
-              </Link>
-            </div>
-          </div>
-
-          {/* 현관문 + 초인종에서 퍼지는 소리. 장식이므로 SR 에서 숨긴다. */}
-          <div className="order-first mx-auto w-full max-w-xs lg:order-none lg:max-w-none">
-            <svg
-              viewBox="0 0 240 240"
-              className="h-auto w-full"
-              aria-hidden
-              focusable="false"
-            >
-              <g fill="none" stroke="var(--signal)">
-                {RINGS.map((ring) => (
-                  <circle
-                    key={ring.r}
-                    cx="152"
-                    cy="132"
-                    r={ring.r}
-                    strokeWidth={ring.width}
-                    className={cn(!reduced && "motion-ring")}
-                    // 모션 없이도 링이 보이도록 정적 불투명도로 대체한다(빈 그림 방지).
-                    style={reduced ? { opacity: 0.32 } : { animationDelay: ring.delay }}
-                  />
-                ))}
-              </g>
-              <rect
-                x="26"
-                y="22"
-                width="106"
-                height="196"
-                rx="10"
-                fill="var(--ink-surface)"
-                stroke="var(--ink-line)"
-                strokeWidth="2"
-              />
-              <circle cx="114" cy="128" r="4.5" fill="var(--ink-mist)" />
-              <rect
-                x="142"
-                y="116"
-                width="20"
-                height="32"
-                rx="7"
-                fill="var(--ink-surface)"
-                stroke="var(--signal)"
-                strokeWidth="2"
-              />
-              <circle cx="152" cy="132" r="4.5" fill="var(--signal)" />
-            </svg>
-          </div>
-        </section>
-
-        <section className="mt-20 border-t border-ink-line pt-12">
-          <h2 className={cn("text-h2 font-bold", rise)} style={at("0.5s")}>
-            소리가 난 뒤 일어나는 일
-          </h2>
-          <ol className="mt-8 space-y-8 border-l border-ink-line pl-7">
-            {STEPS.map((step, i) => (
-              <li
-                key={step.title}
-                className={cn("relative", rise)}
-                style={at(`${0.55 + i * 0.13}s`)}
-              >
-                <span
-                  className="absolute -left-7 top-1 flex h-6 w-6 -translate-x-1/2 items-center justify-center rounded-full bg-ink-surface ring-1 ring-ink-line"
-                  aria-hidden
-                >
-                  <step.icon className={cn("h-3.5 w-3.5", step.accent)} />
-                </span>
-                <h3 className="text-h3 font-bold">{step.title}</h3>
-                <p className="mt-2 max-w-[62ch] text-body leading-relaxed text-ink-mist">
-                  {step.body}
-                </p>
-              </li>
-            ))}
-          </ol>
-        </section>
-
-        <footer
+    <main className="min-h-screen bg-background text-foreground">
+      {/* ── 마스트헤드. 폭을 좁게(max-w-3xl) 잡아 읽는 화면으로 만든다 ── */}
+      <div className="mx-auto w-full max-w-3xl px-6 pt-14 lg:pt-20">
+        <p
+          className={cn("text-caption font-bold tracking-wide text-lp-blue", rise)}
+          style={at("0.04s")}
+        >
+          띵동
+        </p>
+        <h1
           className={cn(
-            "mt-20 border-t border-ink-line pt-6 text-caption text-ink-mist",
+            "mt-2.5 text-[clamp(1.875rem,5.5vw,3rem)] font-extrabold leading-[1.18] tracking-[-0.02em]",
             rise,
           )}
-          style={at("0.95s")}
+          style={at("0.12s")}
         >
-          청각장애인 1인 가구를 위한 현관 알림 시스템 · 서경대학교 공학종합설계
-        </footer>
+          초인종 소리를 못 들어도
+          <br />
+          현관 앞은 알 수 있습니다
+        </h1>
+        <p
+          className={cn(
+            "mt-4 max-w-[40ch] text-[clamp(1.0625rem,2vw,1.1875rem)] leading-relaxed text-foreground-secondary",
+            rise,
+          )}
+          style={at("0.22s")}
+        >
+          현관에서 난 소리를 세 가지로 갈라내 스마트폰으로 보냅니다. 누가 왔고
+          뭐라고 했는지는 사진과 자막이 뒤따라 알려줍니다.
+        </p>
+        <ul className={cn("mt-5 flex flex-wrap gap-2", rise)} style={at("0.3s")}>
+          {CLASSES.map((c) => (
+            <li
+              key={c.label}
+              className={cn("rounded-full px-3 py-1.5 text-caption font-bold", c.tint)}
+            >
+              {c.label}
+            </li>
+          ))}
+        </ul>
+        <div
+          className={cn("mt-8 flex flex-wrap items-center gap-x-6 gap-y-3", rise)}
+          style={at("0.38s")}
+        >
+          <Link
+            to="/home"
+            className="inline-flex h-btn items-center rounded-xl bg-lp-blue px-7 text-body font-bold text-lp-on-blue outline-none transition-opacity hover:opacity-90 focus-visible:ring-[3px] focus-visible:ring-lp-blue focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            대시보드 열기
+          </Link>
+          <Link
+            to="/help"
+            className="rounded-md text-body font-medium text-foreground-secondary underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-[3px] focus-visible:ring-lp-blue focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            사용법 보기
+          </Link>
+        </div>
       </div>
+
+      {/* ── 대화 재현. 발신 아바타에서 링이 퍼져 나간다 ── */}
+      <section className="relative overflow-hidden pb-16 pt-9">
+        <div className="mx-auto w-full max-w-3xl px-6">
+          <p
+            className={cn("mb-3 text-caption text-foreground-secondary", rise)}
+            style={at("0.46s")}
+          >
+            초인종이 울리면 스마트폰에 이렇게 도착합니다.
+          </p>
+
+          <div className="lg:grid lg:grid-cols-[24rem_1fr] lg:items-start lg:gap-9">
+            <div className="relative">
+              {/* 원점 = 아바타 중심(카드 padding 16px + 아바타 반지름 18px). */}
+              <svg
+                viewBox="-640 -640 1280 1280"
+                className="pointer-events-none absolute left-[2.125rem] top-[2.25rem] h-[80rem] w-[80rem] -translate-x-1/2 -translate-y-1/2"
+                aria-hidden
+                focusable="false"
+              >
+                <g fill="none" stroke="var(--lp-blue)">
+                  {RINGS.map((ring) => (
+                    <circle
+                      key={ring.r}
+                      cx="0"
+                      cy="0"
+                      r={ring.r}
+                      strokeWidth={ring.width}
+                      className={cn(!reduced && "motion-ring")}
+                      // 모션이 없어도 링은 그대로 보인다(빈 그림 방지) — 최종 불투명도가 곧 정적 값.
+                      style={
+                        reduced
+                          ? { opacity: ring.opacity }
+                          : {
+                              opacity: 0,
+                              animationDelay: ring.delay,
+                              ["--ring-o" as string]: ring.opacity,
+                            }
+                      }
+                    />
+                  ))}
+                </g>
+              </svg>
+
+              <div className="relative rounded-2xl bg-lp-canvas p-4">
+                <div className="flex gap-2.5">
+                  <span
+                    className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-[0.9rem] bg-lp-blue"
+                    aria-hidden
+                  >
+                    <Bell className="h-4.5 w-4.5 text-lp-on-blue" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[0.8125rem] font-medium text-lp-meta">띵동</p>
+
+                    {/* ① 1차 알림 — PRIMARY_MESSAGES["doorbell"] 실물 */}
+                    <div
+                      className={cn("mt-1 flex items-end gap-1.5", bubble)}
+                      style={at("0.54s")}
+                    >
+                      <p className="rounded-2xl rounded-tl-md bg-lp-bubble px-3 py-2 text-[0.9375rem] leading-snug text-foreground">
+                        🔔[띵동] 초인종이 울렸어요.
+                      </p>
+                      <span className="shrink-0 text-[0.6875rem] text-lp-meta">{SENT_AT}</span>
+                    </div>
+
+                    {/* ② 2차 사진 — feed 템플릿(제목 + 감지 시각 + 버튼) */}
+                    <div
+                      className={cn("mt-2 flex items-end gap-1.5", bubble)}
+                      style={at("0.66s")}
+                    >
+                      <div className="w-[13.75rem] overflow-hidden rounded-2xl rounded-tl-md bg-lp-bubble">
+                        <PhotoSlot />
+                        <div className="px-3 pb-2 pt-2.5">
+                          <p className="text-[0.8125rem] font-bold leading-snug text-foreground">
+                            🔔[띵동] 초인종 — 방문자 사진
+                          </p>
+                          <p className="mt-0.5 text-[0.75rem] text-lp-meta">9월 12일 13:39 감지</p>
+                        </div>
+                        <p className="border-t border-border py-2 text-center text-[0.8125rem] font-medium text-lp-blue">
+                          사진 보기
+                        </p>
+                      </div>
+                      <span className="shrink-0 text-[0.6875rem] text-lp-meta">{SENT_AT}</span>
+                    </div>
+
+                    {/* ③ 2차 자막 — 받아쓴 문장을 그대로 보낸다(서버가 앞뒤에 아무것도 붙이지 않는다) */}
+                    <div
+                      className={cn("mt-2 flex items-end gap-1.5", bubble)}
+                      style={at("0.78s")}
+                    >
+                      <p className="rounded-2xl rounded-tl-md bg-lp-bubble px-3 py-2 text-[0.9375rem] leading-snug text-foreground">
+                        택배 왔습니다. 문 앞에 두고 갈게요.
+                      </p>
+                      <span className="shrink-0 text-[0.6875rem] text-lp-meta">{SENT_AT}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <p
+              className={cn(
+                "mt-4 text-[0.8125rem] leading-relaxed text-foreground-secondary lg:mt-1",
+                rise,
+              )}
+              style={at("0.86s")}
+            >
+              말풍선 문구는 서버가 실제로 보내는 문구입니다. 사진 자리만 실제
+              현관 사진 대신 도식으로 두었습니다.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* ── 해설. 세 항목을 같은 카드로 반복하지 않는다 — 하나가 크고 둘은 딸린다 ── */}
+      <section className="mx-auto w-full max-w-3xl px-6 pb-14">
+        <div className="grid gap-x-10 gap-y-9 border-t border-border pt-10 lg:grid-cols-[1.4fr_1fr]">
+          <article className={cn(rise)} style={at("0.94s")}>
+            <span className="block h-1 w-11 rounded-full bg-lp-blue" aria-hidden />
+            <h2 className="mt-4 text-[clamp(1.375rem,3vw,1.625rem)] font-extrabold leading-snug tracking-[-0.01em]">
+              옆집 초인종에는 반응하지 않습니다
+            </h2>
+            <p className="mt-3 text-body leading-relaxed text-foreground-secondary">
+              벽 너머로 새어 들어온 소리까지 알림으로 오면, 결국 알림을 꺼 두게
+              됩니다. 그래서 소리가 잡히면 거리 센서로 현관 앞부터 들여다봅니다.
+              사람이 없으면 우리 집 방문으로 치지 않습니다.
+            </p>
+          </article>
+
+          <div
+            className={cn("space-y-7 lg:border-l lg:border-border lg:pl-9", rise)}
+            style={at("1.02s")}
+          >
+            <article>
+              <h3 className="text-caption font-bold text-lp-red">화재경보는 기다리지 않고</h3>
+              <p className="mt-1.5 text-caption leading-relaxed text-foreground-secondary">
+                사람 확인을 건너뛰고 즉시 보냅니다. 소방청 청각장애인 화재
+                행동요령 네 단계가 알림에 함께 담깁니다.
+              </p>
+            </article>
+            <article>
+              <h3 className="text-caption font-bold text-lp-amber">자막은 받아쓴 그대로</h3>
+              <p className="mt-1.5 text-caption leading-relaxed text-foreground-secondary">
+                방문자가 한 말을 옮겨 적어 보냅니다. 택배인지 잘못 찾아온
+                사람인지, 읽고 판단하면 됩니다.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <footer
+        className={cn("mx-auto w-full max-w-3xl px-6 pb-12", rise)}
+        style={at("1.1s")}
+      >
+        <p className="border-t border-border pt-5 text-caption text-foreground-secondary">
+          청각장애인 1인 가구를 위한 현관 알림 시스템
+        </p>
+        <p className="mt-1 text-[0.8125rem] text-foreground-secondary">
+          서경대학교 공학종합설계
+        </p>
+      </footer>
     </main>
+  )
+}
+
+// 사진 자리. 실 현관 사진·스톡·AI 생성 이미지를 쓰지 않기로 한 자리라 "빈 프레임"이
+// 아니라 **도식**을 넣는다 — 자막 말풍선("택배 왔습니다")과 같은 장면을 그린다.
+// 와이어프레임으로 읽히지 않도록 바닥/벽/문을 다른 명도로 깔아 도형에 앞뒤를 준다.
+function PhotoSlot() {
+  return (
+    <svg viewBox="0 0 220 132" className="block h-auto w-full" aria-hidden focusable="false">
+      <rect width="220" height="132" fill="var(--background-sub)" />
+      {/* 바닥 */}
+      <rect y="104" width="220" height="28" fill="var(--border)" />
+      {/* 현관문 + 손잡이 */}
+      <rect x="124" y="10" width="80" height="94" fill="var(--lp-canvas)" />
+      <rect x="124" y="10" width="80" height="4" fill="var(--foreground-secondary)" opacity="0.18" />
+      <circle cx="134" cy="62" r="3" fill="var(--foreground-secondary)" opacity="0.55" />
+      {/* 문 앞에 선 사람 */}
+      <g fill="var(--foreground-secondary)" opacity="0.62">
+        <circle cx="74" cy="45" r="14" />
+        <path d="M74 62a21 21 0 0 1 21 21v21H53V83a21 21 0 0 1 21-21Z" />
+      </g>
+      {/* 발밑의 택배 상자 */}
+      <g>
+        <rect x="22" y="82" width="34" height="22" fill="var(--lp-amber)" opacity="0.8" />
+        <rect x="36" y="82" width="6" height="22" fill="var(--background-sub)" opacity="0.55" />
+      </g>
+    </svg>
   )
 }
