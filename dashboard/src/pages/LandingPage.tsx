@@ -47,7 +47,7 @@ export function LandingPage() {
   const at = (delay: string) => (reduced ? undefined : { animationDelay: delay })
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="min-h-screen break-keep bg-background text-foreground">
       {/* ── 마스트헤드. 폭을 좁게(max-w-3xl) 잡아 읽는 화면으로 만든다 ── */}
       <div className="mx-auto w-full max-w-3xl px-6 pt-14 lg:pt-20">
         <p
@@ -69,7 +69,7 @@ export function LandingPage() {
         </h1>
         <p
           className={cn(
-            "mt-4 max-w-[40ch] text-[clamp(1.0625rem,2vw,1.1875rem)] leading-relaxed text-foreground-secondary",
+            "mt-4 max-w-[40ch] text-pretty text-[clamp(1.125rem,2vw,1.25rem)] leading-relaxed text-foreground-secondary",
             rise,
           )}
           style={at("0.22s")}
@@ -110,7 +110,7 @@ export function LandingPage() {
       <section className="relative overflow-hidden pb-16 pt-9">
         <div className="mx-auto w-full max-w-3xl px-6">
           <p
-            className={cn("mb-3 text-(length:--text-caption) text-foreground-secondary", rise)}
+            className={cn("mb-3 text-pretty text-(length:--text-body) text-foreground-secondary", rise)}
             style={at("0.46s")}
           >
             초인종이 울리면 스마트폰에 이렇게 도착합니다.
@@ -158,17 +158,17 @@ export function LandingPage() {
                     <Bell className="h-4.5 w-4.5 text-lp-on-blue" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-[0.8125rem] font-medium text-lp-meta">띵동</p>
+                    <p className="text-[0.875rem] font-medium text-lp-meta">띵동</p>
 
                     {/* ① 1차 알림 — PRIMARY_MESSAGES["doorbell"] 실물 */}
                     <div
                       className={cn("mt-1 flex items-end gap-1.5", bubble)}
                       style={at("0.54s")}
                     >
-                      <p className="rounded-2xl rounded-tl-md bg-lp-bubble px-3 py-2 text-[0.9375rem] leading-snug text-foreground">
+                      <p className="rounded-2xl rounded-tl-md bg-lp-bubble px-3 py-2 text-[1rem] leading-snug text-foreground">
                         🔔[띵동] 초인종이 울렸어요.
                       </p>
-                      <span className="shrink-0 text-[0.6875rem] text-lp-meta">{SENT_AT}</span>
+                      <span className="shrink-0 text-[0.75rem] text-lp-meta">{SENT_AT}</span>
                     </div>
 
                     {/* ② 2차 사진 — feed 템플릿(제목 + 감지 시각 + 버튼) */}
@@ -179,16 +179,16 @@ export function LandingPage() {
                       <div className="w-[13.75rem] overflow-hidden rounded-2xl rounded-tl-md bg-lp-bubble">
                         <PhotoSlot />
                         <div className="px-3 pb-2 pt-2.5">
-                          <p className="text-[0.8125rem] font-bold leading-snug text-foreground">
+                          <p className="text-[0.875rem] font-bold leading-snug text-foreground">
                             🔔[띵동] 초인종 — 방문자 사진
                           </p>
-                          <p className="mt-0.5 text-[0.75rem] text-lp-meta">9월 12일 13:39 감지</p>
+                          <p className="mt-0.5 text-[0.8125rem] text-lp-meta">9월 12일 13:39 감지</p>
                         </div>
-                        <p className="border-t border-border py-2 text-center text-[0.8125rem] font-medium text-lp-blue">
+                        <p className="border-t border-border py-2 text-center text-[0.875rem] font-medium text-lp-blue">
                           사진 보기
                         </p>
                       </div>
-                      <span className="shrink-0 text-[0.6875rem] text-lp-meta">{SENT_AT}</span>
+                      <span className="shrink-0 text-[0.75rem] text-lp-meta">{SENT_AT}</span>
                     </div>
 
                     {/* ③ 2차 자막 — 받아쓴 문장을 그대로 보낸다(서버가 앞뒤에 아무것도 붙이지 않는다) */}
@@ -196,10 +196,10 @@ export function LandingPage() {
                       className={cn("mt-2 flex items-end gap-1.5", bubble)}
                       style={at("0.78s")}
                     >
-                      <p className="rounded-2xl rounded-tl-md bg-lp-bubble px-3 py-2 text-[0.9375rem] leading-snug text-foreground">
+                      <p className="rounded-2xl rounded-tl-md bg-lp-bubble px-3 py-2 text-[1rem] leading-snug text-foreground">
                         계세요 택배 왔습니다 문 앞에 두고 갈게요
                       </p>
-                      <span className="shrink-0 text-[0.6875rem] text-lp-meta">{SENT_AT}</span>
+                      <span className="shrink-0 text-[0.75rem] text-lp-meta">{SENT_AT}</span>
                     </div>
                   </div>
                 </div>
@@ -208,7 +208,7 @@ export function LandingPage() {
 
             <p
               className={cn(
-                "mt-4 text-[0.8125rem] leading-relaxed text-foreground-secondary lg:mt-1",
+                "mt-4 text-pretty text-(length:--text-caption) leading-relaxed text-foreground-secondary lg:mt-1",
                 rise,
               )}
               style={at("0.86s")}
@@ -228,7 +228,7 @@ export function LandingPage() {
             <h2 className="mt-4 text-[clamp(1.375rem,3vw,1.625rem)] font-extrabold leading-snug tracking-[-0.01em]">
               옆집 초인종에는 반응하지 않습니다
             </h2>
-            <p className="mt-3 text-body leading-relaxed text-foreground-secondary">
+            <p className="mt-3 text-pretty text-body leading-relaxed text-foreground-secondary">
               벽 너머로 새어 들어온 소리까지 알림으로 오면, 결국 알림을 꺼 두게
               됩니다. 그래서 소리가 나면 문 앞에 사람이 있는지부터 확인합니다.
               움직임까지 함께 봐야 방문으로 치기 때문에, 문 앞에 오래 멈춰 서
@@ -241,15 +241,15 @@ export function LandingPage() {
             style={at("1.02s")}
           >
             <article>
-              <h3 className="text-caption font-bold text-lp-red">화재경보는 기다리지 않고</h3>
-              <p className="mt-1.5 text-caption leading-relaxed text-foreground-secondary">
+              <h3 className="text-h3 font-bold leading-snug text-lp-red">화재경보는 기다리지 않고</h3>
+              <p className="mt-2 text-pretty text-body leading-relaxed text-foreground-secondary">
                 사람 확인을 건너뛰고 곧바로 보냅니다. 소방청 청각장애인 화재
                 행동요령 네 단계가 알림에 함께 옵니다.
               </p>
             </article>
             <article>
-              <h3 className="text-caption font-bold text-lp-amber">자막은 받아쓴 그대로</h3>
-              <p className="mt-1.5 text-caption leading-relaxed text-foreground-secondary">
+              <h3 className="text-h3 font-bold leading-snug text-lp-amber">자막은 받아쓴 그대로</h3>
+              <p className="mt-2 text-pretty text-body leading-relaxed text-foreground-secondary">
                 택배인지 잘못 찾아온 사람인지, 읽고 판단하면 됩니다. 소리가
                 뭉개져 못 알아들은 날은 사진만 가고 자막은 붙지 않습니다.
               </p>
@@ -262,10 +262,10 @@ export function LandingPage() {
         className={cn("mx-auto w-full max-w-3xl px-6 pb-12", rise)}
         style={at("1.1s")}
       >
-        <p className="border-t border-border pt-5 text-caption text-foreground-secondary">
+        <p className="border-t border-border pt-5 text-pretty text-body text-foreground-secondary">
           청각장애인 1인 가구를 위한 현관 알림 시스템
         </p>
-        <p className="mt-1 text-[0.8125rem] text-foreground-secondary">
+        <p className="mt-1 text-caption text-foreground-secondary">
           서경대학교 공학종합설계
         </p>
       </footer>
