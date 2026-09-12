@@ -5,9 +5,16 @@
 // 지어낸 것이 아니라 서버 상수 실물이다:
 //   `server/app/constants.py` PRIMARY_MESSAGES["doorbell"] / SECONDARY_FEED_TITLES["doorbell"]
 //   / KAKAO_FEED_BUTTON_TITLE, `kakao.py` _feed_description 의 "{월}월 {일}일 {HH:MM} 감지"
-//   형식, `utils.py` _MOCK_TRANSCRIPTS 의 첫 문구.
+//   형식(24시간제 — 말풍선 바깥 시각은 서버가 아니라 카카오톡이 그리는 12시간제라 다르다).
+//   자막 말풍선은 `### 7.7` (g) ④런타임 실측에서 실제 CSR 이 뱉고 카카오톡에 도착한
+//   문장 그대로다(구두점 없음 = STT 출력 원형). mock 문구가 아니다.
 // 문구 원칙: 제품에 없는 기능(초인종 등록/해제)은 쓰지 않는다. 성능 수치 인용 없음.
 // 카카오 로고·브랜드 자산은 쓰지 않는다 — 말풍선 레이아웃만 재현한다(상표).
+
+// ⚠️ `cn()` = twMerge 라 `text-caption` 류 토큰 유틸이 뒤따르는 `text-<색>` 과 같은 그룹으로
+// 묶여 **지워진다**(실측: twMerge("text-caption font-bold text-lp-blue") → "font-bold text-lp-blue").
+// 그래서 cn() 안에서 글자 크기를 줄 때는 `text-(length:--text-*)` 로 쓴다. 평범한 문자열
+// className 은 twMerge 를 안 거치므로 `text-body` 그대로 써도 된다.
 
 import { Bell } from "lucide-react"
 import { Link } from "react-router-dom"
@@ -44,7 +51,7 @@ export function LandingPage() {
       {/* ── 마스트헤드. 폭을 좁게(max-w-3xl) 잡아 읽는 화면으로 만든다 ── */}
       <div className="mx-auto w-full max-w-3xl px-6 pt-14 lg:pt-20">
         <p
-          className={cn("text-caption font-bold tracking-wide text-lp-blue", rise)}
+          className={cn("text-(length:--text-caption) font-bold tracking-wide text-lp-blue", rise)}
           style={at("0.04s")}
         >
           띵동
@@ -67,14 +74,14 @@ export function LandingPage() {
           )}
           style={at("0.22s")}
         >
-          현관에서 난 소리를 세 가지로 갈라내 스마트폰으로 보냅니다. 누가 왔고
-          뭐라고 했는지는 사진과 자막이 뒤따라 알려줍니다.
+          현관에서 소리가 나면 어떤 소리였는지 판단해 스마트폰으로 보냅니다. 누가
+          왔는지는 사진이 보여 주고, 무슨 말을 했는지는 자막으로 읽습니다.
         </p>
         <ul className={cn("mt-5 flex flex-wrap gap-2", rise)} style={at("0.3s")}>
           {CLASSES.map((c) => (
             <li
               key={c.label}
-              className={cn("rounded-full px-3 py-1.5 text-caption font-bold", c.tint)}
+              className={cn("rounded-full px-3 py-1.5 text-(length:--text-caption) font-bold", c.tint)}
             >
               {c.label}
             </li>
@@ -103,7 +110,7 @@ export function LandingPage() {
       <section className="relative overflow-hidden pb-16 pt-9">
         <div className="mx-auto w-full max-w-3xl px-6">
           <p
-            className={cn("mb-3 text-caption text-foreground-secondary", rise)}
+            className={cn("mb-3 text-(length:--text-caption) text-foreground-secondary", rise)}
             style={at("0.46s")}
           >
             초인종이 울리면 스마트폰에 이렇게 도착합니다.
@@ -190,7 +197,7 @@ export function LandingPage() {
                       style={at("0.78s")}
                     >
                       <p className="rounded-2xl rounded-tl-md bg-lp-bubble px-3 py-2 text-[0.9375rem] leading-snug text-foreground">
-                        택배 왔습니다. 문 앞에 두고 갈게요.
+                        계세요 택배 왔습니다 문 앞에 두고 갈게요
                       </p>
                       <span className="shrink-0 text-[0.6875rem] text-lp-meta">{SENT_AT}</span>
                     </div>
@@ -206,8 +213,8 @@ export function LandingPage() {
               )}
               style={at("0.86s")}
             >
-              말풍선 문구는 서버가 실제로 보내는 문구입니다. 사진 자리만 실제
-              현관 사진 대신 도식으로 두었습니다.
+              말풍선 문구는 서버가 실제로 보낸 것입니다. 사진 자리만 그림으로
+              대신했고, 실제 카카오톡에서는 「나와의 채팅」 오른쪽에 붙어 옵니다.
             </p>
           </div>
         </div>
@@ -223,8 +230,9 @@ export function LandingPage() {
             </h2>
             <p className="mt-3 text-body leading-relaxed text-foreground-secondary">
               벽 너머로 새어 들어온 소리까지 알림으로 오면, 결국 알림을 꺼 두게
-              됩니다. 그래서 소리가 잡히면 거리 센서로 현관 앞부터 들여다봅니다.
-              사람이 없으면 우리 집 방문으로 치지 않습니다.
+              됩니다. 그래서 소리가 나면 문 앞에 사람이 있는지부터 확인합니다.
+              움직임까지 함께 봐야 방문으로 치기 때문에, 문 앞에 오래 멈춰 서
+              있으면 놓칠 때도 있습니다.
             </p>
           </article>
 
@@ -235,15 +243,15 @@ export function LandingPage() {
             <article>
               <h3 className="text-caption font-bold text-lp-red">화재경보는 기다리지 않고</h3>
               <p className="mt-1.5 text-caption leading-relaxed text-foreground-secondary">
-                사람 확인을 건너뛰고 즉시 보냅니다. 소방청 청각장애인 화재
-                행동요령 네 단계가 알림에 함께 담깁니다.
+                사람 확인을 건너뛰고 곧바로 보냅니다. 소방청 청각장애인 화재
+                행동요령 네 단계가 알림에 함께 옵니다.
               </p>
             </article>
             <article>
               <h3 className="text-caption font-bold text-lp-amber">자막은 받아쓴 그대로</h3>
               <p className="mt-1.5 text-caption leading-relaxed text-foreground-secondary">
-                방문자가 한 말을 옮겨 적어 보냅니다. 택배인지 잘못 찾아온
-                사람인지, 읽고 판단하면 됩니다.
+                택배인지 잘못 찾아온 사람인지, 읽고 판단하면 됩니다. 소리가
+                뭉개져 못 알아들은 날은 사진만 가고 자막은 붙지 않습니다.
               </p>
             </article>
           </div>
