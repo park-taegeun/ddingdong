@@ -27,7 +27,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
             onClick={onNavigate}
             className={({ isActive }) =>
               cn(
-                "flex h-menu items-center gap-3 rounded-xl px-4 text-body font-medium transition-colors",
+                "flex h-menu items-center gap-3 rounded-xl px-4 text-(length:--text-body) font-medium transition-colors",
                 isActive
                   ? "bg-primary/10 text-primary"
                   : "text-foreground-secondary hover:bg-background-sub hover:text-foreground",

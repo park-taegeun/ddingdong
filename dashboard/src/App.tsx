@@ -4,6 +4,7 @@ import { LoadingSkeleton } from "@/components/feedback/LoadingSkeleton"
 import { AppShell } from "@/components/layout/AppShell"
 import { HelpPage } from "@/pages/HelpPage"
 import { HomePage } from "@/pages/HomePage"
+import { LandingPage } from "@/pages/LandingPage"
 import { NotFoundPage } from "@/pages/NotFoundPage"
 import { NotificationsPage } from "@/pages/NotificationsPage"
 import { SettingsPage } from "@/pages/SettingsPage"
@@ -17,8 +18,11 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* `/` = 랜딩(AppShell 밖 — 사이드바·헤더 없는 전체 화면).
+            대시보드 홈은 `/home`. 나머지 4개 경로는 기존 그대로다. */}
+        <Route path="/" element={<LandingPage />} />
         <Route element={<AppShell />}>
-          <Route index element={<HomePage />} />
+          <Route path="home" element={<HomePage />} />
           <Route path="notifications" element={<NotificationsPage />} />
           <Route
             path="stats"

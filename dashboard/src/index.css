@@ -169,3 +169,91 @@ html.reduce-motion *::after {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
 }
+
+/* === 랜딩(`/`) 토큰 + 진입 모션 =========================================
+   랜딩은 대시보드와 **같은 라이트 기본 체계**를 쓴다. 근거 = `### 8.3` B-2
+   "다크 기본 → **라이트 기본**(SettingsContext default 전환, 다크는 토글+localStorage
+   opt-in **보존**)" — 라이트가 제품의 기본 체계이고 다크는 사용자 옵션이다.
+   랜딩만 강제 다크면 그 체계를 거스르고, CTA 한 번에 흑→백 급전환이 일어난다.
+
+   `-deep` 접미사 = 기존 `--danger-deep`(8.3 "화재 텍스트 대비 보정 `#FF4444` → `#CC0000`")
+   컨벤션 그대로. 브랜드색을 바꾸는 게 아니라 **텍스트용 대비 보정분**을 따로 두는 방식이다.
+   다크 값 = PR #57 잉크 팔레트의 네온 3색 승계(폐기가 아니라 다크 전용으로 격하). */
+:root {
+  --lp-blue: #0069CC;           /* --primary #0088FF 보정분. on #FFFFFF 5.39:1 */
+  --lp-amber: #8A5A00;          /* --warning #FFA800 보정분. on #FFFFFF 5.93:1 */
+  --lp-red: var(--danger-deep); /* 8.3 실측 보정값 재사용. on #FFFFFF 5.89:1 */
+  --lp-canvas: #BCCBD8;         /* 메신저 대화 배경 */
+  --lp-bubble: #FFFFFF;
+  /* 말풍선 시각(時刻). 실제 메신저의 연회색을 그대로 베끼면 대화 배경 위 2.9:1 로
+     AA 미달이다 — 한 단계 어둡게 잡아 4.56:1 을 확보한다. */
+  --lp-meta: #4B5563;
+  /* --lp-blue 면 위에 얹는 글자. 다크에서 --lp-blue 가 밝아지므로 함께 뒤집는다
+     — 뒤집지 않으면 다크 CTA 가 흰 글자 on #38A9FF = 2.53:1 로 AA 미달이 된다. */
+  --lp-on-blue: #FFFFFF;
+}
+
+.dark {
+  --lp-blue: #38A9FF;
+  --lp-amber: #FFB93D;
+  --lp-red: #FF6B6B;
+  --lp-canvas: #1F262C;
+  --lp-bubble: #333C44;
+  --lp-meta: #B0B8C1;
+  --lp-on-blue: var(--background);
+}
+
+@theme inline {
+  --color-lp-blue: var(--lp-blue);
+  --color-lp-amber: var(--lp-amber);
+  --color-lp-red: var(--lp-red);
+  --color-lp-canvas: var(--lp-canvas);
+  --color-lp-bubble: var(--lp-bubble);
+  --color-lp-meta: var(--lp-meta);
+  --color-lp-on-blue: var(--lp-on-blue);
+}
+
+/* 레이아웃 리플로우를 유발하지 않는 속성(opacity/transform)만 쓴다. */
+@keyframes rise {
+  from { opacity: 0; transform: translate3d(0, 12px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 말풍선은 "도착"으로 읽혀야 한다 — 아래에서 살짝 올라오며 커진다. */
+@keyframes bubble-in {
+  from { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.96); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 링은 사라지지 않고 남는다 — 연출이 끝난 정지 화면도 '소리가 퍼진다'를 계속 설명한다.
+   최종 불투명도를 `--ring-o` 로 받아 **바깥 링일수록 옅게** 감쇠시킨다. */
+@keyframes ring-in {
+  from { opacity: 0; transform: scale(0.35); }
+  to   { opacity: var(--ring-o); transform: scale(1); }
+}
+
+/* `both` = 시작 전엔 opacity 0, 끝난 뒤 최종 상태 유지.
+   reduce-motion 전역 규칙이 duration 을 0.01ms 로 줄여도 최종 상태로 남는다(빈 화면 없음). */
+.motion-rise {
+  animation: rise 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.motion-bubble {
+  animation: bubble-in 0.42s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.motion-ring {
+  transform-origin: center;
+  animation: ring-in 0.9s ease-out both;
+}
+
+/* 대시보드 진입 연출 — AppShell 래퍼에만 붙는다(페이지 내부 렌더 로직 무변경).
+   선택자가 `> * > *` 인 이유: 래퍼 바로 아래는 각 페이지의 루트 div 하나뿐이고,
+   순차 등장 대상은 그 아래 header/section 들이다.
+   폴링(3초) 리렌더는 DOM 노드를 교체하지 않아 재생되지 않고, 라우트 전환 때만 다시 돈다. */
+.page-enter > * > * {
+  animation: rise 0.45s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.page-enter > * > *:nth-child(2) { animation-delay: 0.08s; }
+.page-enter > * > *:nth-child(3) { animation-delay: 0.16s; }
+.page-enter > * > *:nth-child(n+4) { animation-delay: 0.24s; }
