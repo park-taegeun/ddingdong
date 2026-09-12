@@ -11,8 +11,8 @@ import {
 import { cn } from "@/lib/utils"
 
 const CLASS_DESCRIPTION: Record<string, string> = {
-  doorbell: "초인종이 울리면 알려드려요.",
-  knock: "현관문을 두드리는 노크 소리를 감지해요.",
+  doorbell: "문 앞에 사람이 있을 때 초인종이 울리면 알려드려요.",
+  knock: "문 앞에 사람이 있을 때 현관문을 두드리는 노크 소리가 나면 알려드려요.",
   fire_alarm: "화재경보음을 감지하면 가장 먼저, 가장 크게 알려요.",
 }
 
