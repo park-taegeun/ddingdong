@@ -169,3 +169,71 @@ html.reduce-motion *::after {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
 }
+
+/* === 랜딩(`/`) 잉크 팔레트 + 진입 모션 =====================================
+   대시보드 토큰(--background 계열)은 테마 토글로 바뀌므로 재사용하지 않는다.
+   랜딩은 테마와 무관하게 항상 잉크 배경이라 별도 스케일을 둔다.
+   네온 3색은 기존 클래스 색(초인종 --primary / 노크 --warning / 화재 --danger)을
+   잉크 배경 위 WCAG AA 4.5:1 이 나오도록 한 단계 밝힌 값이다. */
+:root {
+  --ink: #0E1013;
+  --ink-surface: #16191D;
+  --ink-line: #23282E;
+  --ink-paper: #F2F5F8;
+  --ink-mist: #A8B0BA;
+  --signal: #38A9FF;       /* 초인종 #0088FF 계열 */
+  --signal-amber: #FFB93D; /* 노크 #FFA800 계열 */
+  --signal-ember: #FF6B6B; /* 화재경보 #FF4444 계열 */
+}
+
+@theme inline {
+  --color-ink: var(--ink);
+  --color-ink-surface: var(--ink-surface);
+  --color-ink-line: var(--ink-line);
+  --color-ink-paper: var(--ink-paper);
+  --color-ink-mist: var(--ink-mist);
+  --color-signal: var(--signal);
+  --color-signal-amber: var(--signal-amber);
+  --color-signal-ember: var(--signal-ember);
+}
+
+/* 레이아웃 리플로우를 유발하지 않는 속성(opacity/transform)만 쓴다. */
+@keyframes rise {
+  from { opacity: 0; transform: translate3d(0, 12px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 링은 사라지지 않고 옅게 남는다 — 연출이 끝난 뒤에도 정지 화면이 '소리'를 계속 설명하도록. */
+@keyframes ring-in {
+  from { opacity: 0;    transform: scale(0.3); }
+  to   { opacity: 0.32; transform: scale(1); }
+}
+
+/* `both` = 시작 전엔 opacity 0, 끝난 뒤 최종 상태 유지.
+   reduce-motion 전역 규칙이 duration 을 0.01ms 로 줄여도 최종 상태로 남는다(빈 화면 없음). */
+.motion-rise {
+  animation: rise 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.motion-ring {
+  transform-origin: center;
+  animation: ring-in 1.1s ease-out both;
+}
+
+/* 랜딩이 열려 있는 동안은 문서 캔버스까지 잉크로 — 스크롤 바운스에서 흰 바닥이 비치지 않게.
+   <html> 클래스 토글은 SettingsContext(theme/large-text/reduce-motion)와 같은 방식이다. */
+html.landing-canvas,
+html.landing-canvas body {
+  background-color: var(--ink);
+}
+
+/* 대시보드 진입 연출 — AppShell 래퍼에만 붙는다(페이지 내부 렌더 로직 무변경).
+   선택자가 `> * > *` 인 이유: 래퍼 바로 아래는 각 페이지의 루트 div 하나뿐이고,
+   순차 등장 대상은 그 아래 header/section 들이다.
+   폴링(3초) 리렌더는 DOM 노드를 교체하지 않아 재생되지 않고, 라우트 전환 때만 다시 돈다. */
+.page-enter > * > * {
+  animation: rise 0.45s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.page-enter > * > *:nth-child(2) { animation-delay: 0.08s; }
+.page-enter > * > *:nth-child(3) { animation-delay: 0.16s; }
+.page-enter > * > *:nth-child(n+4) { animation-delay: 0.24s; }

@@ -12,7 +12,7 @@ export function NotFoundPage() {
         </p>
       </div>
       <Button asChild className="h-btn px-6">
-        <Link to="/">홈으로 가기</Link>
+        <Link to="/home">홈으로 가기</Link>
       </Button>
     </div>
   )

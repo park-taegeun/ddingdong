@@ -10,7 +10,7 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { to: "/", label: "홈", icon: House },
+  { to: "/home", label: "홈", icon: House },
   { to: "/notifications", label: "알림", icon: Bell },
   { to: "/stats", label: "통계", icon: BarChart3 },
   { to: "/settings", label: "설정", icon: Settings },

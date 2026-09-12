@@ -3,6 +3,8 @@ import { Outlet } from "react-router-dom"
 import { Dialog as DialogPrimitive } from "radix-ui"
 import { OnboardingModal } from "@/components/feedback/OnboardingModal"
 import { NotificationAnnouncer } from "@/components/notifications/NotificationAnnouncer"
+import { useReducedMotion } from "@/hooks/useReducedMotion"
+import { cn } from "@/lib/utils"
 import { Header } from "./Header"
 import { Sidebar } from "./Sidebar"
 
@@ -11,6 +13,8 @@ export function AppShell() {
   // drawer 닫힐 때 포커스를 되돌릴 트리거(메뉴 버튼). radix는 Dialog.Trigger를
   // 쓸 때만 자동 복원하므로, 외부 버튼으로 여는 이 구조에선 직접 복원이 필요하다.
   const menuButtonRef = useRef<HTMLButtonElement>(null)
+  // 진입 연출 게이트 — 꺼져 있으면 클래스 자체를 붙이지 않는다(최종 상태 즉시 렌더).
+  const reduced = useReducedMotion()
 
   return (
     <div className="flex min-h-screen bg-background-sub">
@@ -61,7 +65,7 @@ export function AppShell() {
           tabIndex={-1}
           className="flex-1 px-4 py-6 outline-none lg:px-8"
         >
-          <div className="mx-auto w-full max-w-5xl">
+          <div className={cn("mx-auto w-full max-w-5xl", !reduced && "page-enter")}>
             <Outlet />
           </div>
         </main>
