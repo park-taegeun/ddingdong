@@ -1,7 +1,6 @@
 """전체 파이프라인 오케스트레이터.
 
-  python -m ml.pipeline.run_all                 # DDINGDONG_DATA_ROOT(env) 또는 기본 경로
-  DDINGDONG_DATA_ROOT="..." python -m ml.pipeline.run_all
+  DDINGDONG_DATA_ROOT="..." python -m ml.pipeline.run_all   # 정본 관용구(카테고리 5)
   python -m ml.pipeline.run_all --data-root "..."
 
 Step1 전처리 → Step2 분할 → Step3 증강(train) → Step4 조립 → Step5 누수 가드.
@@ -58,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="ddingdong ML 데이터 파이프라인")
     parser.add_argument(
         "--data-root", default=None,
-        help="데이터 루트(01_clips 상위). 미지정 시 DDINGDONG_DATA_ROOT env 또는 기본 경로.",
+        help="데이터 루트(01_clips 상위). 미지정 시 DDINGDONG_DATA_ROOT env 필수(기본값 없음).",
     )
     parser.add_argument("--quiet", action="store_true", help="INFO 로그 억제")
     parser.add_argument(

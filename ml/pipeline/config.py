@@ -120,13 +120,16 @@ def source_key(stem: str) -> str:
     return PIECE_SUFFIX_PATTERN.sub("", stem, count=1) or stem
 
 # --------------------------------------------------------------------------
-# 데이터 루트 (외부 형제 폴더 — Claude Code는 OS TCC로 접근 불가. config 값으로만.)
-# 실제 실행은 학부생이 자기 셸에서 DDINGDONG_DATA_ROOT 지정.
+# 데이터 루트 — **기본값 fallback 없음**. 명시 인자 또는 env DDINGDONG_DATA_ROOT 필수.
+#   근거: decisions.md 카테고리 5 「실 파이프라인·학습 실행 = 학부생 로컬 셸
+#   (`DDINGDONG_DATA_ROOT="…" python -m ml.pipeline.run_all`)」 — env 주입이 이미 정본
+#   관용구로 등재돼 있다. 새 정책이 아니라 코드를 등재된 정책에 맞춘 것.
+#   ★ 여기 있던 DEFAULT_DATA_ROOT 는 repo 밖 형제 폴더, 곧 카테고리 5가 「OS TCC(EPERM)로
+#     접근 차단 → 학부생 홈으로 이동 확정」이라 적은 **옛 위치**를 가리킨 채 방치됐다.
+#     아무도 부딪히지 않은 이유는 fallback 이 틀린 값을 조용히 흘려보냈기 때문 —
+#     그래서 값을 고치는 대신 fallback 자체를 제거한다.
 # --------------------------------------------------------------------------
-DEFAULT_DATA_ROOT = (
-    "/Users/xorms/Desktop/서경대학교/시험 준비/26-1/공학종합설계1/"
-    "ML 학습 데이터/ddingdong_dataset"
-)
+DATA_ROOT_ENV = "DDINGDONG_DATA_ROOT"
 
 # 스테이지 폴더명 (실측 확정된 실제 폴더 구조와 1:1)
 DIR_CLIPS = "01_clips"          # 입력(원본 2,798 클립)
@@ -153,8 +156,27 @@ class Paths:
 
 
 def resolve_data_root(data_root: str | os.PathLike | None = None) -> Path:
-    """우선순위: 명시 인자 > 환경변수 DDINGDONG_DATA_ROOT > DEFAULT_DATA_ROOT."""
-    raw = data_root or os.environ.get("DDINGDONG_DATA_ROOT") or DEFAULT_DATA_ROOT
+    """우선순위: 명시 인자 > 환경변수 DDINGDONG_DATA_ROOT. **둘 다 없으면 즉시 실패.**
+
+    - 예외 종류 = ValueError. 이 모듈은 라이브러리이지 진입점이 아니다(호출자 =
+      run_all.main / ml.training.config.resolve_final_dir / 테스트). 종료 코드를 직접
+      정하는 SystemExit 은 호출자의 몫을 뺏는다. 같은 파일의 clean_stage_class_dirs
+      거부가 이미 ValueError 를 쓰므로 in-file 관용구와도 일치한다.
+    - **경로 존재 여부는 검사하지 않는다**(의도): run_all.run() 이 이미 `01_clips` 부재를
+      FileNotFoundError 로 잡고, 학습 경로는 05_final_dataset 부재로 잡는다. 여기서 또
+      검사하면 가드가 둘로 갈려 메시지 출처만 흐려진다. 이 함수의 계약은 「경로를 받았는가」
+      하나로 유지한다.
+    - `.expanduser()` 는 기존 계약 — `~` 기반 주입(정본 관용구)이 그대로 동작해야 한다.
+    """
+    raw = data_root if data_root is not None else os.environ.get(DATA_ROOT_ENV, "")
+    if not str(raw).strip():
+        raise ValueError(
+            "데이터 루트가 지정되지 않았습니다 — 기본값 fallback 은 의도적으로 없습니다.\n"
+            f"  → 환경변수 {DATA_ROOT_ENV} 를 '{DIR_CLIPS}' 상위 폴더로 지정하거나 "
+            "--data-root 로 넘기세요.\n"
+            f'  예: {DATA_ROOT_ENV}="~/ML 학습 데이터/ddingdong_dataset" '
+            "python -m ml.pipeline.run_all"
+        )
     return Path(raw).expanduser()
 
 

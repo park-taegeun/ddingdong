@@ -58,7 +58,7 @@
    - `[재현 대조]` 줄 = 33.6(b)(d) 기준값과 전건 일치 여부.
    - `[raw vs rounded]` 줄 = 두 게이트 기준의 분류 일치 여부(33.6(e)).
    - 종료 코드: 0 전건 일치 / 1 재현 불일치 / 2 raw↔rounded 불일치(결과이지 실패 아님) /
-     3 환경·입력 오류.
+     3 환경·입력 오류 / 4 라벨 순서 불일치.
    - 소요: 424건 수 초(33.6(b) 실측 2.2초 + 모델 로드 ~4초).
 """
 
@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import subprocess
 import sys
@@ -126,6 +127,10 @@ EXIT_OK = 0
 EXIT_BASELINE_MISMATCH = 1
 EXIT_GATE_DIVERGENCE = 2   # raw ↔ rounded 불일치. **결과**이지 실패가 아니다(33.6(e)).
 EXIT_ENV = 3
+# labels.json(재학습 export 산출) 의 라벨 순서가 하네스의 argmax 매핑과 갈렸다.
+# 4 = 기존 값 도메인 {0,1,2,3} 의 첫 빈 번호. EXIT_BASELINE_MISMATCH(1)와 **갈라야** 한다 —
+# 라벨이 어긋나면 집계가 통째로 틀리는데 1 로 나오면 "모델이 달라졌나"로 오독된다.
+EXIT_LABEL_MISMATCH = 4
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -237,6 +242,61 @@ def fail_env(msg: str):
     """
     print(f"[환경 오류] {msg}", file=sys.stderr)
     return SystemExit(EXIT_ENV)
+
+
+def labels_path() -> Path:
+    """배포 라벨 스냅샷(`labels.json`) 경로. `ml.training.config.model_dir()` 과 같은 규칙.
+
+    (ml 패키지를 import 하지 않는다 — 이 하네스는 server/ 런타임에서 돌고 ml 은 의존성이
+     다르다. 규칙만 복제하고 근거를 여기 각인한다: env DDINGDONG_MODEL_DIR 우선,
+     없으면 repo 내 `ml/models/yamnet`.)
+    """
+    raw = os.environ.get("DDINGDONG_MODEL_DIR", "").strip()
+    base = (Path(raw).expanduser() if raw
+            else Path(__file__).resolve().parents[2] / "ml" / "models" / "yamnet")
+    return base / "labels.json"
+
+
+def assert_label_order(path: Path, classes=PREDICTED_CLASSES) -> None:
+    """`labels.json` 의 라벨 순서 == 하네스가 argmax 매핑에 실제로 쓰는 상수인가.
+
+    **비교 대상 선택 근거**: judge() 가 argmax 인덱스를 클래스 이름으로 바꿀 때 실제로
+    참조하는 것은 `app.constants.PREDICTED_CLASSES` 다. 33.2 는 서빙 출력의 라벨 순서를
+    「`CLASSES` 상속」으로 등재했고 `labels.json` 은 그 상속을 재학습 시점에 굳힌 스냅샷이다.
+    ⇒ 대조해야 할 두 축은 「하네스가 믿는 순서」와 「산출물이 주장하는 순서」다.
+
+    **왜 실행 시점에 보는가**: 셋(labels.json / PREDICTED_CLASSES / inference CLASSES)이
+    갈릴 수 있는 유일한 지점은 `python -m ml.training.export` 다. 갈리면 하네스는 조용히
+    오라벨링된 집계를 내고 사람은 EXIT_BASELINE_MISMATCH(1) 만 본다 — 원인이 라벨인지
+    모델인지 안 갈린다. 그 침묵을 없애는 것이 이 확인의 전부다.
+
+    **부재 시 거동 = 실패(EXIT_ENV)**. 이 파일은 git 미추적이라 clone 직후엔 없지만,
+    이 확인은 **실스윕 경로에서만** 돈다. 실스윕은 DDINGDONG_MODEL_PATH(= export 산출물)를
+    요구하므로 export 가 돈 환경에서만 도달한다 ⇒ 거기서의 부재는 정상이 아니라 「환경을
+    잘못 줬다」. `--self-test` · `--dry-run` 은 모델이 필요 없어 이 경로를 지나가지 않으므로
+    clone 직후에도 하네스는 돈다(「없으면 조용히 통과」를 두지 않고도 양쪽을 만족).
+    """
+    if not path.is_file():
+        raise fail_env(
+            f"라벨 스냅샷 없음: {path}\n"
+            "  → `python -m ml.training.export` 산출물과 같은 폴더인지, "
+            "DDINGDONG_MODEL_DIR 지정이 맞는지 확인.\n"
+            "  ⚠️ 이 파일은 git 미추적이다 — clone 직후라면 export 를 먼저 돌려야 한다."
+        )
+    try:
+        got = tuple(json.loads(path.read_text(encoding="utf-8"))["classes"])
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise fail_env(f"라벨 스냅샷을 읽을 수 없음 {path}: {exc!r}")
+    if got != tuple(classes):
+        print(
+            f"[라벨 순서 불일치] {path}\n"
+            f"  labels.json       = {list(got)}\n"
+            f"  PREDICTED_CLASSES = {list(classes)}\n"
+            "  → argmax 인덱스→클래스 매핑이 어긋난다. 이 상태의 집계는 전부 오라벨링이다.\n"
+            "  → 재학습 산출물(33.2 export)과 서빙 상수 중 어느 쪽이 옳은지 정하고 맞출 것.",
+            file=sys.stderr,
+        )
+        raise SystemExit(EXIT_LABEL_MISMATCH)
 
 
 def read_wav(path: Path) -> tuple[bytes, int]:
@@ -529,6 +589,48 @@ def self_test() -> int:
     ok &= _check("NC-4 대조군(경계 밖)", mid["axis_raw"] == mid["axis_rounded"],
                  f"{mid['axis_raw']} / {mid['axis_rounded']}")
 
+    # --- NC-5 라벨 스냅샷 대조가 침묵하지 않는가 ---------------------------
+    # 불변식: labels.json 의 라벨 순서가 하네스의 argmax 매핑과 갈리면 **조용히 통과하지
+    #   않는다**(전용 종료 코드 4). 부재도 마찬가지로 침묵하지 않는다(3).
+    # 함정: 실물 `ml/models/yamnet/labels.json` 은 **git 미추적**이라 잃으면 export 없이
+    #   복구가 안 된다 → 원본은 읽지도 쓰지도 않고 tmp 에 **합성 복제본**만 때린다.
+    #   (파일 변형형 NC 가 아니므로 복원 증명 대신 "원본 미접촉"이 증명 대상이다.)
+    real = labels_path()
+    before = real.read_bytes() if real.is_file() else None
+    tmp2 = Path(tempfile.mkdtemp())
+    try:
+        good = tmp2 / "labels.json"
+        good.write_text(json.dumps({"classes": list(PREDICTED_CLASSES)}), encoding="utf-8")
+        try:                                    # 대조군: 일치하면 조용히 통과가 정상
+            assert_label_order(good)
+            ok &= _check("NC-5 대조군(순서 일치)", True, f"{list(PREDICTED_CLASSES)}")
+        except SystemExit as exc:
+            ok &= _check("NC-5 대조군(순서 일치)", False, f"거짓 실패 exit={exc.code}")
+
+        bad = tmp2 / "flipped.json"
+        bad.write_text(json.dumps({"classes": list(reversed(PREDICTED_CLASSES))}), encoding="utf-8")
+        try:
+            assert_label_order(bad)
+            ok &= _check("NC-5 순서 뒤집기", False, "예외 없이 통과 — 조용한 오라벨링")
+        except SystemExit as exc:
+            ok &= _check("NC-5 순서 뒤집기", exc.code == EXIT_LABEL_MISMATCH,
+                         f"exit={exc.code} (기대 {EXIT_LABEL_MISMATCH})")
+
+        try:                                    # 부재도 침묵하지 않는가
+            assert_label_order(tmp2 / "absent.json")
+            ok &= _check("NC-5 스냅샷 부재", False, "예외 없이 통과")
+        except SystemExit as exc:
+            ok &= _check("NC-5 스냅샷 부재", exc.code == EXIT_ENV,
+                         f"exit={exc.code} (기대 {EXIT_ENV})")
+    finally:
+        for f in tmp2.glob("*"):
+            f.unlink()
+        tmp2.rmdir()
+        after = real.read_bytes() if real.is_file() else None
+        ok &= _check("NC-5 실물 labels.json 미접촉", after == before,
+                     f"{real} {'무변경' if after == before else '★변경됨★'}"
+                     f" (존재={after is not None})")
+
     print("\n" + ("✅ self-test 전건 통과" if ok else "🔴 self-test 실패 — 하네스를 믿지 말 것"))
     return EXIT_OK if ok else EXIT_BASELINE_MISMATCH
 
@@ -574,6 +676,7 @@ def main(argv=None) -> int:
         print("[드라이런] 추론 미수행 · TF 미로드 — DDINGDONG_MODEL_PATH 미검증")
         return EXIT_OK
 
+    assert_label_order(labels_path())
     return sweep(data_root, env_path("DDINGDONG_MODEL_PATH"), args.rows_out)
 
 
