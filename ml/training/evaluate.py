@@ -5,6 +5,9 @@
 
 기준선(사전테스트 pre-trained YAMNet Top-1): doorbell≈30% / knock≈40% / fire_alarm≈20%.
 transfer learning head 학습 후 이 대비 개선 여부를 확인하는 것이 목적.
+
+`--data-root` 또는 `DDINGDONG_DATA_ROOT` 는 **필수** — 둘 다 없으면 기본값 fallback 없이
+`ValueError`로 즉시 실패한다(PR #60, `ml.pipeline.config.resolve_data_root`).
 """
 
 from __future__ import annotations

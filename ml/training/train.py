@@ -5,6 +5,9 @@
 
 frozen YAMNet 임베딩 위에서 head 만 학습. class_weight 는 실측 train 배분에서 자동 산출.
 best val_loss 체크포인트 + fit history(json) 저장. 실데이터는 학부생 로컬(EPERM).
+
+`--data-root` 또는 `DDINGDONG_DATA_ROOT` 는 **필수** — 둘 다 없으면 기본값 fallback 없이
+`ValueError`로 즉시 실패한다(PR #60, `ml.pipeline.config.resolve_data_root`).
 """
 
 from __future__ import annotations

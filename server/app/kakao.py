@@ -539,7 +539,9 @@ def send_secondary(predicted_class, image_url, caption, detected_at_utc):
     """2차 알림을 발송한다 — 사진(feed) 먼저, 자막(text) 나중.
 
     caption 이 None/빈 문자열이면 **text 발송을 아예 호출하지 않는다**(§2-C).
-    자막 소스는 실 STT 배선 완료(PR #45, `9b3e3a2`) — 자격증명 미설정 시 mock 으로 폴백한다.
+    자막 소스는 실 STT 배선 완료(PR #45, `9b3e3a2`) — 자격증명 미설정이면 `stt.is_real_mode()`
+    게이트에서 애초에 real 모드가 아니므로 CSR 호출 자체를 하지 않고 mock 자막 경로가 유지된다
+    (호출을 시도했다가 실패해 되돌아가는 폴백이 아니다).
     ⚠️ 배선 CLOSE ≠ 실 육성 인식률·2차 15초 체인 검증(④런타임 미실증. routes._caption_from_stt 주석 참조).
 
     반환 dict:
