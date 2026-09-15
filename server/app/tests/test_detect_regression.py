@@ -124,6 +124,41 @@ def _pcm16_sine(num_samples: int, freq_hz: int = 440, rate: int = 16000) -> byte
     )
 
 
+
+def _f32_top_scores(top):
+    """(1, 3) float32 확률 행 — doorbell 이 top. 33.2 서빙 출력 계약과 동일 자료형.
+
+    입력 도메인을 f32 로 맞추는 것이 핵심이다. f64 로만 값을 만들면 실제 서빙이
+    내놓을 수 없는 확률 위에 경계 테스트를 세우게 된다(2026-09-15 실측: f32 로 표현한
+    0.7 은 f64 로 0.699999988079071 이라 raw 기준으로는 이미 임계 미만이다).
+    numpy 는 server/requirements.txt 선언 의존성이며 app/routes.py 도 이미 쓴다 —
+    신규 의존성이 아니다.
+    """
+    import numpy as np
+
+    rest = (np.float32(1.0) - np.float32(top)) / np.float32(2.0)
+    return np.array([[np.float32(top), rest, rest]], dtype=np.float32)
+
+
+def _f32_gate_boundaries():
+    """2자리 반올림이 신뢰도 게이트를 뒤집는 f32 경계 4종.
+
+    출처 = 2026-09-15 f32 전수 스윕(0.68~0.71 구간 503,317개 f32 값, HTTP 미경유).
+    갈림 구간은 [nextafter(f32(0.695)), f32(0.7)] 이고 양끝 바깥 한 칸은 뒤집지 않는다.
+    매직 넘버를 피하려고 구간 끝을 리터럴이 아니라 f32 이웃(nextafter)으로 도출한다 —
+    ULP 는 자료형이 정하는 값이지 사람이 고를 값이 아니다.
+    """
+    import numpy as np
+
+    up = np.float32(1.0)
+    return {
+        "no_flip_below": np.float32(0.695),
+        "flip_min": np.nextafter(np.float32(0.695), up),
+        "flip_max": np.float32(0.7),
+        "no_flip_above": np.nextafter(np.float32(0.7), up),
+    }
+
+
 class DetectRegressionTest(unittest.TestCase):
     """게이트 순서(멱등 → rate limit → 디코드 → 추론)와 응답 계약 회귀."""
 
@@ -2467,6 +2502,65 @@ class DetectRegressionTest(unittest.TestCase):
         self.assertEqual(
             sorted(body["stt"]), ["confidence", "language", "processed_at", "transcript"]
         )
+
+    # --- decisions.md 33.6(e): confidence 반올림이 게이트 앞에 있다 (계측 계층) ---
+    #
+    # ★ 아래 두 케이스는 **현재 동작의 관측**이지 현재 동작이 옳다는 결정이 아니다.
+    #   33.6(e) 는 `수정 여부 = 사용자 판단 대기` 로 남아 있다. 방향(round 제거 /
+    #   판정용 raw 별도 전달 / 현행 유지) 중 무엇으로 정해지든 그 변경이 여기서 먼저
+    #   드러나게 하는 것이 목적이다. 이 케이스의 존재를 "round 가 게이트 앞에 있는 게
+    #   맞다"는 승인으로 읽지 말 것.
+
+    def test_scores_to_prediction_rounds_confidence_before_gate(self) -> None:
+        """층 A(계약 관측) — 판정이 받을 수 있는 값은 원값이 아니라 2자리 반올림값뿐이다."""
+        from .. import model_serving
+
+        for name, raw in _f32_gate_boundaries().items():
+            with self.subTest(boundary=name):
+                predicted, confidence, all_scores = model_serving.scores_to_prediction(
+                    _f32_top_scores(raw)
+                )
+                self.assertEqual(predicted, "doorbell")
+                self.assertEqual(confidence, round(float(raw), 2))
+                # 원값은 반환 계약 어디에도 남지 않는다(all_scores 도 같은 자릿수로 접힌다)
+                self.assertNotEqual(confidence, float(raw))
+                self.assertEqual(all_scores["doorbell"], confidence)
+
+    def test_two_place_rounding_flips_the_low_confidence_gate(self) -> None:
+        """층 B(판정 결과) — 같은 서빙 확률이 raw 냐 반올림값이냐로 1차 발송이 갈린다.
+
+        갈림 구간 안에서는 raw 기준 `low_confidence` 차단이 반올림 기준 발송으로
+        뒤집히고, 구간 밖 한 칸에서는 두 판정이 같다. 역방향(raw 통과 → 반올림 차단)은
+        round 가 단조라 f32 전 구간에서 도달 불가였다(2026-09-15 스윕, 4조합 중 1조합 미도달).
+        """
+        from .. import model_serving
+        from ..utils import _apply_prediction_policy
+
+        expected_flip = {
+            "no_flip_below": False,
+            "flip_min": True,
+            "flip_max": True,
+            "no_flip_above": False,
+        }
+        for name, raw in _f32_gate_boundaries().items():
+            with self.subTest(boundary=name):
+                _, rounded, all_scores = model_serving.scores_to_prediction(
+                    _f32_top_scores(raw)
+                )
+                # ToF 는 부재(fail-open) — 이 케이스가 보는 축은 신뢰도 게이트 하나다
+                by_raw = _apply_prediction_policy("doorbell", float(raw), all_scores)
+                by_rounded = _apply_prediction_policy("doorbell", rounded, all_scores)
+
+                flipped = by_raw["primary_sent"] != by_rounded["primary_sent"]
+                self.assertIs(flipped, expected_flip[name])
+                if flipped:
+                    self.assertFalse(by_raw["primary_sent"])
+                    self.assertEqual(by_raw["skip_reason"], "low_confidence")
+                    self.assertTrue(by_rounded["primary_sent"])
+                    self.assertIsNone(by_rounded["skip_reason"])
+                else:
+                    self.assertEqual(by_raw["skip_reason"], by_rounded["skip_reason"])
+
 
 if __name__ == "__main__":
     unittest.main()
