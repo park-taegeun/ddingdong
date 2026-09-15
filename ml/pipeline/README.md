@@ -31,7 +31,7 @@ repo 루트에서:
 
 ```bash
 # 실제 데이터 루트 지정 (경로에 공백·한글 → 반드시 따옴표)
-DDINGDONG_DATA_ROOT="/Users/xorms/Desktop/서경대학교/시험 준비/26-1/공학종합설계1/ML 학습 데이터/ddingdong_dataset" \
+DDINGDONG_DATA_ROOT="~/ML 학습 데이터/ddingdong_dataset" \
   python -m ml.pipeline.run_all
 ```
 

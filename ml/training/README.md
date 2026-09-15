@@ -36,7 +36,9 @@ pip install "tensorflow==2.16.*" tensorflow_hub scikit-learn soundfile librosa
 
 ## 원커맨드 (학부생 로컬)
 
-repo 루트에서. 데이터 루트는 파이프라인과 동일하게 지정(공백·한글 → 따옴표 필수):
+repo 루트에서. 데이터 루트는 파이프라인과 동일하게 지정(공백·한글 → 따옴표 필수).
+`DDINGDONG_DATA_ROOT`(또는 `--data-root` 인자)는 **필수** — 둘 다 없으면 기본값 fallback 없이
+`ValueError`로 즉시 실패한다(PR #60):
 
 ```bash
 # 0) (선행) 데이터 파이프라인으로 05_final_dataset 생성 — 재실행 시 auto-clean 으로 stale 방지
