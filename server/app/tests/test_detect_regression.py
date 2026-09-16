@@ -12,8 +12,16 @@ test_client 로 재구성해 repo 자산으로 고정한 것이 이 파일이다
 
 토큰: DEVICE_TOKEN/DASHBOARD_TOKEN 은 setUpClass 의 _TestConfig 가 주입하는 더미
 문자열이다(이 파일 상단 상수 2개가 전부). 카카오 토큰·시크릿 실값은 픽스처에 일절
-등장하지 않으며, _TestConfig 가 카카오 4개 항목을 빈 문자열로 덮어 개발자 로컬
-server/.env 의 실값이 테스트 경로로 새어드는 것까지 막는다.
+등장하지 않으며, _TestConfig 가 카카오 4개 항목과 NCP(CSR) 2개 항목을 빈 문자열로
+덮어 개발자 로컬 server/.env 의 실값이 테스트 경로로 새어드는 것까지 막는다.
+
+외부 연결 가드: ★ 이 모듈은 setUpModule 에서 socket 연결 함수를 감싸 모든 연결 시도
+(루프백 포함)를 즉시 거절하고 기록한다. 기록이 1건이라도 남은 테스트는 cleanup 에서
+FAIL 로 끝난다(_NoNetworkTestCase). "예외만 던지는 차단"은 제품 코드가 STT 실패를
+None 자막으로 삼키기 때문에 스위트가 OK 로 끝나 누출을 가리므로(2026-09-16 실측:
+NCP 2항목 미격리 상태에서 104 OK 인 채 스위트 1회당 실 CSR 12건 = +180초), 반드시
+실패 판정까지 있어야 한다. 이 모듈의 TestCase 는 전부 _NoNetworkTestCase 를 상속해야
+하며 setUpModule 이 이를 검사한다.
 
 카카오 발송: ★ 이 스위트는 카카오로 실제 요청을 보내지 않는다. 발송 경로 케이스는
 unittest.mock 으로 kakao.send_primary_text / kakao.get_access_token /
@@ -27,6 +35,7 @@ import io
 import math
 import os
 import json
+import socket
 import struct
 import tempfile
 import unittest
@@ -159,7 +168,107 @@ def _f32_gate_boundaries():
     }
 
 
-class DetectRegressionTest(unittest.TestCase):
+# ── 외부 연결 가드 ──────────────────────────────────────────────────────
+# 경위(2026-09-16 실측): config.py 가 import 시 load_dotenv 로 server/.env 를 읽고
+# _TestConfig(Config) 가 NCP 2항목을 덮지 않아 실 자격증명이 app.config 에 들어왔다.
+# /enrich 경로 9개 케이스가 stt.transcribe 로 실 CSR 을 호출했고(스위트 1회 = 12건 =
+# 15초 단위 과금 180초, NCP 콘솔로 확인) 결과는 None 자막으로 흡수돼 104 OK 였다.
+# 따라서 (1) 연결 자체를 소켓 층에서 끊고 (2) 시도 기록을 테스트 실패로 승격한다.
+# 루프백도 막는다 — HTTPS_PROXY=127.0.0.1:9 같은 실행에서는 소켓 대상이 프록시라
+# 루프백을 허용하면 이 시도를 보지 못한다. 스위트는 SQLite 파일 + in-process
+# test_client 라 정당한 소켓 수요가 없다.
+_NET_ATTEMPTS: list[str] = []  # "host:port" 누적. _NoNetworkTestCase 가 테스트마다 비운다.
+_NET_ORIGINALS: dict[str, object] = {}
+
+
+def _record_and_refuse(address) -> None:
+    host, port = (address[0], address[1]) if isinstance(address, tuple) else (address, None)
+    target = f"{host}:{port}"
+    _NET_ATTEMPTS.append(target)
+    raise ConnectionRefusedError(f"[test-netguard] 외부 연결 차단: {target}")
+
+
+def _install_network_guard() -> None:
+    _NET_ORIGINALS.update(
+        connect=socket.socket.connect,
+        connect_ex=socket.socket.connect_ex,
+        create_connection=socket.create_connection,
+    )
+    socket.socket.connect = lambda self, address: _record_and_refuse(address)
+    socket.socket.connect_ex = lambda self, address: _record_and_refuse(address)
+    # http.client 는 HTTPConnection.__init__ 에서 socket.create_connection 을 붙잡으므로
+    # 연결 객체가 생기기 전(모듈 setUp)에 바꿔 두면 urllib 경로 전부가 여기로 온다.
+    socket.create_connection = lambda address, *a, **k: _record_and_refuse(address)
+
+
+def _uninstall_network_guard() -> None:
+    socket.socket.connect = _NET_ORIGINALS.pop("connect")
+    socket.socket.connect_ex = _NET_ORIGINALS.pop("connect_ex")
+    socket.create_connection = _NET_ORIGINALS.pop("create_connection")
+
+
+class _NoNetworkTestCase(unittest.TestCase):
+    """연결 시도 기록이 남은 테스트를 FAIL 로 끝내는 베이스. 이 모듈의 모든 TestCase 가 상속."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # cleanup 은 tearDown 뒤에 돌고, 여기서 self.fail 하면 unittest 가 failures 로 분류한다.
+        self.addCleanup(self._fail_if_network_attempted)
+
+    def _fail_if_network_attempted(self) -> None:
+        attempts = list(_NET_ATTEMPTS)
+        _NET_ATTEMPTS.clear()
+        if attempts:
+            self.fail(f"외부 연결 시도 {len(attempts)}건 (차단됨): {attempts}")
+
+
+def setUpModule() -> None:
+    _install_network_guard()
+    stray = [
+        name
+        for name, obj in globals().items()
+        if isinstance(obj, type)
+        and issubclass(obj, unittest.TestCase)
+        and not issubclass(obj, _NoNetworkTestCase)
+    ]
+    if stray:
+        _uninstall_network_guard()
+        raise AssertionError(f"_NoNetworkTestCase 를 상속하지 않은 TestCase: {stray}")
+
+
+def tearDownModule() -> None:
+    _uninstall_network_guard()
+
+
+class NetworkGuardSelfTest(_NoNetworkTestCase):
+    """가드가 살아 있음을 스위트가 매 실행 증명한다."""
+
+    def test_connection_attempt_is_refused_and_recorded(self):
+        with self.assertRaises(ConnectionRefusedError):
+            socket.create_connection(("127.0.0.1", 9), timeout=0.1)
+        with socket.socket() as sock, self.assertRaises(ConnectionRefusedError):
+            sock.connect(("127.0.0.1", 9))
+        self.assertEqual(_NET_ATTEMPTS, ["127.0.0.1:9", "127.0.0.1:9"])
+        _NET_ATTEMPTS.clear()  # 자기 자신은 통과
+
+    def test_swallowed_attempt_still_fails_the_test(self):
+        # 제품 코드가 예외를 삼키는 상황(stt.transcribe → None 자막) 재현: 예외를 먹어도
+        # 기록은 남고, 그 기록이 테스트를 FAIL 로 끝내야 한다(조용한 가드 금지).
+        class _Probe(_NoNetworkTestCase):
+            def test_probe(self):
+                try:
+                    socket.create_connection(("127.0.0.1", 9))
+                except ConnectionRefusedError:
+                    pass
+
+        result = unittest.TestResult()
+        _Probe("test_probe").run(result)
+        self.assertEqual(len(result.failures), 1, result.errors)
+        self.assertIn("127.0.0.1:9", result.failures[0][1])
+        self.assertEqual(_NET_ATTEMPTS, [])  # _Probe 의 cleanup 이 비웠다
+
+
+class DetectRegressionTest(_NoNetworkTestCase):
     """게이트 순서(멱등 → rate limit → 디코드 → 추론)와 응답 계약 회귀."""
 
     @classmethod
@@ -184,6 +293,12 @@ class DetectRegressionTest(unittest.TestCase):
             KAKAO_CLIENT_SECRET = ""
             KAKAO_ACCESS_TOKEN = ""
             KAKAO_REFRESH_TOKEN = ""
+            # NCP(CSR) 2항목도 비운다 — 2026-09-16 실측: 이 두 줄이 없어 .env 실값이
+            # Config 상속으로 들어와 /enrich 경로 9개 케이스가 스위트 1회당 실 CSR 12건
+            # (+180초)을 호출했다(소켓 가드 아래 시도 12건 = 정적 추적 12건 = 콘솔 +12).
+            # real 모드 케이스는 _FAKE_NCP_CREDS 를 patch.dict 로 덮으므로 영향 없다.
+            NCP_CLIENT_ID = ""
+            NCP_CLIENT_SECRET = ""
 
         cls.app = create_app(_TestConfig)
         cls.client = cls.app.test_client()
