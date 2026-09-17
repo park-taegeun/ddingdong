@@ -404,11 +404,23 @@ void setup() {
   g_wifiUp = probeConnectWifi();
   if (g_wifiUp) {
     // SSID 는 찍지 않는다(제약). 사설 LAN IP 와 RSSI 만.
-    Serial.printf("[BOOT] wifi up ip=%s rssi=%d udp->:%u\n", WiFi.localIP().toString().c_str(),
-                  (int)WiFi.RSSI(), (unsigned)PROBE_UDP_PORT);
+    // "[BOOT] wifi up ip=192.168.137.123 rssi=-100" = 43B
+    Serial.printf("[BOOT] wifi up ip=%s rssi=%d\n", WiFi.localIP().toString().c_str(),
+                  (int)WiFi.RSSI());
   } else {
     Serial.println("[BOOT] wifi 연결 실패 — WiFi 축 무효(창 출력 st/txerr 로 드러남)");
   }
+
+  // ★ UDP 대상 주소를 찍는 이유 = WiFi 부하 축이 **조용히** 죽는 것을 막기 위함이다.
+  //   핫스팟에서 노트북 IP 가 바뀌어 이 주소에 아무도 없으면 ARP 가 풀리지 않는데, lwIP 는
+  //   그 패킷을 큐에 넣고 sendto() 에 성공을 돌려준다(설치 lwipopts.h: ARP_QUEUEING=1) →
+  //   WiFiUDP::endPacket() == 1 → txerr=0. 무선으로 실제로 나가는 것은 1400B/20ms 가 아니라
+  //   가끔의 ARP 요청뿐인데 로그는 정상으로 보인다 = 「WiFi 켰는데 마이크 무변화」라는 거짓 결론.
+  //   그래서 측정 전에 이 줄과 노트북 IP 를 눈으로 맞춘다(RUNBOOK 2-1). 연결 실패 때도 찍는다 —
+  //   주소가 틀렸는지 WiFi 가 죽었는지를 가르는 것이 이 줄이다.
+  //   사설 LAN IP 라 출력 허용(SSID·비밀번호·토큰 출력은 여전히 0).
+  // "[BOOT] udp dst=192.168.137.123:55555" = 36B
+  Serial.printf("[BOOT] udp dst=%s:%u\n", SPIKE_SERVER_HOST, (unsigned)PROBE_UDP_PORT);
 
   applyMode(0);   // 기준선에서 시작
   Serial.println("[BOOT] ready — m0 기준선. 모드 전이는 RUNBOOK 순서표대로.");

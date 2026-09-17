@@ -195,11 +195,47 @@ static void test_mode_chain() {
   CHECK(probeModeDiffCount(probeModeCfg(-1), probeModeCfg(0)) == 0);
 }
 
+// ── 런북 6-1 비교표의 **비인접** 비교쌍 ──────────────────────────────────────
+// 사슬 검사(test_mode_chain)는 인접 쌍만 본다. 런북 표는 m3↔m6 처럼 인접하지 않은 쌍에도
+// "한 변수만 다르다"를 걸고 있는데, 그 쌍은 코드 어디에서도 검사되지 않았다 —
+// 모드 테이블 값이 바뀌면 런북 표만 조용히 거짓이 된다. 여기서 고정한다.
+static void test_nonadj_pairs() {
+  CHECK(PROBE_NONADJ_PAIR_N >= 1);                 // 표가 통째로 비면 이 검사가 무의미해진다
+
+  for (int i = 0; i < PROBE_NONADJ_PAIR_N; ++i) {
+    const ProbeModePair& p = PROBE_NONADJ_PAIRS[i];
+    CHECK(p.a < PROBE_MODE_N && p.b < PROBE_MODE_N);
+    CHECK(p.a != p.b);
+    CHECK(p.a + 1 != p.b && p.b + 1 != p.a);       // 인접 쌍이면 사슬 검사와 중복이다
+    CHECK(probeModeDiffCount(probeModeCfg(p.a), probeModeCfg(p.b)) == 1);   // ★ NC-6 검출 지점
+    CHECK(probeModeNonAdjOk(i) == true);
+  }
+  CHECK(probeModeNonAdjPairsOk() == true);
+
+  // 범위 밖 인덱스
+  CHECK(probeModeNonAdjOk(-1) == false);
+  CHECK(probeModeNonAdjOk(PROBE_NONADJ_PAIR_N) == false);
+
+  // m3↔m6 은 런북 6-1 표가 "WiFi 만 다른 세 번째 대조"라고 적은 쌍이다.
+  // 다른 축이 아니라 **WiFi 축**으로 다른 것을 직접 못박는다(diff==1 만으로는 어느 축인지 모른다).
+  const ProbeModeCfg m3 = probeModeCfg(3);
+  const ProbeModeCfg m6 = probeModeCfg(6);
+  CHECK(m3.cam == m6.cam);
+  CHECK(m3.res == m6.res);
+  CHECK(m3.wifi_tx != m6.wifi_tx);
+
+  // m6 과 구성이 같은 앞선 모드는 없다(주석이 한때 "m6 = m2" 라고 적었던 자리 — 그 오기를 고정한다).
+  for (int m = 0; m < 6; ++m) {
+    CHECK(probeModeDiffCount(probeModeCfg(m), m6) != 0);
+  }
+}
+
 int main() {
   test_soi();
   test_cam_window();
   test_mic_window();
   test_mode_chain();
+  test_nonadj_pairs();
   printf("camera_probe_test: %d checks passed\n", checks);
   return 0;
 }

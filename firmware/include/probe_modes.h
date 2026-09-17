@@ -84,3 +84,34 @@ inline bool probeModeChainOk() {
   }
   return true;
 }
+
+// ── 비인접 비교쌍 ────────────────────────────────────────────────────────────
+// CAMERA_PROBE_RUNBOOK.md 6-1 비교표에는 사슬의 인접 쌍이 아닌 쌍이 섞여 있다(m3↔m6).
+// 인접 쌍은 probeModeChainOk() 가 강제하지만 비인접 쌍은 아무도 안 본다 — 모드 테이블의 값을
+// 누가 한 번 고치면 런북 표만 조용히 거짓이 된다(문서-코드 드리프트).
+// ★ 단일 원천 = 이 배열. 런북 표에 비인접 쌍을 추가하면 여기에도 추가해야 호스트 테스트가 통과한다.
+struct ProbeModePair { uint8_t a; uint8_t b; };
+
+constexpr ProbeModePair PROBE_NONADJ_PAIRS[] = {
+  {3, 6},   // WiFi 송신만 다름 — m0↔m1 · m4↔m5 에 이은 세 번째 대조
+};
+constexpr int PROBE_NONADJ_PAIR_N =
+    (int)(sizeof(PROBE_NONADJ_PAIRS) / sizeof(PROBE_NONADJ_PAIRS[0]));
+
+// i 번째 비인접 쌍이 정확히 한 변수만 다른가.
+inline bool probeModeNonAdjOk(int i) {
+  if (i < 0 || i >= PROBE_NONADJ_PAIR_N) return false;
+  const ProbeModePair& p = PROBE_NONADJ_PAIRS[i];
+  return probeModeDiffCount(probeModeCfg(p.a), probeModeCfg(p.b)) == 1;
+}
+
+// 전 비인접 쌍 순회. 인접 쌍과 겹치는 쌍이 들어오면(= 사슬이 이미 보는 쌍) 그것도 거짓으로 본다 —
+// 표에 중복이 생기면 "세 번째 대조"라는 근거가 거짓이 되기 때문이다.
+inline bool probeModeNonAdjPairsOk() {
+  for (int i = 0; i < PROBE_NONADJ_PAIR_N; ++i) {
+    const ProbeModePair& p = PROBE_NONADJ_PAIRS[i];
+    if (p.a + 1 == p.b || p.b + 1 == p.a) return false;
+    if (!probeModeNonAdjOk(i)) return false;
+  }
+  return true;
+}
