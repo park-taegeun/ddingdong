@@ -35,7 +35,7 @@
 - **센서 앞 1.5m 빈 공간 + 무자극.** 시작 전 `[cp] tof fr=… edge=0` 이 나오는지 확인한다 — `edge` 가 계속 증가하면 시야에 움직이는 것이 있다는 뜻이고, ToF 축이 모드가 아니라 사람에 반응하게 된다.
 - **음향 포트 막힘 없음.** 마이크 위에 손·종이·케이블이 얹히면 rms 가 모드와 무관하게 내려간다.
 - **핫스팟 켜져 있어야 한다.** WiFi 축(m1~m4)이 성립하려면 부팅 시 연결에 성공해야 한다. 실패하면 창 출력의 `st=` 가 3(`WL_CONNECTED`)이 아니고 `txerr` 만 올라간다 → 그 구간의 WiFi 축은 무효(8절).
-- **UDP 목적지에 수신 프로세스를 띄우지 않는다.** `secrets.h` 의 노트북 LAN 주소 + 포트 `55555`. 서버(5000)·`tls_probe_server`(5001) 와 겹치지 않는다. 받는 쪽이 없어도 보드 쪽 송신 부하는 동일하다 — 재는 것은 **송신 동작**이지 왕복이 아니다.
+- **UDP 목적지 주소에 호스트가 살아 있어야 한다(수신 프로세스는 필요 없다).** `secrets.h` 의 노트북 LAN 주소 + 포트 `55555`. 서버(5000)·`tls_probe_server`(5001) 와 겹치지 않는다. 듣는 **소켓**이 없어도 송신 부하는 그대로다 — 재는 것은 송신 동작이지 왕복이 아니다. 그러나 그 **주소에 아무 기기도 없으면** ARP 가 풀리지 않아 송신 자체가 일어나지 않는다(그런데 로그는 정상으로 보인다 — 2-1 절에서 반드시 확인한다).
 - **서버·터널 불필요.** `/detect`·`/enrich` 를 부르지 않는다. 카카오·NCP 과금 0.
 
 ---
@@ -82,7 +82,8 @@ script -a -F camera_probe_runtime.log ~/.platformio/penv/bin/pio device monitor 
 [BOOT] micProbeTask started (Core 0, prio 4)
 [tof] VL53L5CX ready (8x8, 15Hz, continuous)
 [BOOT] tofProbeTask started (Core 0, prio 3)
-[BOOT] wifi up ip=192.168.x.x rssi=-52 udp->:55555
+[BOOT] wifi up ip=192.168.x.x rssi=-52
+[BOOT] udp dst=192.168.x.x:55555
 [cp][m0] set cam=0 wifi=0 res=0 init=0 camres=0
 [BOOT] ready — m0 기준선. 모드 전이는 RUNBOOK 순서표대로.
 ```
@@ -90,6 +91,51 @@ script -a -F camera_probe_runtime.log ~/.platformio/penv/bin/pio device monitor 
 - `[BOOT] mic init 실패` → 마이크 축 무효. 이 세션의 목적 자체가 성립하지 않으므로 중단하고 9절.
 - `[BOOT] tof init 실패` → ToF 축만 무효. 나머지는 계속 돌지만, 6.3(n) 대조가 「ToF 없는 조건」이 되므로 기록에 반드시 적는다.
 - `[BOOT] wifi 연결 실패` → WiFi 축(m1~m4) 무효. 카메라 축(m5~m7)만 유효.
+
+### 2-1. ★ 측정 전 확인 — WiFi 부하 축이 **실제로 부하를 만드는가**
+
+이 하네스에서 WiFi 축은 조용히 죽을 수 있다. 핫스팟이 노트북에 다른 IP 를 주면 `secrets.h` 의
+대상 주소에 아무 기기도 없게 되는데, 그때 lwIP 는 ARP 가 풀릴 때까지 패킷을 큐에 담고
+`sendto()` 에 **성공을 돌려준다**(설치 `lwipopts.h` 의 `ARP_QUEUEING=1`). 창 출력에는 `tx` 가
+올라가고 `txerr=0` 으로 보이지만 무선으로 나가는 것은 이따금의 ARP 요청뿐이다. 그 상태로 측정하면
+「WiFi 송신을 켰는데 마이크가 안 흔들린다」는 **거짓 결론**이 나온다. 그래서 측정 전에 세 줄을 본다.
+
+**① 노트북의 현재 사설 IP**
+
+```
+ipconfig getifaddr en0
+```
+
+**② 부팅 줄의 대상 주소와 같은가**
+
+```
+[BOOT] udp dst=192.168.x.x:55555     ← 이 주소가 ① 과 같아야 한다
+```
+
+다르면 `secrets.h` 의 `SPIKE_SERVER_HOST` 를 ① 값으로 고치고 **재플래시**한다(값 편집은 로컬에서만,
+파일은 커밋되지 않는다). 대역 자체가 다르면 핫스팟 재접속부터 한다.
+
+**③ m1 에서 패킷이 실제로 도착하는가 (1회, macOS 기본 도구만)**
+
+모니터를 잠깐 두고 노트북 다른 창에서:
+
+```
+nc -u -l 55555 | head -c 2800 | wc -c
+```
+
+`2800` 이 찍히고 명령이 끝나면(= 1400B 패킷 2개) 축이 살아 있다. 몇 초가 지나도 아무것도 안 찍히면
+②로 돌아간다. **확인되면 바로 끝난 명령이므로 따로 죽일 프로세스가 없다.**
+
+> 이 확인이 관측 조건을 바꾸는가 — 아니다. ARP 는 ②가 맞는 순간 이미 풀려 있고, 듣는 소켓이 생기고
+> 말고는 **보드가 내보내는 양**을 바꾸지 않는다. 바뀌는 것은 노트북이 돌려보내는 ICMP
+> port-unreachable 유무뿐이라, 본 측정(m0 부터)은 이 명령이 끝난 뒤에 시작한다.
+
+### 2-2. 세션이 끝나면
+
+```
+cd <repo>
+git checkout main
+```
 
 ---
 
@@ -253,9 +299,9 @@ grep -a 'reset=' camera_probe_runtime.log           # 재부팅 흔적
 cd <repo>
 c++ -std=c++17 -Wall -I firmware/include -o /tmp/cpt firmware/tools/camera_probe_test.cpp && /tmp/cpt
 ```
-기대: `camera_probe_test: 79 checks passed`
+기대: `camera_probe_test: 97 checks passed`
 
-### 7-1. negative control 5종 — **각각 반드시 실패해야 한다**
+### 7-1. negative control 6종 — **각각 반드시 실패해야 한다**
 
 가드를 하나씩 지우고 테스트가 그것을 잡는지 본다. 지운 뒤에는 **반드시 원복**한다.
 
@@ -266,11 +312,14 @@ c++ -std=c++17 -Wall -I firmware/include -o /tmp/cpt firmware/tools/camera_probe
 | NC-3 | `probe_stats.h` `return w != nullptr && w->ok != 0;` → `return w != nullptr;` | 표본 0건 창은 표본이 있다고 보고하지 않는다 | 캡처가 한 번도 안 된 창이 **`len=0 ms=0/0/0`** = 「0ms 에 성공」처럼 읽힌다 | `probeCamHasSample(&w) == false` |
 | NC-4 | `probe_modes.h` `case 7:` 의 `PROBE_CAM_PERIODIC` → `PROBE_CAM_CONTINUOUS` | 인접 모드는 한 변수만 다르다 | 악화 원인을 한 변수로 귀속할 수 없게 된다 | `probeModeDiffCount(a, b) == 1` |
 | NC-5 | `probe_stats.h` `if (w->ok == 0) {` → `if (false) {` | 최소/최대는 첫 표본으로 세운다(센티넬 없음) | 첫 표본이 들어와도 `len_min`·`ms_min` 이 0 에 머문다 | `w.len_min == 6000 && w.len_max == 6000` |
+| NC-6 | `probe_modes.h` `PROBE_NONADJ_PAIRS` 의 `{3, 6}` → `{2, 6}` | 런북 6-1 표의 **비인접** 쌍도 한 변수만 다르다 | 표에 두 변수 다른 쌍이 올라가 「WiFi 축 세 번째 대조」가 조용히 거짓이 된다 | `probeModeDiffCount(probeModeCfg(p.a), probeModeCfg(p.b)) == 1` |
 
 ⚠️ **함정 예고** — 아래 케이스가 테스트에서 빠지면 그 NC 는 통과해버린다(= 단언이 무디다):
 - NC-1 은 「**첫 바이트만** 다른」 케이스가 있어야 잡힌다.
 - NC-2 는 「길이 1 + **뒤 바이트가 0xD8**」 케이스가 있어야 잡힌다.
 - NC-4 는 인접 쌍을 **전부** 순회해야 잡힌다(한 쌍만 보면 깨진 표가 통과한다).
+- NC-6 은 **쌍 표**를 변형해야 새 단언에만 걸린다. 모드 테이블 쪽(예: `case 6:` 의 `wifi_tx` 를 `true` 로)을
+  건드리면 인접 사슬이 먼저 깨져 NC-4 의 단언이 잡아버리므로, 새 단언의 독립 검출을 확인할 수 없다.
 
 미검출이면 「가드 없음」이라고 결론짓기 전에 3확인: ① 도구 생존(baseline 이 통과하는가) ② 도달 가능성(그 코드가 실제로 불리는가) ③ 단언 무딤(위 함정).
 
@@ -289,6 +338,7 @@ c++ -std=c++17 -Wall -I firmware/include -o /tmp/cpt firmware/tools/camera_probe
 | `framesize … rc≠0` 또는 `camres≠res` | 해상도 변경 실패 | 그 구간의 해상도 축 무효. 기록에 적고 m7 을 다시 시도 |
 | `net st≠3` | WiFi 끊김 | WiFi 축(m1~m4) 무효. 핫스팟 확인 후 재부팅하고 세션을 처음부터 |
 | `txerr` 만 증가 | 송신 실패 | 목적지 LAN 주소가 현재 핫스팟과 다른 대역일 수 있다. `secrets.h` 의 값과 노트북 `ipconfig getifaddr en0` 대조 |
+| `tx` 는 오르는데 m0↔m1 차가 전혀 없음 | **WiFi 축이 죽었을 수 있음** | `txerr=0` 은 무선 송신 성공을 보장하지 않는다(ARP 미해결 시 lwIP 가 큐에 담고 성공을 돌려줌 — 2-1 절). 2-1 ①~③ 을 다시 하고, 통과하는데도 차가 없으면 그때가 **실제 관측 결과**다 |
 | `mic gap≠0` | `i2s_read` 실패 | 그 창은 버린다. 계속 나오면 마이크 결선(6.3(a)) |
 | `mic n` 이 160,000 에서 크게 모자람 | 마이크가 굶었다 | Core 0 경합 후보. 그 모드를 기록하고 계속 |
 | `tof err` 급증 | I2C 읽기 실패 | ToF 축 무효. 9.1(b) 결선 |
@@ -322,4 +372,5 @@ c++ -std=c++17 -Wall -I firmware/include -o /tmp/cpt firmware/tools/camera_probe
 - **디지털 관측만이다.** 마이크 잡음이 전기적 유입인지 음향인지 이 하네스는 가르지 못한다(그 분리는 `env:mic_noiseprobe` 의 m0~m6 몫).
 - **실 음향 조건이 통제되지 않는다.** 방음실이 아니므로 절대값은 세션 간 비교 불가. 그래서 5절이 같은 세션 안의 모드 대조와 m0 복귀를 강제한다.
 - **`cap ms` 는 `millis()` 해상도(1ms)다.** 1ms 미만 차이는 보이지 않는다.
+- **`txerr=0` 은 「무선으로 나갔다」를 뜻하지 않는다.** ARP 가 안 풀린 대상이면 lwIP 가 패킷을 큐에 담고 성공을 돌려준다(2-1 절). WiFi 축 결과를 적을 때는 2-1 ①~③ 을 통과한 세션인지 함께 적는다.
 - **UDP 더미는 실 업로드가 아니다.** 실제 2차 업로드는 수백 KB 를 수백 ms 에 몰아 보내므로 순간 전류 프로파일이 다르다. 여기서 「WiFi 영향 없음」이 나와도 PR-B 의 실 전송에서 다시 봐야 한다.
