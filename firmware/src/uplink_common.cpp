@@ -187,3 +187,42 @@ UplinkResult uplinkPostAudio(const char* host, uint16_t port,
   http.end();
   return result;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2차 체인(`/enrich`) — 형제 함수 additive (2026-09-18, PR-B / 6.5(d))
+// ★ 위 1차 함수 5개는 **1바이트도 바꾸지 않았다**. 아래는 순수 추가분이다.
+//   바이트열 조립은 enrich_wire.h 의 순수 함수(호스트 검산 대상)에 있고, 여기는 전송만 한다.
+// ═══════════════════════════════════════════════════════════════════════════
+
+UplinkResult uplinkPostEnrichBody(const char* host, uint16_t port,
+                                  const uint8_t* body, size_t bodyLen) {
+  UplinkResult result{-1, 0};
+  if (body == nullptr || bodyLen == 0) {
+    return result;  // 조립 실패분은 호출부가 이미 로그를 남겼다
+  }
+
+  WiFiClient client;
+  HTTPClient http;
+  http.setTimeout(UPLINK_ENRICH_HTTP_TIMEOUT_MS);
+  const String url = String("http://") + host + ":" + String(port) + "/api/v1/enrich";
+  if (!http.begin(client, url)) {
+    Serial.println("[uplink] enrich HTTPClient begin() failed");
+    return result;
+  }
+  http.addHeader("Content-Type", String("multipart/form-data; boundary=") + ENRICH_BOUNDARY);
+  // 카테고리 6.1 Device Bearer Token — /detect 와 같은 토큰(@device_auth 동일 데코레이터).
+  http.addHeader("Authorization", String("Bearer ") + SPIKE_DEVICE_TOKEN);
+
+  const int64_t t0 = esp_timer_get_time();
+  const int status = http.POST(const_cast<uint8_t*>(body), bodyLen);
+  const int64_t tEnd = esp_timer_get_time();
+
+  result.httpStatus  = status;
+  result.roundTripMs = static_cast<uint32_t>((tEnd - t0) / 1000);
+
+  if (status > 0) {
+    http.getString();  // 드레인만 — 2차 응답 본문은 쓰지 않는다(상태 코드로 충분)
+  }
+  http.end();
+  return result;
+}
