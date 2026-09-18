@@ -98,3 +98,46 @@ UplinkResult uplinkPostAudio(const char* host, uint16_t port,
                              uint8_t* bodyBuf, size_t bodyBufCapacity,
                              char* respOut, size_t respCapacity,
                              const TofFrameResult* tof);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2차 체인(`/enrich`) — **형제 함수 additive** (2026-09-18, PR-B / 6.5(d))
+// ★ 위 1차 구간(상수·시그니처·본문)은 **1바이트도 바꾸지 않았다**. 아래는 순수 추가분이다.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#include "enrich_wire.h"   // 바이트열 조립·게이트 판독(순수 계층, 호스트 검산 대상)
+
+// enrich_wire.h 는 호스트 컴파일을 위해 mic_common.h 를 include 하지 않는다. 두 곳의 값이
+// 갈라지면 2차 녹음 길이 계산이 조용히 틀어지므로 **보드 빌드에서 묶어 강제**한다.
+static_assert(ENRICH_AUDIO_DMA_BUF_LEN == (uint32_t)MIC_DMA_BUF_LEN,
+              "enrich_wire.h 의 DMA 버퍼 길이가 mic_common.h 와 다르다");
+static_assert(ENRICH_AUDIO_SAMPLE_RATE == MIC_SAMPLE_RATE_HZ,
+              "enrich_wire.h 의 샘플레이트가 mic_common.h 와 다르다");
+
+// === 2차 HTTP 타임아웃 (§2-2(a) — **잠정값이다**) ==========================
+// 산술 상한 = 카카오 최악 7.5초(7.6(f) 5회 × 1.5s) + 서버 자체 1.6초 + STT 3.0초 = **12.1초**
+// (7.7(l)). 셋 다 **서버측 구간**이라 ESP32 캡처·업로드는 미포함이다. 1차의 10,000ms 는 이
+// 상한 아래라 상속할 수 없다 → 7.7(g)가 쓰는 **「2차 체인 15초 예산」을 그대로** 쓴다
+// (새 임계값을 발명하지 않는다). 15,000 ≤ uint16_t 상한 65,535 이고 1000의 배수다.
+//
+// ⚠️ `HTTPClient::setTimeout` 은 「마지막 수신 이후 무응답 한계」(`_tcpTimeout`)이지 총 경과
+//    상한이 아니다. 인자는 uint16_t 이고 내부에서 초 단위로 절삭된다. 다만 2차는 서버가 응답
+//    헤더 첫 바이트를 내기 **전에** 카카오·STT를 전부 돌리므로 사실상 총 경과 상한으로 동작한다
+//    (6.5 실측 + 논증).
+// 🔴 **PR-C 재판정 트리거**: ④런타임에서 2차 왕복 실측치가 나오면 이 값을 재판정한다.
+//    12.1초는 **미실측 산술 상한**이며 성분별 실측 근거는 SSoT에서 추적 불가다(7.7(l)).
+constexpr uint32_t UPLINK_ENRICH_HTTP_TIMEOUT_MS = 15000;
+
+// === 2차 multipart 버퍼 크기 (파생값 — 새 상수 신설이 아니다) ==============
+// image 상한은 서버 IMAGE_MAX_BYTES 를 그대로 쓴다. QVGA 실측은 5,353~5,438 B(6.6(c))지만
+// 보드가 임의 상한을 발명하면 그 자체가 새 판정이 된다 — 서버 계약 상한에 맞춰 잡고,
+// 넘치면 enrichBuildMultipart 가 **자르지 않고 0을 반환**한다.
+constexpr size_t UPLINK_ENRICH_BODY_BYTES =
+    ENRICH_AUDIO_BYTES + ENRICH_SERVER_IMAGE_MAX_BYTES + UPLINK_MULTIPART_OVERHEAD_BYTES;
+
+// POST /api/v1/enrich. **조립이 끝난** 바디를 그대로 보낸다 — 조립은 enrichBuildMultipart
+// (순수·호스트 검산 대상)가 하고, 호출부는 카메라 fb 를 쥔 짧은 구간에서 그것을 끝낸 뒤
+// fb 를 반환하고 이 함수를 부른다(fb 를 쥔 채 수 초짜리 POST 를 돌지 않기 위함).
+// ★ 재시도하지 않는다 — 404/409/타임아웃/끊김 모두 호출부가 로그만 남긴다(1차와 동일 원칙).
+// ★ device_id 를 싣지 않는다 — /enrich 계약상 불요다(6.5(b)).
+UplinkResult uplinkPostEnrichBody(const char* host, uint16_t port,
+                                  const uint8_t* body, size_t bodyLen);
