@@ -1,6 +1,8 @@
 // 띵동 PoC firmware - 마이크 더미 테스트 공통 헤더 (5/10, PoC Day 4)
 //
-// INMP441 + ESP32-S3 I2S1. 카메라 (I2S0)와 페리페럴 분리 (decisions.md 카테고리 1).
+// INMP441 + ESP32-S3 I2S1. 카메라와 자원 분리 — 근거는 핀 교집합 ∅ + I2C 포트 분리
+// (카메라 SCCB 포트1 / ToF Wire 포트0). decisions.md 카테고리 2 · 6.6.
+// ※ ESP32-S3 의 카메라는 I2S0 이 아니라 LCD_CAM 페리페럴이다(27.8(m)④).
 // 부품 부재 상태 (자성리얼 5/15~5/28 도착) → 컴파일 + 메모리 진단까지만 검증.
 // 16kHz mono raw waveform 캡처 코드 골격 + 250ms 파워업 노이즈 폐기.
 //
@@ -30,7 +32,7 @@
 constexpr int        MIC_SCK_PIN  = 2;          // XIAO D1, INMP441 SCK (BCLK)
 constexpr int        MIC_WS_PIN   = 3;          // XIAO D2, INMP441 WS  (LRCL)
 constexpr int        MIC_SD_PIN   = 7;          // XIAO D8, INMP441 SD  (DOUT → ESP32 입력)
-constexpr i2s_port_t MIC_I2S_PORT = I2S_NUM_1;  // 카메라 I2S0과 분리
+constexpr i2s_port_t MIC_I2S_PORT = I2S_NUM_1;  // 카메라와 핀·I2C 포트 분리 (카테고리 2)
 
 // === I2S 설정 상수 ===
 // 16kHz × 64 SCK = 1.024 MHz BCLK (INMP441 spec 0.5~3.2 MHz 범위 내)
