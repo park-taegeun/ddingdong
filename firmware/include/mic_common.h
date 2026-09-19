@@ -1,6 +1,8 @@
 // 띵동 PoC firmware - 마이크 더미 테스트 공통 헤더 (5/10, PoC Day 4)
 //
-// INMP441 + ESP32-S3 I2S1. 카메라 (I2S0)와 페리페럴 분리 (decisions.md 카테고리 1).
+// INMP441 + ESP32-S3 I2S1. 카메라와 자원 분리 — 근거는 핀 교집합 ∅ + I2C 포트 분리
+// (카메라 SCCB 포트1 / ToF Wire 포트0). decisions.md 카테고리 2 · 6.6.
+// ※ ESP32-S3 의 카메라는 I2S0 이 아니라 LCD_CAM 페리페럴이다(27.8(m)④).
 // 부품 부재 상태 (자성리얼 5/15~5/28 도착) → 컴파일 + 메모리 진단까지만 검증.
 // 16kHz mono raw waveform 캡처 코드 골격 + 250ms 파워업 노이즈 폐기.
 //
@@ -30,7 +32,7 @@
 constexpr int        MIC_SCK_PIN  = 2;          // XIAO D1, INMP441 SCK (BCLK)
 constexpr int        MIC_WS_PIN   = 3;          // XIAO D2, INMP441 WS  (LRCL)
 constexpr int        MIC_SD_PIN   = 7;          // XIAO D8, INMP441 SD  (DOUT → ESP32 입력)
-constexpr i2s_port_t MIC_I2S_PORT = I2S_NUM_1;  // 카메라 I2S0과 분리
+constexpr i2s_port_t MIC_I2S_PORT = I2S_NUM_1;  // 카메라와 핀·I2C 포트 분리 (카테고리 2)
 
 // === I2S 설정 상수 ===
 // 16kHz × 64 SCK = 1.024 MHz BCLK (INMP441 spec 0.5~3.2 MHz 범위 내)
@@ -87,7 +89,10 @@ struct MicRawStats {
 //
 //   검산:      8388607 (24bit 최대) << 6 = 536870848 → >> 14 = 32767 = INT16_MAX 정확 일치
 //   실측 대입: 박수 max 296542208 >> 14 = 18099 = int16 풀스케일의 55%
-//              → 클리핑 없음, 헤드룸 약 1.8배. 단 더 큰 소리는 미측정 → saturation 가드 필수.
+//              → ※ 여기 있던 「클리핑 없음 · 헤드룸 약 1.8배」 결론은 6.3(k-2) 에서
+//                반증됐다 — 후속 실측의 박수 raw max 가 위 296542208 의 5.35배였고
+//                clip=311(w=64)/163(w=69)/124(w=72) 가 실측됐다. 위 대입은 그 1회
+//                측정의 산술이지 상한이 아니다 → saturation 가드 필수.
 //
 // ★ 폐기된 안: >>16 (M2 이전의 ">>8 두 번" 주석 계획). tz=6 실측과 불일치하며 유효
 //   비트를 2비트 더 버려 약 12dB(4배) 손실. 치명적이진 않으나 정확도 저하.

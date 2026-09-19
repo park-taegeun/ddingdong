@@ -186,7 +186,10 @@ static void micTask(void* parameter) {
       //   예) 배경 raw rms 2,400,000 / 16384 ≈ 146 | 박수 118,992,347 / 16384 ≈ 7,262
       //   아래 raw/i16 열이 그 비를 on-device로 산출한다 (수동 나눗셈 불필요).
       //   벗어나면: 16384의 4배 = >>16 오적용 / 1/4배 = >>12 오적용을 의심하라.
-      //   clip > 0 이면 헤드룸(실측 1.8배) 소진 신호 = 더 큰 음압 유입.
+      //   clip > 0 이면 더 큰 음압 유입 신호.
+      //   ※ 여기 있던 「헤드룸(실측 1.8배)」 근거는 6.3(k-2) 에서 반증됐다 — 후속 실측의
+      //     박수 raw max 가 296542208 의 5.35배였고 clip=311(w=64)/163(w=69)/124(w=72)
+      //     가 실측됐다. 1회 측정의 산술이었지 상한이 아니다.
       const long long ratio = (i16.rms > 0) ? ((long long)st.rms / (long long)i16.rms) : -1;
 
       Serial.printf("[mic][M4] w=%u i16: min=%d max=%d rms=%d clip=%u | raw/i16=%lld (기대 16384)\n",

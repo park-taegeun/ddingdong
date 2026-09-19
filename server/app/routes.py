@@ -265,7 +265,7 @@ def enrich():
     image_bytes = _validate_image_part(image_file)
 
     # 오디오 파트 디코딩 실증 (audio_decode.py 계약 호출, frozen — import 만).
-    # enrich 오디오 = 트리거 기점 [0,5s] 단독(스티칭 X, 카테고리 6.2).
+    # enrich 오디오 = 트리거 기점 [0,5s] 단독(스티칭 X, 카테고리 6.5(a) · 6.7(c)).
     audio_bytes = audio_file.read()
     if len(audio_bytes) > AUDIO_MAX_BYTES:
         raise ApiError(
