@@ -3,7 +3,8 @@
   DDINGDONG_DATA_ROOT="..." python -m ml.pipeline.run_all   # 정본 관용구(카테고리 5)
   python -m ml.pipeline.run_all --data-root "..."
 
-Step1 전처리 → Step2 분할 → Step3 증강(train) → Step4 조립 → Step5 누수 가드.
+Step1 전처리 → Step2 분할(내용 중복 제거 포함) → Step3 증강(train) → Step4 조립
+→ Step5 누수 가드(stem 층 + 내용 층).
 """
 
 from __future__ import annotations
@@ -14,10 +15,11 @@ import sys
 
 from . import assemble, augment, config, preprocess, split
 from .config import Paths
-from .guards import assert_no_leakage
+from .guards import assert_no_content_leakage, assert_no_leakage
 
 
-def _print_summary(final_counts: dict[str, dict[str, int]], guard: dict[str, int]) -> None:
+def _print_summary(final_counts: dict[str, dict[str, int]], guard: dict[str, int],
+                   content_guard: dict[str, int]) -> None:
     print("\n=== 05_final_dataset 개수 (split × class) ===")
     header = f"{'split':<7}" + "".join(f"{c:>12}" for c in config.CLASSES) + f"{'total':>9}"
     print(header)
@@ -27,6 +29,8 @@ def _print_summary(final_counts: dict[str, dict[str, int]], guard: dict[str, int
         print(f"{split_name:<7}" + "".join(f"{row[c]:>12}" for c in config.CLASSES) + f"{total:>9}")
     print(f"\n누수 가드 통과 — 고유 stem: "
           f"train={guard['train']} val={guard['val']} test={guard['test']} (겹침 0)")
+    print(f"내용 누수 가드 통과 — 고유 내용 해시: train={content_guard['train']} "
+          f"val={content_guard['val']} test={content_guard['test']} (split 교차 0)")
 
 
 def run(paths: Paths, clean: bool = True) -> dict[str, dict[str, int]]:
@@ -48,8 +52,10 @@ def run(paths: Paths, clean: bool = True) -> dict[str, dict[str, int]]:
         # 05 재생성 전 기존 train/val/test 를 비워 stale 중첩 방지(--no-clean 로 opt-out).
         assemble.clean_final(paths)
     final_counts = assemble.assemble(paths)
-    guard = assert_no_leakage(assemble.load_final_manifest(paths))
-    _print_summary(final_counts, guard)
+    final_rows = assemble.load_final_manifest(paths)
+    guard = assert_no_leakage(final_rows)
+    content_guard = assert_no_content_leakage(final_rows)  # 내용 층(이중 검사)
+    _print_summary(final_counts, guard, content_guard)
     return final_counts
 
 

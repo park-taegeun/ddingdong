@@ -14,7 +14,7 @@ import numpy as np
 
 from .. import assemble, augment, config, preprocess, split
 from ..audio_io import iter_audio_files, probe, save_wav
-from ..guards import assert_no_leakage
+from ..guards import ContentLeakageError, assert_no_content_leakage, assert_no_leakage
 from ..make_dummy import make_dummy_dataset
 
 PER_CLASS = 6
@@ -26,7 +26,9 @@ def _run_pipeline(root: Path):
     split.split_dataset(paths)
     augment.augment(paths)
     final_counts = assemble.assemble(paths)
-    guard = assert_no_leakage(assemble.load_final_manifest(paths))
+    final_rows = assemble.load_final_manifest(paths)
+    guard = assert_no_leakage(final_rows)
+    assert_no_content_leakage(final_rows)  # 내용 층(이중 검사) — 전관통 경로에서 항상 통과해야
     return paths, final_counts, guard
 
 
@@ -278,6 +280,223 @@ def test_source_group_split_no_scatter():
         return final_counts, guard, len(by_src)
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# D1·D2·D3 — 내용 중복 제거 / 해시 고정 배정 / 직접녹음 유닛 키
+# ──────────────────────────────────────────────────────────────────────────
+
+def _tone(seed: int, sec: float = 0.5) -> np.ndarray:
+    """서로 다른 seed → 서로 다른 내용(md5)."""
+    rng = np.random.default_rng(seed)
+    n = int(sec * config.SAMPLE_RATE)
+    return (0.3 * rng.standard_normal(n)).astype(np.float32)
+
+
+def _put_pre(paths, cls: str, stem: str, y: np.ndarray) -> None:
+    """02_preprocessed 에 직접 심는다(split 단계만 겨냥 — preprocess 우회)."""
+    save_wav(paths.preprocessed / cls / f"{stem}.wav", y)
+
+
+def _split_only(tmp: Path, plant) -> tuple:
+    """tempdir + 명시 인자로 split 단계만 실행. 반환: (paths, split rows, dedup rows)."""
+    paths = config.resolve_paths(tmp)
+    plant(paths)
+    split.split_dataset(paths)
+    return paths, split.load_split_manifest(paths), split.load_dedup_manifest(paths)
+
+
+def test_dedup_same_class_duplicate_keeps_one():
+    """T1 — 같은 클래스 안 내용 중복은 정렬상 첫 stem 1개만 남고 사유가 기록된다."""
+    dup = _tone(1)
+    with tempfile.TemporaryDirectory() as tmp:
+        def plant(paths):
+            for stem in ("doorbell_a_0000000", "doorbell_b_0000000", "doorbell_c_0000000"):
+                _put_pre(paths, "doorbell", stem, dup)      # 3개 전부 같은 내용
+            _put_pre(paths, "doorbell", "doorbell_z_0000000", _tone(2))
+            _put_pre(paths, "knock", "knock_a_0000000", _tone(3))
+            _put_pre(paths, "fire_alarm", "fire_alarm_a_0000000", _tone(4))
+
+        _, rows, dropped = _split_only(Path(tmp), plant)
+        kept = sorted(r["stem"] for r in rows if r["class"] == "doorbell")
+        assert kept == ["doorbell_a_0000000", "doorbell_z_0000000"], kept
+        reasons = {r["stem"]: r for r in dropped}
+        assert set(reasons) == {"doorbell_b_0000000", "doorbell_c_0000000"}
+        for r in reasons.values():
+            assert r["reason"] == split.REASON_SAME_CLASS_DUP
+            assert r["kept_stem"] == "doorbell_a_0000000"   # 어느 것이 살았는지까지 기록
+            assert r["md5"] and r["class"] == "doorbell"
+        return kept, dropped
+
+
+def test_dedup_digital_silence_removed():
+    """T2 — 디코딩 샘플 전부 0(디지털 무음)은 제거된다."""
+    silence = np.zeros(int(0.5 * config.SAMPLE_RATE), dtype=np.float32)
+    with tempfile.TemporaryDirectory() as tmp:
+        def plant(paths):
+            _put_pre(paths, "doorbell", "doorbell_SILENT_0000000", silence)
+            _put_pre(paths, "doorbell", "doorbell_ok_0000000", _tone(5))
+            _put_pre(paths, "knock", "knock_ok_0000000", _tone(6))
+            _put_pre(paths, "fire_alarm", "fire_alarm_ok_0000000", _tone(7))
+
+        _, rows, dropped = _split_only(Path(tmp), plant)
+        assert "doorbell_SILENT_0000000" not in {r["stem"] for r in rows}
+        assert [r["reason"] for r in dropped if r["stem"] == "doorbell_SILENT_0000000"] \
+            == [split.REASON_SILENCE]
+        # 무음은 「유지본 1개」가 없다 — kept_stem 은 비어 있어야 한다.
+        assert all(r["kept_stem"] == "" for r in dropped)
+        return rows, dropped
+
+
+def test_dedup_class_cross_removes_both_sides():
+    """T3 — 같은 내용이 2개 클래스 폴더에 있으면 **양쪽 모두** 제거(한쪽 유지 아님)."""
+    shared = _tone(8)
+    with tempfile.TemporaryDirectory() as tmp:
+        def plant(paths):
+            _put_pre(paths, "doorbell", "cross_src_0000000", shared)
+            _put_pre(paths, "fire_alarm", "cross_src_0000000", shared)
+            _put_pre(paths, "doorbell", "doorbell_ok_0000000", _tone(9))
+            _put_pre(paths, "knock", "knock_ok_0000000", _tone(10))
+            _put_pre(paths, "fire_alarm", "fire_alarm_ok_0000000", _tone(11))
+
+        _, rows, dropped = _split_only(Path(tmp), plant)
+        assert "cross_src_0000000" not in {r["stem"] for r in rows}, "교차분이 한쪽이라도 살아남음"
+        crossed = [r for r in dropped if r["stem"] == "cross_src_0000000"]
+        assert len(crossed) == 2, f"교차 제거 {len(crossed)}건 — 양쪽 모두여야 한다"
+        assert {r["class"] for r in crossed} == {"doorbell", "fire_alarm"}
+        assert all(r["reason"] == split.REASON_CLASS_CROSS for r in crossed)
+        return rows, dropped
+
+
+def _assignments(paths) -> dict:
+    return {(r["class"], r["source_key"]): r["split"] for r in split.load_split_manifest(paths)}
+
+
+def test_new_source_does_not_move_existing_assignments():
+    """T4 ★ 안정성 — doorbell 에 source 1개를 더해도 **기존 모든 클래스의 기존 배정 불변**.
+
+    기각된 설계(클래스 공유 random.Random(SEED) + shuffle)에서는 doorbell source 1개
+    추가가 knock 클립 124/714 를 흔들었다(decisions.md 5.2(c) 실측).
+    """
+    def plant_base(paths):
+        for ci, cls in enumerate(config.CLASSES):
+            for i in range(8):
+                for k in range(2):
+                    _put_pre(paths, cls, f"{cls}_src{i:02d}_30.0_40.0_{k*3000:07d}",
+                             _tone(1000 + 100 * ci + 10 * i + k))
+
+    with tempfile.TemporaryDirectory() as tmp_a, tempfile.TemporaryDirectory() as tmp_b:
+        paths_a, _, _ = _split_only(Path(tmp_a), plant_base)
+        before = _assignments(paths_a)
+
+        def plant_plus(paths):
+            plant_base(paths)
+            for k in range(2):
+                _put_pre(paths, "doorbell", f"doorbell_srcNEW_30.0_40.0_{k*3000:07d}",
+                         _tone(999_001 + k))
+
+        paths_b, _, _ = _split_only(Path(tmp_b), plant_plus)
+        after = _assignments(paths_b)
+
+        moved = {k: (before[k], after[k]) for k in before if after.get(k) != before[k]}
+        assert not moved, f"새 source 추가로 기존 배정이 바뀜: {sorted(moved)[:5]}"
+        assert set(after) - set(before) == {("doorbell", "doorbell_srcNEW_30.0_40.0")}
+        return len(before), len(after)
+
+
+def test_direct_recording_unit_group_key():
+    """T5 — direct_doorbell_A_01 · _A_02 · _B_01 → 유닛 A 2개 · B 1개(테이크는 같은 그룹)."""
+    assert config.source_key("direct_doorbell_A_01") == "direct_doorbell_A"
+    assert config.source_key("direct_doorbell_A_02") == "direct_doorbell_A"
+    assert config.source_key("direct_doorbell_B_01") == "direct_doorbell_B"
+    # 조각 suffix 가 붙어도 유닛으로 접힌다(조각 → 테이크 순서로 1회씩).
+    assert config.source_key("direct_doorbell_A_01_0003000") == "direct_doorbell_A"
+    # 클래스명 underscore(fire_alarm) 견고성
+    assert config.source_key("direct_fire_alarm_C_10") == "direct_fire_alarm_C"
+    # 공개데이터 stem 은 이 분기를 타지 않는다(기존 규칙 무변경)
+    assert config.source_key("doorbell_src00_30.0_40.0_0003000") == "doorbell_src00_30.0_40.0"
+
+    # dtw_doorbell 의 unit_id() 와 같은 결과(양쪽 규칙 고정 — 그쪽은 파일명, 여기는 stem)
+    from ml.experiments.dtw_doorbell.experiment import group_key as dtw_group_key
+    for stem in ("direct_doorbell_A_01", "direct_doorbell_A_02", "direct_doorbell_B_01",
+                 "direct_fire_alarm_C_10"):
+        assert config.source_key(stem) == dtw_group_key(f"{stem}.wav"), stem
+
+    with tempfile.TemporaryDirectory() as tmp:
+        def plant(paths):
+            for stem, seed in (("direct_doorbell_A_01", 21), ("direct_doorbell_A_02", 22),
+                               ("direct_doorbell_B_01", 23)):
+                _put_pre(paths, "doorbell", stem, _tone(seed))
+            _put_pre(paths, "knock", "knock_ok_0000000", _tone(24))
+            _put_pre(paths, "fire_alarm", "fire_alarm_ok_0000000", _tone(25))
+
+        _, rows, _ = _split_only(Path(tmp), plant)
+        groups: dict[str, list[str]] = {}
+        for r in rows:
+            if r["class"] == "doorbell":
+                groups.setdefault(r["source_key"], []).append(r["stem"])
+        assert set(groups) == {"direct_doorbell_A", "direct_doorbell_B"}, groups
+        assert len(groups["direct_doorbell_A"]) == 2 and len(groups["direct_doorbell_B"]) == 1
+        # 유닛 A 의 두 테이크는 같은 split (그룹 분할의 실제 효과)
+        a_splits = {r["split"] for r in rows if r["source_key"] == "direct_doorbell_A"}
+        assert len(a_splits) == 1, a_splits
+        return groups
+
+
+def test_content_leakage_guard_catches_cross_split_content():
+    """T6 — 같은 내용 해시가 두 split 에 있으면 내용 가드가 즉시 실패시킨다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        same = _tone(31)
+        a = root / "train" / "x.wav"
+        b = root / "test" / "y.wav"          # 이름은 달라도 내용이 같다 = stem 가드 사각지대
+        save_wav(a, same)
+        save_wav(b, same)
+        rows = [
+            {"filepath": str(a), "class": "doorbell", "split": "train",
+             "origin": "original", "source_stem": "x"},
+            {"filepath": str(b), "class": "doorbell", "split": "test",
+             "origin": "original", "source_stem": "y"},
+        ]
+        # 기존 stem 가드는 통과한다 — 그래서 내용 가드가 따로 필요하다.
+        assert_no_leakage(rows)
+        try:
+            assert_no_content_leakage(rows)
+        except ContentLeakageError as exc:
+            msg = str(exc)
+            assert "train" in msg and "test" in msg and "x" in msg and "y" in msg
+            assert len([t for t in msg.split() if len(t) == 32 and all(
+                c in "0123456789abcdef" for c in t)]) >= 1, "예외 메시지에 해시가 없음"
+        else:
+            raise AssertionError("내용 누수를 못 잡았다")
+
+        # 같은 split 안이면 통과(가드가 과잉 검출하지 않는지 — 대조군)
+        rows[1]["split"] = "train"
+        counts = assert_no_content_leakage(rows)
+        assert counts["train"] == 1 and counts["test"] == 0
+        return counts
+
+
+def test_split_is_reproducible():
+    """T7 — 같은 입력으로 2회 실행하면 split·dedup manifest 가 완전히 동일하다."""
+    def plant(paths):
+        dup = _tone(41)
+        for ci, cls in enumerate(config.CLASSES):
+            for i in range(6):
+                _put_pre(paths, cls, f"{cls}_src{i:02d}_0000000", _tone(500 + 10 * ci + i))
+        _put_pre(paths, "knock", "knock_dupA_0000000", dup)
+        _put_pre(paths, "knock", "knock_dupB_0000000", dup)
+
+    with tempfile.TemporaryDirectory() as t1, tempfile.TemporaryDirectory() as t2:
+        _, rows1, drop1 = _split_only(Path(t1), plant)
+        _, rows2, drop2 = _split_only(Path(t2), plant)
+        key1 = sorted((r["class"], r["stem"], r["split"], r["source_key"]) for r in rows1)
+        key2 = sorted((r["class"], r["stem"], r["split"], r["source_key"]) for r in rows2)
+        assert key1 == key2, "동일 입력 2회 실행 결과가 다름"
+        assert sorted((r["class"], r["stem"], r["reason"]) for r in drop1) == \
+            sorted((r["class"], r["stem"], r["reason"]) for r in drop2)
+        assert len(drop1) == 1 and drop1[0]["reason"] == split.REASON_SAME_CLASS_DUP
+        return len(rows1), len(drop1)
+
+
 def _main() -> int:
     counts, guard = test_pipeline_end_to_end()
     print("PASS — test_pipeline_end_to_end")
@@ -297,6 +516,22 @@ def _main() -> int:
     print(f"  02 stale 빈클립 auto-clean → 05 부활 0 (fire_alarm ok={sstats['fire_alarm']['ok']})")
     test_no_clean_preserves_stale()
     print("PASS — test_no_clean_preserves_stale (--no-clean 는 stale 보존)")
+    kept, dropped = test_dedup_same_class_duplicate_keeps_one()
+    print(f"PASS — T1 test_dedup_same_class_duplicate_keeps_one (유지 {kept}, 제거 {len(dropped)})")
+    test_dedup_digital_silence_removed()
+    print("PASS — T2 test_dedup_digital_silence_removed")
+    test_dedup_class_cross_removes_both_sides()
+    print("PASS — T3 test_dedup_class_cross_removes_both_sides (양쪽 제거)")
+    n_before, n_after = test_new_source_does_not_move_existing_assignments()
+    print(f"PASS — T4 test_new_source_does_not_move_existing_assignments "
+          f"(기존 {n_before} source 배정 변경 0, 신규 +{n_after - n_before})")
+    groups = test_direct_recording_unit_group_key()
+    print(f"PASS — T5 test_direct_recording_unit_group_key "
+          f"(유닛 { {k: len(v) for k, v in sorted(groups.items())} })")
+    test_content_leakage_guard_catches_cross_split_content()
+    print("PASS — T6 test_content_leakage_guard_catches_cross_split_content")
+    n_rows, n_drop = test_split_is_reproducible()
+    print(f"PASS — T7 test_split_is_reproducible (2회 동일: {n_rows} rows / 제거 {n_drop})")
     for split_name in ("train", "val", "test"):
         row = counts[split_name]
         print(f"  {split_name:<5} " + " ".join(f"{c}={row[c]}" for c in config.CLASSES)

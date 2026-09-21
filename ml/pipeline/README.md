@@ -1,11 +1,13 @@
 # ddingdong ML 데이터 파이프라인
 
-`01_clips` → `02_preprocessed` → **파일단위 split** → `03_augmented`(train만) → `05_final_dataset`
+`01_clips` → `02_preprocessed` → **내용 중복 제거 + 원본단위 split** → `03_augmented`(train만) → `05_final_dataset`
 재현 가능한 waveform 전처리·증강·분할 파이프라인. (decisions.md 카테고리 4·5 SSoT)
 
 - 출력은 **waveform(16kHz mono Int16) 유지** — 멜스펙트로그램/SpecAugment 변환은 학습 스크립트 몫(카테고리 4).
-- 분할은 **증강 이전, 파일(stem) 단위** — data leakage 방지(카테고리 5). train에만 증강, val/test는 원본만.
-- 향후 `04_direct_recording` 녹음이 `01_clips`로 유입돼도 **코드 수정 0**, 재실행만.
+- 분할은 **증강 이전, 원본(source) 단위 그룹 분할** — data leakage 방지(카테고리 5). train에만 증강, val/test는 원본만.
+- split 직전에 **내용(md5) 중복·디지털 무음·클래스 교차 클립을 split 대상에서 제외**(D1). 제외 내역 = `manifests/dedup_manifest.csv`. **`02_preprocessed`의 파일은 지우지 않는다**(원본 보존).
+- source 배정은 **셔플이 아니라 그룹 키 해시 고정**(D2) — **새 source가 들어와도 기존 source 배정이 바뀌지 않는다**.
+- 향후 `04_direct_recording` 녹음이 `01_clips`로 유입돼도 **코드 수정 0**, 재실행만. 직접녹음은 **테이크가 아니라 유닛**이 한 그룹이다(D3).
 
 > ⚠️ 실제 데이터셋은 repo **밖 형제 폴더**에 있고 Claude Code는 OS 접근 차단(EPERM)이라 실행 불가.
 > 실제 풀 실행은 **학부생이 자기 셸에서** 수행. (repo 안에서는 합성 더미로만 로직 검증됨.)
@@ -20,7 +22,7 @@
   02_preprocessed/                             # ← 파이프라인 출력
   03_augmented/                                # ← 파이프라인 출력 (train 파생만)
   05_final_dataset/{train,val,test}/{class}/   # ← 최종 출력
-  manifests/split_manifest.csv, final_manifest.csv
+  manifests/split_manifest.csv, dedup_manifest.csv, final_manifest.csv
 ```
 
 파이프라인은 `00_source_raw` / `01_extracted` / `04_direct_recording`을 **건드리지 않음**.
@@ -46,8 +48,11 @@ python -m ml.pipeline.run_all --data-root "…/ddingdong_dataset"
 ### 04 직접 녹음 유입 시 재실행
 
 녹음 클립을 `01_clips/{class}/`에 추가한 뒤 **위 원커맨드 재실행**만 하면 됨.
-분할은 재현 seed(`config.SEED`)로 결정적 — 단, 클립 집합이 바뀌면 배정도 바뀌므로,
-기존 split을 고정하려면 `manifests/split_manifest.csv`를 보존/재사용하도록 확장할 것(현재는 매 실행 재생성).
+분할은 `sha256(f"{SEED}:{class}:{group_key}")`를 `SPLIT_RATIO` 누적 경계에 사상하는 **순수 함수**(`split.assign_split`)라
+결정적이고, **새 source가 늘어도 기존 source의 배정은 그대로**다(기각된 설계 = 클래스 공유 `random.Random(SEED)` + 셔플.
+doorbell source 1개 추가만으로 knock 클립 124/714가 흔들렸다 — decisions.md 5.2(c) 실측).
+⚠️ 비율은 **기대값**이다 — 그룹 수가 적으면(직접녹음 4유닛 등) 배분이 거칠고 특정 split이 0일 수 있다.
+🔴 내용이 바뀐 클립이 들어오면 dedup 결과와 그에 딸린 수치(33.2·33.6·33.7)는 **새 test set 위의 값**이 된다.
 
 ## 의존성
 
@@ -94,7 +99,7 @@ pytest ml/pipeline/tests/
 | Step | 모듈 | 내용 |
 |---|---|---|
 | 1 | `preprocess.py` | 16k mono 검증(위반 스킵) + peak 정규화 → `02_preprocessed` |
-| 2 | `split.py` | 파일(stem) 단위 train/val/test 분할(증강 前) → `split_manifest.csv` |
+| 2 | `split.py` | 내용 중복 제거 → 원본(source) 단위 해시 고정 배정(증강 前) → `split_manifest.csv` + `dedup_manifest.csv` |
 | 3 | `augment.py` | **train만** waveform 증강(time-stretch/BG noise SNR/volume/pitch) → `03_augmented` |
 | 4 | `assemble.py` | train=원본+증강 / val·test=원본만 → `05_final_dataset` + `final_manifest.csv` |
-| 5 | `guards.py` | 누수 가드: train stem ∩ (val∪test) = ∅ assert |
+| 5 | `guards.py` | 누수 가드 2층: ① train stem ∩ (val∪test) = ∅ ② 같은 내용 해시가 2개 이상 split에 존재하면 즉시 실패 |
