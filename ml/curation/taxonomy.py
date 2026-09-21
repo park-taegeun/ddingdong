@@ -1,0 +1,267 @@
+"""FSD50K 200 라벨 → `other`(OOD 네거티브) 범주 배정표 — 전건 수기 배정(SSoT).
+
+배정 근거는 README 「라벨 배정 근거」 절. 요약:
+
+- `target` : 우리 3클래스(doorbell · knock · fire_alarm)와 같은 소리. 무조건 제외.
+- `hold`   : target 과 음향적으로 인접하지만 온톨로지상 target 의 자식이 아니라
+             라벨만으로 분리할 수 없는 것. 후보에서 빼되 「보류」로 따로 집계한다.
+             (청취 검수 뒤 다음 회차에 편입 여부를 정한다.)
+- `parent` : 번짐(smearing)으로 올라붙은 상위 노드. 그 자체로는 범주를 결정하지
+             못하므로 선택 라벨이 되지 않는다. 자식 라벨 유무로 분기한다.
+- a/b/c/d  : 위임 §5 Step 1 의 포함 범주 ⓐ 음성·대화 / ⓑ 방송·음악 /
+             ⓒ 생활음 / ⓓ hard negative.
+
+🔴 부모 라벨은 제외 기준으로 쓰지 않는다. Knock · Doorbell 의 부모는 Door 이고
+Doorbell · Siren 의 부모는 Alarm 인데(dev.csv 동시출현 100% 포함으로 실측),
+부모로 제외하면 Slam · Sliding_door(문 형제)와 Telephone · Ringtone(경보 형제)
+같은 정작 필요한 hard negative 가 통째로 사라진다.
+"""
+
+from __future__ import annotations
+
+# 범주 코드 → 표기
+CATEGORY_LABEL: dict[str, str] = {
+    "a": "ⓐ 음성·대화",
+    "b": "ⓑ 방송·음악",
+    "c": "ⓒ 생활음",
+    "d": "ⓓ hard negative",
+}
+
+# 선택 라벨 우선순위(작을수록 우선). hard negative 가 가장 귀하다.
+CATEGORY_PRIORITY: dict[str, int] = {"d": 0, "a": 1, "b": 2, "c": 3}
+
+# ── 200 라벨 전건 배정 ────────────────────────────────────────────────────────
+ASSIGNMENT: dict[str, str] = {
+    "Accelerating_and_revving_and_vroom": "c",
+    "Accordion": "b",
+    "Acoustic_guitar": "b",
+    "Aircraft": "c",
+    "Alarm": "parent",
+    "Animal": "c",
+    "Applause": "a",
+    "Bark": "c",
+    "Bass_drum": "b",
+    "Bass_guitar": "b",
+    "Bathtub_(filling_or_washing)": "c",
+    "Bell": "parent",
+    "Bicycle": "c",
+    "Bicycle_bell": "hold",
+    "Bird": "c",
+    "Bird_vocalization_and_bird_call_and_bird_song": "c",
+    "Boat_and_Water_vehicle": "c",
+    "Boiling": "c",
+    "Boom": "c",
+    "Bowed_string_instrument": "b",
+    "Brass_instrument": "b",
+    "Breathing": "a",
+    "Burping_and_eructation": "a",
+    "Bus": "c",
+    "Buzz": "d",
+    "Camera": "d",
+    "Car": "c",
+    "Car_passing_by": "c",
+    "Cat": "c",
+    "Chatter": "a",
+    "Cheering": "a",
+    "Chewing_and_mastication": "a",
+    "Chicken_and_rooster": "c",
+    "Child_speech_and_kid_speaking": "a",
+    "Chime": "hold",
+    "Chink_and_clink": "c",
+    "Chirp_and_tweet": "c",
+    "Chuckle_and_chortle": "a",
+    "Church_bell": "hold",
+    "Clapping": "a",
+    "Clock": "d",
+    "Coin_(dropping)": "c",
+    "Computer_keyboard": "d",
+    "Conversation": "a",
+    "Cough": "a",
+    "Cowbell": "b",
+    "Crack": "c",
+    "Crackle": "c",
+    "Crash_cymbal": "b",
+    "Cricket": "c",
+    "Crow": "c",
+    "Crowd": "a",
+    "Crumpling_and_crinkling": "c",
+    "Crushing": "c",
+    "Crying_and_sobbing": "a",
+    "Cupboard_open_or_close": "d",
+    "Cutlery_and_silverware": "c",
+    "Cymbal": "b",
+    "Dishes_and_pots_and_pans": "c",
+    "Dog": "c",
+    "Domestic_animals_and_pets": "c",
+    "Domestic_sounds_and_home_sounds": "parent",
+    "Door": "parent",
+    "Doorbell": "target",
+    "Drawer_open_or_close": "d",
+    "Drill": "c",
+    "Drip": "c",
+    "Drum": "b",
+    "Drum_kit": "b",
+    "Electric_guitar": "b",
+    "Engine": "c",
+    "Engine_starting": "c",
+    "Explosion": "c",
+    "Fart": "a",
+    "Female_singing": "a",
+    "Female_speech_and_woman_speaking": "a",
+    "Fill_(with_liquid)": "c",
+    "Finger_snapping": "a",
+    "Fire": "c",
+    "Fireworks": "c",
+    "Fixed-wing_aircraft_and_airplane": "c",
+    "Fowl": "c",
+    "Frog": "c",
+    "Frying_(food)": "c",
+    "Gasp": "a",
+    "Giggle": "a",
+    "Glass": "c",
+    "Glockenspiel": "hold",
+    "Gong": "b",
+    "Growling": "c",
+    "Guitar": "b",
+    "Gull_and_seagull": "c",
+    "Gunshot_and_gunfire": "c",
+    "Gurgling": "c",
+    "Hammer": "c",
+    "Hands": "a",
+    "Harmonica": "b",
+    "Harp": "b",
+    "Hi-hat": "b",
+    "Hiss": "c",
+    "Human_group_actions": "a",
+    "Human_voice": "parent",
+    "Idling": "c",
+    "Insect": "c",
+    "Keyboard_(musical)": "b",
+    "Keys_jangling": "d",
+    "Knock": "target",
+    "Laughter": "a",
+    "Liquid": "c",
+    "Livestock_and_farm_animals_and_working_animals": "c",
+    "Male_singing": "a",
+    "Male_speech_and_man_speaking": "a",
+    "Mallet_percussion": "hold",
+    "Marimba_and_xylophone": "hold",
+    "Mechanical_fan": "c",
+    "Mechanisms": "d",
+    "Meow": "c",
+    "Microwave_oven": "d",
+    "Motor_vehicle_(road)": "c",
+    "Motorcycle": "c",
+    "Music": "b",
+    "Musical_instrument": "b",
+    "Ocean": "c",
+    "Organ": "b",
+    "Packing_tape_and_duct_tape": "c",
+    "Percussion": "b",
+    "Piano": "b",
+    "Plucked_string_instrument": "b",
+    "Pour": "c",
+    "Power_tool": "c",
+    "Printer": "d",
+    "Purr": "c",
+    "Race_car_and_auto_racing": "c",
+    "Rail_transport": "c",
+    "Rain": "c",
+    "Raindrop": "c",
+    "Ratchet_and_pawl": "d",
+    "Rattle": "c",
+    "Rattle_(instrument)": "b",
+    "Respiratory_sounds": "a",
+    "Ringtone": "d",
+    "Run": "d",
+    "Sawing": "c",
+    "Scissors": "c",
+    "Scratching_(performance_technique)": "b",
+    "Screaming": "a",
+    "Screech": "c",
+    "Shatter": "c",
+    "Shout": "a",
+    "Sigh": "a",
+    "Singing": "a",
+    "Sink_(filling_or_washing)": "c",
+    "Siren": "target",
+    "Skateboard": "c",
+    "Slam": "d",
+    "Sliding_door": "d",
+    "Snare_drum": "b",
+    "Sneeze": "a",
+    "Speech": "a",
+    "Speech_synthesizer": "a",
+    "Splash_and_splatter": "c",
+    "Squeak": "d",
+    "Stream": "c",
+    "Strum": "b",
+    "Subway_and_metro_and_underground": "c",
+    "Tabla": "b",
+    "Tambourine": "b",
+    "Tap": "hold",
+    "Tearing": "c",
+    "Telephone": "d",
+    "Thump_and_thud": "hold",
+    "Thunder": "c",
+    "Thunderstorm": "c",
+    "Tick": "d",
+    "Tick-tock": "d",
+    "Toilet_flush": "c",
+    "Tools": "c",
+    "Traffic_noise_and_roadway_noise": "c",
+    "Train": "c",
+    "Trickle_and_dribble": "c",
+    "Truck": "c",
+    "Trumpet": "b",
+    "Typewriter": "d",
+    "Typing": "d",
+    "Vehicle": "c",
+    "Vehicle_horn_and_car_horn_and_honking": "d",
+    "Walk_and_footsteps": "d",
+    "Water": "c",
+    "Water_tap_and_faucet": "c",
+    "Waves_and_surf": "c",
+    "Whispering": "a",
+    "Whoosh_and_swoosh_and_swish": "c",
+    "Wild_animals": "c",
+    "Wind": "c",
+    "Wind_chime": "hold",
+    "Wind_instrument_and_woodwind_instrument": "b",
+    "Wood": "hold",
+    "Writing": "c",
+    "Yell": "a",
+    "Zipper_(clothing)": "c",
+}
+
+# ── 부모 노드 분기 ────────────────────────────────────────────────────────────
+# dev.csv 동시출현 실측(자식 라벨이 붙은 클립은 100% 부모 라벨도 함께 갖는다).
+# 부모만 붙고 자식이 하나도 없는 클립 = 「미분화」.
+
+# Alarm 미분화 = 어떤 경보인지 라벨로 갈리지 않는 경보음 → fire_alarm 과 구별 불가 ⇒ 제외.
+ALARM_CHILDREN: frozenset[str] = frozenset({
+    "Telephone", "Vehicle_horn_and_car_horn_and_honking", "Doorbell",
+    "Ringtone", "Siren", "Bicycle_bell",
+})
+# Door 미분화 = 문 관련이라는 것만 아는 소리 → 노크일 수 있다 ⇒ 보류.
+DOOR_CHILDREN: frozenset[str] = frozenset({"Slam", "Knock", "Sliding_door", "Doorbell"})
+# Bell 미분화 = 종소리 일반 → 초인종 딩동과 음색이 겹친다 ⇒ 보류.
+BELL_CHILDREN: frozenset[str] = frozenset({
+    "Cowbell", "Chime", "Church_bell", "Bicycle_bell", "Wind_chime",
+})
+
+# 미분화일 때의 처분. 나머지 부모(Domestic_sounds… · Human_voice)는 자식이
+# 없어도 위험하지 않으므로 그냥 선택 라벨에서만 빠진다.
+PARENT_RULES: dict[str, tuple[frozenset[str], str]] = {
+    "Alarm": (ALARM_CHILDREN, "target"),
+    "Door": (DOOR_CHILDREN, "hold"),
+    "Bell": (BELL_CHILDREN, "hold"),
+}
+
+# 위임 §5 ⓓ 목록 중 FSD50K 어휘에 없는 것 → 대체 라벨. 보고용.
+MISSING_HARD_NEGATIVES: dict[str, tuple[str, ...]] = {
+    "Beep": ("Buzz", "Tick", "Printer", "Camera", "Microwave_oven"),
+    "Timer": ("Clock", "Tick-tock", "Tick"),
+    "Telephone bell": ("Telephone",),
+    "Footsteps": ("Walk_and_footsteps", "Run"),
+}
