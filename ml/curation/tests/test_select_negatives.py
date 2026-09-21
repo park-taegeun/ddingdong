@@ -127,6 +127,13 @@ def t1_target_excluded(fx: dict, rows: list[dict]) -> None:
     # 규모 상한과 무관하게 「제외되지 않는다」를 규칙 층에서 직접 본다.
     assert sn.classify(("Slam", "Door", "Domestic_sounds_and_home_sounds"))[0] == "keep"
     assert sn.classify(("Telephone", "Alarm"))[0] == "keep"
+    # target 은 hold 보다 앞선다 — 라벨 나열 순서로 판정이 뒤집히면 안 된다.
+    assert sn.classify(("Wood", "Knock", "Door"))[0] == "target"
+    assert sn.classify(("Knock", "Wood", "Door"))[0] == "target"
+    # 미분화 Alarm(부모 규칙 target)도 hold 라벨보다 앞선다.
+    assert sn.classify(("Glockenspiel", "Alarm"))[0] == "target"
+    # hold 만 있으면 그대로 보류.
+    assert sn.classify(("Wood", "Domestic_sounds_and_home_sounds"))[0] == "hold"
 
 
 def t2_positive_excluded(fx: dict, rows: list[dict]) -> None:

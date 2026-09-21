@@ -134,15 +134,17 @@ def classify(labels: tuple[str, ...],
     상위 노드가 아니라 잎에 가까운 쪽)을 고른다. df 가 없으면 이름순으로 떨어진다.
     """
     present = set(labels)
-    for label in labels:
-        kind = ASSIGNMENT[label]
-        if kind == "target":
-            return "target", None, label
-        if kind == "hold":
-            return "hold", None, label
-    for parent, (children, verdict) in PARENT_RULES.items():
-        if parent in present and not (present & children):
-            return verdict, None, f"{parent}(미분화)"
+    # target > hold. 라벨 나열 순서로 판정이 흔들리면 안 되고, 미분화 Alarm 처럼
+    # 부모 규칙에서 나온 target 도 hold 라벨보다 앞선다(제외 ① 은 확정, 보류는 재검토).
+    verdicts = [(ASSIGNMENT[label], label) for label in labels
+                if ASSIGNMENT[label] in ("target", "hold")]
+    verdicts += [(verdict, f"{parent}(미분화)")
+                 for parent, (children, verdict) in PARENT_RULES.items()
+                 if parent in present and not (present & children)]
+    for kind in ("target", "hold"):
+        for verdict, reason in verdicts:
+            if verdict == kind:
+                return kind, None, reason
     scored = [
         (CATEGORY_PRIORITY[ASSIGNMENT[label]], (df or {}).get(label, 0), label)
         for label in labels

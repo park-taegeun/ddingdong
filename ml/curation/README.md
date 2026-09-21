@@ -44,7 +44,8 @@ python -m ml.curation.select_negatives \
 
 **보류** — target 과 음향적으로 인접하지만 라벨만으로 못 가르는 것.
 후보에서 빼되 집계에는 남긴다: `Tap` · `Chime` · `Wind_chime` · `Bicycle_bell` ·
-`Church_bell` · 미분화 `Door` · 미분화 `Bell`.
+`Church_bell` · `Glockenspiel` · `Marimba_and_xylophone` · `Mallet_percussion` ·
+`Thump_and_thud` · `Wood` · 미분화 `Door` · 미분화 `Bell`.
 
 ## 라벨 배정 근거
 
@@ -71,6 +72,23 @@ dev.csv 라벨은 온톨로지 부모 방향으로 번져 있다. 로컬에 `ont
 대신 **미분화** 만 잡는다 — 부모만 붙고 하위 라벨이 하나도 없는 클립. 미분화
 `Alarm` 은 어떤 경보인지 갈리지 않으므로 `fire_alarm` 과 구별할 수 없어 **제외**,
 미분화 `Door` · `Bell` 은 노크·딩동일 수 있어 **보류** 다.
+
+### 음색 인접 보류 5건 (2026-09-21 보정)
+
+온톨로지상 target 의 자식이 아니지만 **음색이 target 과 인접해** 라벨만으로는
+`other` 라고 단정할 수 없는 5건을 보류로 옮겼다. `Chime` · `Tap` 을 보류로 둔 것과
+같은 근거이며, 잘못 넣으면 E4 의 target recall 을 직접 깎는다.
+
+| 라벨 | 이전 | 인접 target | 근거 |
+| --- | --- | --- | --- |
+| `Glockenspiel` | ⓑ | doorbell | 초인종 "딩동" 차임과 금속 타건 음색이 인접 |
+| `Marimba_and_xylophone` | ⓑ | doorbell | 〃 (건반 타악 배음 구조) |
+| `Mallet_percussion` | ⓑ | doorbell | 위 둘의 상위 계열 — 같이 옮기지 않으면 새어 든다 |
+| `Thump_and_thud` | ⓓ | knock | 문 두드림 = 둔탁한 타격음 그 자체 |
+| `Wood` | ⓒ | knock | 노크 대상이 나무 문 — 나무 둔탁음과 겹친다 |
+
+`Speech_synthesizer` 는 **무변경**(ⓐ) — 인터폰 전자 음성 쪽이라 오히려 필요한
+hard negative 일 수 있어 청취 검수 뒤에 판단한다.
 
 ### 라벨 불완전 대응 (PP 우선)
 
