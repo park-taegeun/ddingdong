@@ -84,8 +84,13 @@ SPECAUGMENT: dict[str, object] = {
     "applied_at": "training",  # NOT this pipeline
 }
 
-# 클래스 불균형 (카테고리 5) — 증강 배수 폭주 대신 가중치. 학습 스크립트가 소비.
-SAMPLE_WEIGHT_RANGE: tuple[float, float] = (1.5, 2.0)  # 한국 환경음 가중
+# 클래스 불균형 (카테고리 5) — 증강 배수 폭주 대신 가중치.
+# 🔴 소비처 0건 (decisions.md 카테고리 5 머리 「2026-09-17 PoC-(51) 정정」, 실측 전수 grep):
+#   이 상수는 여기 정의만 있고 `ml/` · `server/` 어디에서도 읽지 않는다. 실제로 학습에
+#   걸리는 것은 `ml/training/data.compute_class_weights` = sklearn `balanced`
+#   (n_total / (n_classes · n_c)) 자동 산출이며, 「한국 환경음 1.5~2.0배」와는 **다른
+#   메커니즘**이다. ⚠️ 구현할지 서술만 맞출지는 사용자 판단 대기 — 값·존재는 무변경이다.
+SAMPLE_WEIGHT_RANGE: tuple[float, float] = (1.5, 2.0)  # 한국 환경음 가중(미소비 — 위 참조)
 
 # --------------------------------------------------------------------------
 # 분할 (카테고리 5: "파일 단위 분할, data leakage 방지")
@@ -105,6 +110,15 @@ SEED: int = 42
 #     "딱 하나"만 제거한다.
 PIECE_SUFFIX_PATTERN: re.Pattern[str] = re.compile(r"_\d{7}$")
 
+# 직접녹음 그룹 키 규칙 — decisions.md 5.2(b) 실측: `direct_{클래스}_{유닛}_{테이크}` 는
+#   끝이 2자리라 PIECE_SUFFIX_PATTERN(`_\d{7}$`)에 걸리지 않아 **테이크 1개 = source 1개**로
+#   흩어졌다. 같은 유닛(같은 초인종)을 다시 누른 테이크는 사실상 같은 원본이므로 train 과
+#   val/test 로 갈리면 누수다 ⇒ 유닛까지를 그룹 키로 삼는다(사용자 결정 D3, 2026-09-21).
+#   규칙은 `ml/experiments/dtw_doorbell` 의 `unit_id()`(맨 끝 `_\d+` 하나 제거)와 같은 결과를
+#   내도록 맞췄다 — 그쪽은 파일명(`.wav` 포함), 여기는 stem 이라는 차이뿐이다.
+DIRECT_RECORDING_PREFIX: str = "direct_"
+DIRECT_TAKE_PATTERN: re.Pattern[str] = re.compile(r"_\d+$")
+
 
 def source_key(stem: str) -> str:
     """파일 stem → 원본(source) key. 맨 끝 조각 suffix(`_\\d{7}$`) 하나만 제거.
@@ -116,8 +130,15 @@ def source_key(stem: str) -> str:
       오인해 `..._30.0_40` 로 잘린다(실측 확인). 여기선 Path 를 다시 씌우지 않고
       정규식만 적용해 그 함정을 회피한다. 호출부는 `p.stem`(확장자 .wav 제거된
       값, 점은 보존)을 그대로 넘긴다.
+    - 직접녹음(`direct_` prefix)은 조각 suffix 제거 **후** 남은 끝 `_{테이크}`(`_\\d+$`)를
+      한 번 더 제거해 **유닛**을 그룹 키로 삼는다(D3). 공개데이터 stem 은 이 분기를 타지
+      않으므로 기존 배정 규칙 무변경이다. 33.3① KOREAN_SOURCE_MARKERS 는 별개 축이며
+      여기서 건드리지 않는다.
     """
-    return PIECE_SUFFIX_PATTERN.sub("", stem, count=1) or stem
+    key = PIECE_SUFFIX_PATTERN.sub("", stem, count=1) or stem
+    if key.startswith(DIRECT_RECORDING_PREFIX):
+        key = DIRECT_TAKE_PATTERN.sub("", key, count=1) or key
+    return key
 
 # --------------------------------------------------------------------------
 # 데이터 루트 — **기본값 fallback 없음**. 명시 인자 또는 env DDINGDONG_DATA_ROOT 필수.
