@@ -84,8 +84,13 @@ SPECAUGMENT: dict[str, object] = {
     "applied_at": "training",  # NOT this pipeline
 }
 
-# 클래스 불균형 (카테고리 5) — 증강 배수 폭주 대신 가중치. 학습 스크립트가 소비.
-SAMPLE_WEIGHT_RANGE: tuple[float, float] = (1.5, 2.0)  # 한국 환경음 가중
+# 클래스 불균형 (카테고리 5) — 증강 배수 폭주 대신 가중치.
+# 🔴 소비처 0건 (decisions.md 카테고리 5 머리 「2026-09-17 PoC-(51) 정정」, 실측 전수 grep):
+#   이 상수는 여기 정의만 있고 `ml/` · `server/` 어디에서도 읽지 않는다. 실제로 학습에
+#   걸리는 것은 `ml/training/data.compute_class_weights` = sklearn `balanced`
+#   (n_total / (n_classes · n_c)) 자동 산출이며, 「한국 환경음 1.5~2.0배」와는 **다른
+#   메커니즘**이다. ⚠️ 구현할지 서술만 맞출지는 사용자 판단 대기 — 값·존재는 무변경이다.
+SAMPLE_WEIGHT_RANGE: tuple[float, float] = (1.5, 2.0)  # 한국 환경음 가중(미소비 — 위 참조)
 
 # --------------------------------------------------------------------------
 # 분할 (카테고리 5: "파일 단위 분할, data leakage 방지")
