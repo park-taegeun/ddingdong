@@ -53,7 +53,9 @@
   --color-status-offline: var(--status-offline);
 
   /* 타이포 — 5060 노안 기준 본문 베이스 한 단계 상향(body 16→17 / caption 14→15).
-     계층 보존: h3 18 > body 17 > caption 15 (토큰 레벨, 개별 하드코딩 없음 — DRY). */
+     계층 보존: h3 18 > body 17 > caption 15 (토큰 레벨, 개별 하드코딩 없음 — DRY).
+     ※ 아래 --text-* 를 추가·삭제·개명하면 lib/utils.ts 의 TEXT_SIZE_TOKENS 도 같이 고칠 것 —
+       빠지면 cn() 병합에서 크기 클래스가 조용히 사라진다(자동 가드 없음, 8.7(c-1)). */
   --text-display: 32px;
   --text-h1: 24px;
   --text-h2: 20px;
