@@ -497,6 +497,19 @@ def test_split_is_reproducible():
         return len(rows1), len(drop1)
 
 
+def test_pitch_markers_per_class():
+    """T9 — pitch 마커는 초인종·노크 직접녹음만(33.3① 규격 화재음 왜곡 회피 · 5.3(b))."""
+    assert config.PITCH_SHIFT_MODE == "korean_only"
+    targets = ("direct_doorbell_home_01_0000000", "direct_knock_a_03_0003000")
+    others = ("direct_fire_alarm_x_01_0000000", "S-211107_S_103_C_013_0001_0000000",
+              "176226_0000000")
+    for stem in targets:
+        assert augment._pitch_targets(stem) == list(config.PITCH_SHIFT_SEMITONES), stem
+    for stem in others:
+        assert augment._pitch_targets(stem) == [], stem
+    return len(targets), len(others)
+
+
 def _main() -> int:
     counts, guard = test_pipeline_end_to_end()
     print("PASS — test_pipeline_end_to_end")
@@ -532,6 +545,8 @@ def _main() -> int:
     print("PASS — T6 test_content_leakage_guard_catches_cross_split_content")
     n_rows, n_drop = test_split_is_reproducible()
     print(f"PASS — T7 test_split_is_reproducible (2회 동일: {n_rows} rows / 제거 {n_drop})")
+    n_t, n_o = test_pitch_markers_per_class()
+    print(f"PASS — T9 test_pitch_markers_per_class (대상 {n_t} / 비대상 {n_o})")
     for split_name in ("train", "val", "test"):
         row = counts[split_name]
         print(f"  {split_name:<5} " + " ".join(f"{c}={row[c]}" for c in config.CLASSES)

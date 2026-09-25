@@ -73,14 +73,15 @@ pip install numpy soundfile librosa scipy
 | `SPECAUGMENT` | freq=10/time=5 — **기록만**, 학습 시점 적용(waveform 단계 아님) |
 | `SPLIT_RATIO` / `SEED` | `(0.70,0.15,0.15)` / `42` |
 
-### pitch shift 적용 대상 (학부생 결정 필요)
+### pitch shift 적용 대상
 
 카테고리 5의 pitch ±2semitone은 **한국 환경음 소스만** 대상. 클립 파일명만으론 소스 태그를
 판별할 수 없어 `PITCH_SHIFT_MODE`로 분리:
 
 - `"korean_only"`(기본): `KOREAN_SOURCE_MARKERS`에 든 부분문자열이 파일명에 포함된 클립에만 적용.
-  **마커가 비어 있으면 적용 대상 0 + 경고 로그** → 한국 환경음(예: AI Hub S_103) 명명 규칙 확인 후
-  `config.KOREAN_SOURCE_MARKERS = ("S_103", …)` 설정.
+  값 = `("direct_doorbell_", "direct_knock_")` — 초인종·노크 직접녹음만(decisions.md 33.3① · 5.3(b)).
+  부분 문자열 매칭이라 `("direct_",)`로 두면 직접녹음 화재경보까지 걸린다(규격 화재음 왜곡 회피와 충돌).
+  AI Hub `S_103`는 대상이 아니다. train 에 직접녹음 클립이 없으면 대상 0 + 안내 로그.
 - `"all"`: 전 클립 적용 · `"none"`: 미적용.
 
 ## 검증 (실제 데이터 없이)

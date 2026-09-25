@@ -124,8 +124,8 @@ def augment(paths: Paths, clean: bool = True) -> dict[str, int]:
     if config.PITCH_SHIFT_MODE == "korean_only" and not pitch_applicable:
         log.info(
             "pitch shift 대상 0 (mode=korean_only, KOREAN_SOURCE_MARKERS=%r). "
-            "직접녹음 유입 전 의도된 정상 상태(decisions.md 33.3-①) — `direct_` prefix 클립 "
-            "유입 후 config.KOREAN_SOURCE_MARKERS=(\"direct_\",) 세팅 시 활성화.",
+            "마커는 세팅돼 있으나 train 에 초인종·노크 직접녹음 클립이 아직 없다 — "
+            "유입 전 정상 상태(decisions.md 33.3-① · 5.3(b)).",
             config.KOREAN_SOURCE_MARKERS,
         )
 

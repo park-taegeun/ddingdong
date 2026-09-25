@@ -69,10 +69,11 @@ PITCH_SHIFT_MODE: str = "korean_only"
 # 한국 환경음 소스 = 직접녹음 클립만(파일명 부분 문자열 매칭). decisions.md 33.3-①(PoC-24) 확정:
 #   · 대상 = 직접녹음만, S_103(AI Hub 화재) 제외 — 최약 클래스 doorbell 수혜 + 규격 화재음 왜곡 회피.
 #   · 위상 = 보조 수단(doorbell 성능의 실제 지렛대는 직접녹음 절대량, 8주차 유입 후 실효).
-#   · 명명 규칙 = 직접녹음 파일명 `direct_` prefix(예: direct_doorbell_001) → 유입 시 아래를
-#     `("direct_",)` 한 줄로 교체하면 활성화. AI Hub 소스(S_103 등)는 prefix 없어 자동 미포함.
-#   · 현재 `()` = 의도적 비움(04_direct_recording=0, 직접녹음 유입 전) → pitch 대상 0, 완전 inert.
-KOREAN_SOURCE_MARKERS: tuple[str, ...] = ()
+#   · 마커 = 클래스별(decisions.md 5.3(b)). 부분 문자열 매칭이라 `("direct_",)` 로 켜면
+#     직접녹음 화재경보(`direct_fire_alarm_…`)까지 pitch 대상이 되어 위 「규격 화재음 왜곡
+#     회피」와 충돌한다 ⇒ 초인종·노크 직접녹음만 겨눈다. AI Hub(S_103)는 prefix 가 없어 미포함.
+#   · 직접녹음 클립이 train 에 아직 없으면 대상 0 이다(마커는 세팅돼 있다).
+KOREAN_SOURCE_MARKERS: tuple[str, ...] = ("direct_doorbell_", "direct_knock_")
 
 # --------------------------------------------------------------------------
 # SpecAugment (카테고리 5) — ★ waveform 단계에서 굽지 않음.
