@@ -497,6 +497,61 @@ def test_split_is_reproducible():
         return len(rows1), len(drop1)
 
 
+def test_aihub_intro_pieces_excluded():
+    """T8 — AI Hub 화재 앞머리 멘트 조각(시작 9000ms 미만)은 제외, 사유 = aihub_intro_speech.
+
+    순서(무음 → 멘트 → 교차 → 중복)는 사유 라벨로만 드러나므로 개수가 아니라 사유를 단언한다.
+    """
+    rec_a, rec_b = "S-211107_S_103_C_013_0001", "S-211014_S_103_C_360_0001"
+    intro = _tone(61)                               # 두 녹음의 0ms 조각이 바이트 동일(33.7(g))
+    silence = np.zeros(int(0.5 * config.SAMPLE_RATE), dtype=np.float32)
+    with tempfile.TemporaryDirectory() as tmp:
+        def plant(paths):
+            for ms in (0, 3000, 6000, 9000):
+                _put_pre(paths, "fire_alarm", f"{rec_a}_{ms:07d}",
+                         intro if ms == 0 else _tone(62 + ms))
+            _put_pre(paths, "fire_alarm", f"{rec_b}_0000000", intro)
+            _put_pre(paths, "fire_alarm", f"{rec_b}_0003000", silence)   # 무음이 먼저
+            _put_pre(paths, "fire_alarm", "S-211107_S_103_C_099_0001", _tone(71))  # suffix 없음
+            _put_pre(paths, "fire_alarm", "fire_alarm_web_0000000", _tone(72))   # 비 AI Hub
+            _put_pre(paths, "doorbell", f"{rec_a}_0000000", _tone(73))   # 대상 클래스 아님
+            _put_pre(paths, "knock", "knock_ok_0000000", _tone(74))
+
+        _, rows, dropped = _split_only(Path(tmp), plant)
+        kept = {(r["class"], r["stem"]) for r in rows}
+        reason = {(r["class"], r["stem"]): r["reason"] for r in dropped}
+        intro_key = split.REASON_AIHUB_INTRO
+        assert reason == {
+            ("fire_alarm", f"{rec_a}_0000000"): intro_key,
+            ("fire_alarm", f"{rec_a}_0003000"): intro_key,
+            ("fire_alarm", f"{rec_a}_0006000"): intro_key,
+            ("fire_alarm", f"{rec_b}_0000000"): intro_key,     # same_class_dup 아님
+            ("fire_alarm", f"{rec_b}_0003000"): split.REASON_SILENCE,
+        }, reason
+        assert kept == {
+            ("fire_alarm", f"{rec_a}_0009000"),
+            ("fire_alarm", "S-211107_S_103_C_099_0001"),
+            ("fire_alarm", "fire_alarm_web_0000000"),
+            ("doorbell", f"{rec_a}_0000000"),
+            ("knock", "knock_ok_0000000"),
+        }, kept
+        assert all(r["kept_stem"] == "" for r in dropped)
+        return len(rows), len(dropped)
+
+
+def test_pitch_markers_per_class():
+    """T9 — pitch 마커는 초인종·노크 직접녹음만(33.3① 규격 화재음 왜곡 회피 · 5.3(b))."""
+    assert config.PITCH_SHIFT_MODE == "korean_only"
+    targets = ("direct_doorbell_home_01_0000000", "direct_knock_a_03_0003000")
+    others = ("direct_fire_alarm_x_01_0000000", "S-211107_S_103_C_013_0001_0000000",
+              "176226_0000000")
+    for stem in targets:
+        assert augment._pitch_targets(stem) == list(config.PITCH_SHIFT_SEMITONES), stem
+    for stem in others:
+        assert augment._pitch_targets(stem) == [], stem
+    return len(targets), len(others)
+
+
 def _main() -> int:
     counts, guard = test_pipeline_end_to_end()
     print("PASS — test_pipeline_end_to_end")
@@ -532,6 +587,10 @@ def _main() -> int:
     print("PASS — T6 test_content_leakage_guard_catches_cross_split_content")
     n_rows, n_drop = test_split_is_reproducible()
     print(f"PASS — T7 test_split_is_reproducible (2회 동일: {n_rows} rows / 제거 {n_drop})")
+    n_rows, n_drop = test_aihub_intro_pieces_excluded()
+    print(f"PASS — T8 test_aihub_intro_pieces_excluded (유지 {n_rows} / 제거 {n_drop})")
+    n_t, n_o = test_pitch_markers_per_class()
+    print(f"PASS — T9 test_pitch_markers_per_class (대상 {n_t} / 비대상 {n_o})")
     for split_name in ("train", "val", "test"):
         row = counts[split_name]
         print(f"  {split_name:<5} " + " ".join(f"{c}={row[c]}" for c in config.CLASSES)

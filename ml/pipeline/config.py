@@ -69,10 +69,11 @@ PITCH_SHIFT_MODE: str = "korean_only"
 # 한국 환경음 소스 = 직접녹음 클립만(파일명 부분 문자열 매칭). decisions.md 33.3-①(PoC-24) 확정:
 #   · 대상 = 직접녹음만, S_103(AI Hub 화재) 제외 — 최약 클래스 doorbell 수혜 + 규격 화재음 왜곡 회피.
 #   · 위상 = 보조 수단(doorbell 성능의 실제 지렛대는 직접녹음 절대량, 8주차 유입 후 실효).
-#   · 명명 규칙 = 직접녹음 파일명 `direct_` prefix(예: direct_doorbell_001) → 유입 시 아래를
-#     `("direct_",)` 한 줄로 교체하면 활성화. AI Hub 소스(S_103 등)는 prefix 없어 자동 미포함.
-#   · 현재 `()` = 의도적 비움(04_direct_recording=0, 직접녹음 유입 전) → pitch 대상 0, 완전 inert.
-KOREAN_SOURCE_MARKERS: tuple[str, ...] = ()
+#   · 마커 = 클래스별(decisions.md 5.3(b)). 부분 문자열 매칭이라 `("direct_",)` 로 켜면
+#     직접녹음 화재경보(`direct_fire_alarm_…`)까지 pitch 대상이 되어 위 「규격 화재음 왜곡
+#     회피」와 충돌한다 ⇒ 초인종·노크 직접녹음만 겨눈다. AI Hub(S_103)는 prefix 가 없어 미포함.
+#   · 직접녹음 클립이 train 에 아직 없으면 대상 0 이다(마커는 세팅돼 있다).
+KOREAN_SOURCE_MARKERS: tuple[str, ...] = ("direct_doorbell_", "direct_knock_")
 
 # --------------------------------------------------------------------------
 # SpecAugment (카테고리 5) — ★ waveform 단계에서 굽지 않음.
@@ -84,13 +85,9 @@ SPECAUGMENT: dict[str, object] = {
     "applied_at": "training",  # NOT this pipeline
 }
 
-# 클래스 불균형 (카테고리 5) — 증강 배수 폭주 대신 가중치.
-# 🔴 소비처 0건 (decisions.md 카테고리 5 머리 「2026-09-17 PoC-(51) 정정」, 실측 전수 grep):
-#   이 상수는 여기 정의만 있고 `ml/` · `server/` 어디에서도 읽지 않는다. 실제로 학습에
-#   걸리는 것은 `ml/training/data.compute_class_weights` = sklearn `balanced`
-#   (n_total / (n_classes · n_c)) 자동 산출이며, 「한국 환경음 1.5~2.0배」와는 **다른
-#   메커니즘**이다. ⚠️ 구현할지 서술만 맞출지는 사용자 판단 대기 — 값·존재는 무변경이다.
-SAMPLE_WEIGHT_RANGE: tuple[float, float] = (1.5, 2.0)  # 한국 환경음 가중(미소비 — 위 참조)
+# 클래스 불균형 (카테고리 5) — 학습에 걸리는 것은 `ml/training/data.compute_class_weights`
+#   = sklearn `balanced`(n_total / (n_classes · n_c)) 자동 산출뿐이다.
+# SAMPLE_WEIGHT_RANGE(한국 환경음 1.5~2.0배)는 제거 — 카테고리 5 「구현하지 않는다」(2026-09-23 결정).
 
 # --------------------------------------------------------------------------
 # 분할 (카테고리 5: "파일 단위 분할, data leakage 방지")
@@ -139,6 +136,17 @@ def source_key(stem: str) -> str:
     if key.startswith(DIRECT_RECORDING_PREFIX):
         key = DIRECT_TAKE_PATTERN.sub("", key, count=1) or key
     return key
+
+
+# AI Hub 화재 녹음 앞머리 멘트 — decisions.md 33.15(d) 사용자 결정(2026-09-24).
+#   AI Hub(`S_103`) 녹음의 앞 약 9초에 안내 멘트(사람 말소리)가 들어 있다(33.15(a) 청취).
+#   ⇒ `fire_alarm` 조각 중 조각 시작(stem 끝 7자리, ms)이 AIHUB_INTRO_END_MS 미만인 것
+#   (녹음당 0 · 3000 · 6000 = 3조각)을 split 대상에서 뺀다(split.select_clips).
+#   판별 = stem 부분 문자열 매칭. 옛 split_manifest 실측: `_S_103_` 포함 stem 은 전부
+#   `fire_alarm`(1,349조각 · 171녹음), 그중 시작 9000ms 미만 513(33.15(b)와 일치).
+AIHUB_INTRO_MARKER: str = "_S_103_"
+AIHUB_INTRO_CLASS: str = "fire_alarm"
+AIHUB_INTRO_END_MS: int = 9000
 
 # --------------------------------------------------------------------------
 # 데이터 루트 — **기본값 fallback 없음**. 명시 인자 또는 env DDINGDONG_DATA_ROOT 필수.
