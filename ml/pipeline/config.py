@@ -116,6 +116,13 @@ PIECE_SUFFIX_PATTERN: re.Pattern[str] = re.compile(r"_\d{7}$")
 DIRECT_RECORDING_PREFIX: str = "direct_"
 DIRECT_TAKE_PATTERN: re.Pattern[str] = re.compile(r"_\d+$")
 
+# Zeroth-Korean(OpenSLR SLR40) 한국어 말소리 네거티브 그룹 키 — 사용자 결정(2026-09-25, 33.14(f)).
+#   조각명 `zeroth_{화자}_{대본}_{발화}_{start_ms:07d}` 에서 조각 suffix 만 떼면 **발화 1개 =
+#   source 1개**가 되어 같은 화자가 train 과 val/test 로 갈린다(누수). 직접녹음 D3(33.12(a))와
+#   같은 원칙으로 화자까지를 그룹 키로 삼는다 ⇒ 끝 `_{대본}_{발화}` 를 한 번 더 제거.
+ZEROTH_PREFIX: str = "zeroth_"
+ZEROTH_UTT_PATTERN: re.Pattern[str] = re.compile(r"_\d+_\d+$")
+
 
 def source_key(stem: str) -> str:
     """파일 stem → 원본(source) key. 맨 끝 조각 suffix(`_\\d{7}$`) 하나만 제거.
@@ -131,10 +138,14 @@ def source_key(stem: str) -> str:
       한 번 더 제거해 **유닛**을 그룹 키로 삼는다(D3). 공개데이터 stem 은 이 분기를 타지
       않으므로 기존 배정 규칙 무변경이다. 33.3① KOREAN_SOURCE_MARKERS 는 별개 축이며
       여기서 건드리지 않는다.
+    - Zeroth-Korean(`zeroth_` prefix)은 조각 suffix 제거 **후** 끝 `_{대본}_{발화}` 를 제거해
+      **화자**를 그룹 키로 삼는다(`zeroth_{화자}`). 다른 stem 은 이 분기를 타지 않는다.
     """
     key = PIECE_SUFFIX_PATTERN.sub("", stem, count=1) or stem
     if key.startswith(DIRECT_RECORDING_PREFIX):
         key = DIRECT_TAKE_PATTERN.sub("", key, count=1) or key
+    elif key.startswith(ZEROTH_PREFIX):
+        key = ZEROTH_UTT_PATTERN.sub("", key, count=1) or key
     return key
 
 
