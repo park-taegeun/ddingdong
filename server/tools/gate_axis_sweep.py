@@ -30,7 +30,7 @@
 
 1) 자기검증(데이터·모델 없이 수초, negative control 4종 동시 실행):
 
-     cd "/Users/xorms/Desktop/서경대학교/시험 준비/26-1/공학종합설계1/프로젝트/ddingdong/server"
+     cd "<repo>/server"
      venv_real/bin/python3 tools/gate_axis_sweep.py --self-test
 
 2) 드라이런(환경변수·매니페스트만 검증. TF 미로드, 추론 0건):
@@ -41,7 +41,7 @@
 3) 전수 스윕(424건, 수 초. `.env` 무변경 — **셸 앞 변수만** 쓴다. 33.6(c) 관용구):
 
      DDINGDONG_DATA_ROOT="$HOME/ML 학습 데이터/ddingdong_dataset" \
-     DDINGDONG_MODEL_PATH="/Users/xorms/Desktop/서경대학교/시험 준비/26-1/공학종합설계1/프로젝트/ddingdong/ml/models/yamnet/inference_savedmodel" \
+     DDINGDONG_MODEL_PATH="<repo>/ml/models/yamnet/inference_savedmodel" \
      venv_real/bin/python3 tools/gate_axis_sweep.py
 
 4) 로그 저장(repo 밖 — 카테고리 실측 로그 규약. repo 안은 `.gitignore` 차단분):
