@@ -151,3 +151,44 @@ python -m ml.curation.slice_negatives \
 ```bash
 python -m ml.curation.tests.test_slice_negatives   # ffmpeg 필요
 ```
+
+## 한국어 말소리 네거티브 (Zeroth-Korean)
+
+FSD50K 음성은 대부분 영어라 「한국어 말 = 알림 대상 아님」을 가르칠 재료가 없다(33.14(f)).
+AI Hub 앞머리 멘트를 학습에서 뺀 뒤(33.15(d)) 그 공백을 Zeroth-Korean 낭독 음성으로 채운다
+(사용자 결정 2026-09-25).
+
+```bash
+python -m ml.curation.zeroth_negatives select \
+  --audio-info  "~/ML 학습 데이터/zeroth_korean/AUDIO_INFO" \
+  --corpus-root "~/ML 학습 데이터/zeroth_korean" \
+  --out-dir     "~/ddingdong-측정결과/<날짜>/zeroth" \
+  --per-speaker <N>
+
+python -m ml.curation.zeroth_negatives slice \
+  --candidates  "~/ddingdong-측정결과/<날짜>/zeroth/zeroth_candidates.csv" \
+  --corpus-root "~/ML 학습 데이터/zeroth_korean" \
+  --out-dir     "~/ddingdong-측정결과/<날짜>/negative_clips" \
+  --max-clips-per-utterance <N> --dry-run
+```
+
+- **선별** — 화자마다 발화를 sha256(salt 고정) 순서로 정렬해 앞 N 개. 발화가 N 미만인
+  화자는 있는 만큼만 뽑고 요약에 남긴다. Zeroth 자체의 train/test 구분은 선별에 쓰지 않고
+  `zeroth_set` 열로만 기록한다 — 우리 분할은 파이프라인 해시 배정이 한다.
+  산출 = `zeroth_candidates.csv`(speaker_id · sex · script_id · utt_id · rel_path · zeroth_set ·
+  duration_sec · text) + `zeroth_select_summary.md`.
+- **조각** — 네거티브 모드 규칙 그대로(`slice_negatives` 함수 재사용 · ffmpeg 인자 동일 · 멱등 ·
+  dry-run · 거부 사유 기록). 출력 `other/zeroth_{화자}_{대본}_{발화}_{start_ms:07d}.wav`.
+- **그룹 키** — `config.source_key` 의 `zeroth_` 분기가 끝 `_{대본}_{발화}` 를 떼어
+  `zeroth_{화자}` 를 그룹 키로 만든다. 같은 화자는 train 과 val/test 로 갈리지 않는다
+  (직접녹음 유닛 키 D3 와 같은 원칙).
+- N · 상한 · 경로는 전부 **필수 · 기본값 없음**(값 미정). `--out-dir` 가드는 조각내기와 같다.
+- 🔴 **`AUDIO_INFO` 의 NAME 칸은 실명이다** — 도구는 이 칸을 읽지 않는다. 산출 · 커밋 · PR
+  어디에도 이름을 쓰지 않고, 화자는 SPEAKERID 로만 다룬다.
+- 🔴 **출처 표기(CC BY 4.0)** — 이 조각으로 학습한 모델 · 보고서에는 다음을 적는다:
+  「Zeroth-Korean (OpenSLR SLR40, https://www.openslr.org/40/), CC BY 4.0 — 3초 조각 ·
+  PCM16 wav 변환 등 가공함」. 저작자 표기는 SLR40 페이지 문구를 그대로 덧붙인다.
+
+```bash
+python -m ml.curation.tests.test_zeroth_negatives   # ffmpeg 필요
+```

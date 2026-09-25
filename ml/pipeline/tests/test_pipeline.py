@@ -552,6 +552,37 @@ def test_pitch_markers_per_class():
     return len(targets), len(others)
 
 
+def test_zeroth_speaker_group_key():
+    """T10 — Zeroth 조각은 화자 단위로 묶인다(발화마다 갈리면 같은 화자가 train·test 로 누수)."""
+    stems = ("zeroth_106_003_0077_0000000", "zeroth_106_003_0098_0003000",
+             "zeroth_106_004_0001_0000000", "zeroth_106_003_0077")
+    for stem in stems:
+        assert config.source_key(stem) == "zeroth_106", stem
+    assert config.source_key("zeroth_107_003_0077_0000000") == "zeroth_107"
+    # 접두가 zeroth_ 가 아니면 이 분기를 타지 않는다(기존 규칙 무변경)
+    for stem, key in (("106_003_0077_0000000", "106_003_0077"),
+                      ("xzeroth_106_003_0077_0000000", "xzeroth_106_003_0077"),
+                      ("S-211107_S_103_C_013_0001_0000000", "S-211107_S_103_C_013_0001"),
+                      ("direct_doorbell_A_01_0003000", "direct_doorbell_A")):
+        assert config.source_key(stem) == key, stem
+
+    with tempfile.TemporaryDirectory() as tmp:
+        def plant(paths):
+            for stem, seed in (("zeroth_106_003_0077_0000000", 41),
+                               ("zeroth_106_003_0098_0000000", 42),
+                               ("zeroth_107_003_0011_0000000", 43)):
+                _put_pre(paths, "knock", stem, _tone(seed))
+            _put_pre(paths, "doorbell", "doorbell_ok_0000000", _tone(44))
+            _put_pre(paths, "fire_alarm", "fire_alarm_ok_0000000", _tone(45))
+
+        _, rows, _ = _split_only(Path(tmp), plant)
+        keys = {r["stem"]: r["source_key"] for r in rows if r["class"] == "knock"}
+        assert set(keys.values()) == {"zeroth_106", "zeroth_107"}, keys
+        splits = {r["split"] for r in rows if r["source_key"] == "zeroth_106"}
+        assert len(splits) == 1, splits
+    return len(stems) + 1
+
+
 def _main() -> int:
     counts, guard = test_pipeline_end_to_end()
     print("PASS — test_pipeline_end_to_end")
@@ -591,6 +622,8 @@ def _main() -> int:
     print(f"PASS — T8 test_aihub_intro_pieces_excluded (유지 {n_rows} / 제거 {n_drop})")
     n_t, n_o = test_pitch_markers_per_class()
     print(f"PASS — T9 test_pitch_markers_per_class (대상 {n_t} / 비대상 {n_o})")
+    n_z = test_zeroth_speaker_group_key()
+    print(f"PASS — T10 test_zeroth_speaker_group_key (zeroth stem {n_z} → 화자 키)")
     for split_name in ("train", "val", "test"):
         row = counts[split_name]
         print(f"  {split_name:<5} " + " ".join(f"{c}={row[c]}" for c in config.CLASSES)
