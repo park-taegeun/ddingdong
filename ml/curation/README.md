@@ -88,8 +88,8 @@ dev.csv 라벨은 온톨로지 부모 방향으로 번져 있다. 로컬에 `ont
 | `Thump_and_thud` | ⓓ | knock | 문 두드림 = 둔탁한 타격음 그 자체 |
 | `Wood` | ⓒ | knock | 노크 대상이 나무 문 — 나무 둔탁음과 겹친다 |
 
-`Speech_synthesizer` 는 **무변경**(ⓐ) — 인터폰 전자 음성 쪽이라 오히려 필요한
-hard negative 일 수 있어 청취 검수 뒤에 판단한다.
+`Speech_synthesizer` 는 **무변경**(ⓐ) — 2026-09-23 청취 후 **네거티브 유지로 확정**했다
+(decisions.md 33.14(b). 표본 16, 후보 쪽 「화재 안내와 비슷함」 0/6).
 
 ### 라벨 불완전 대응 (PP 우선)
 
@@ -186,8 +186,8 @@ python -m ml.curation.zeroth_negatives slice \
 - 🔴 **`AUDIO_INFO` 의 NAME 칸은 실명이다** — 도구는 이 칸을 읽지 않는다. 산출 · 커밋 · PR
   어디에도 이름을 쓰지 않고, 화자는 SPEAKERID 로만 다룬다.
 - 🔴 **출처 표기(CC BY 4.0)** — 이 조각으로 학습한 모델 · 보고서에는 다음을 적는다:
-  「Zeroth-Korean (OpenSLR SLR40, https://www.openslr.org/40/), CC BY 4.0 — 3초 조각 ·
-  PCM16 wav 변환 등 가공함」. 저작자 표기는 SLR40 페이지 문구를 그대로 덧붙인다.
+  「Zeroth-Korean (OpenSLR SLR40, https://www.openslr.org/40/) — Lucas Jo (Atlas Guide Inc.) ·
+  Wonkyum Lee (Gridspace Inc.), CC BY 4.0 — 3초 조각 · PCM16 wav 변환 등 가공함」.
 
 ```bash
 python -m ml.curation.tests.test_zeroth_negatives   # ffmpeg 필요
