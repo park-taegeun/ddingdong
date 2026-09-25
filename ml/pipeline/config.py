@@ -137,6 +137,17 @@ def source_key(stem: str) -> str:
         key = DIRECT_TAKE_PATTERN.sub("", key, count=1) or key
     return key
 
+
+# AI Hub 화재 녹음 앞머리 멘트 — decisions.md 33.15(d) 사용자 결정(2026-09-24).
+#   AI Hub(`S_103`) 녹음의 앞 약 9초에 안내 멘트(사람 말소리)가 들어 있다(33.15(a) 청취).
+#   ⇒ `fire_alarm` 조각 중 조각 시작(stem 끝 7자리, ms)이 AIHUB_INTRO_END_MS 미만인 것
+#   (녹음당 0 · 3000 · 6000 = 3조각)을 split 대상에서 뺀다(split.select_clips).
+#   판별 = stem 부분 문자열 매칭. 옛 split_manifest 실측: `_S_103_` 포함 stem 은 전부
+#   `fire_alarm`(1,349조각 · 171녹음), 그중 시작 9000ms 미만 513(33.15(b)와 일치).
+AIHUB_INTRO_MARKER: str = "_S_103_"
+AIHUB_INTRO_CLASS: str = "fire_alarm"
+AIHUB_INTRO_END_MS: int = 9000
+
 # --------------------------------------------------------------------------
 # 데이터 루트 — **기본값 fallback 없음**. 명시 인자 또는 env DDINGDONG_DATA_ROOT 필수.
 #   근거: decisions.md 카테고리 5 「실 파이프라인·학습 실행 = 학부생 로컬 셸

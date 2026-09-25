@@ -5,7 +5,7 @@
 
 - 출력은 **waveform(16kHz mono Int16) 유지** — 멜스펙트로그램/SpecAugment 변환은 학습 스크립트 몫(카테고리 4).
 - 분할은 **증강 이전, 원본(source) 단위 그룹 분할** — data leakage 방지(카테고리 5). train에만 증강, val/test는 원본만.
-- split 직전에 **내용(md5) 중복·디지털 무음·클래스 교차 클립을 split 대상에서 제외**(D1). 제외 내역 = `manifests/dedup_manifest.csv`. **`02_preprocessed`의 파일은 지우지 않는다**(원본 보존).
+- split 직전에 **디지털 무음 → AI Hub 앞머리 멘트 → 클래스 교차 → 내용(md5) 중복** 순서로 split 대상에서 제외한다(D1 · decisions.md 33.15(d) — 순서가 규칙의 일부). 멘트 = AI Hub `S_103` `fire_alarm` 조각 중 시작 9000ms 미만(녹음당 3조각), 사유 `aihub_intro_speech`. 제외 내역 = `manifests/dedup_manifest.csv`. **`02_preprocessed`의 파일은 지우지 않는다**(원본 보존).
 - source 배정은 **셔플이 아니라 그룹 키 해시 고정**(D2) — **새 source가 들어와도 기존 source 배정이 바뀌지 않는다**.
 - 향후 `04_direct_recording` 녹음이 `01_clips`로 유입돼도 **코드 수정 0**, 재실행만. 직접녹음은 **테이크가 아니라 유닛**이 한 그룹이다(D3).
 
@@ -99,7 +99,7 @@ pytest ml/pipeline/tests/
 | Step | 모듈 | 내용 |
 |---|---|---|
 | 1 | `preprocess.py` | 16k mono 검증(위반 스킵) + peak 정규화 → `02_preprocessed` |
-| 2 | `split.py` | 내용 중복 제거 → 원본(source) 단위 해시 고정 배정(증강 前) → `split_manifest.csv` + `dedup_manifest.csv` |
+| 2 | `split.py` | 무음 · 멘트 · 교차 · 중복 제거 → 원본(source) 단위 해시 고정 배정(증강 前) → `split_manifest.csv` + `dedup_manifest.csv` |
 | 3 | `augment.py` | **train만** waveform 증강(time-stretch/BG noise SNR/volume/pitch) → `03_augmented` |
 | 4 | `assemble.py` | train=원본+증강 / val·test=원본만 → `05_final_dataset` + `final_manifest.csv` |
 | 5 | `guards.py` | 누수 가드 2층: ① train stem ∩ (val∪test) = ∅ ② 같은 내용 해시가 2개 이상 split에 존재하면 즉시 실패 |

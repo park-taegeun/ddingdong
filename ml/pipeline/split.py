@@ -6,7 +6,7 @@
 직접녹음(`direct_`)은 테이크가 아니라 **유닛**까지가 한 그룹이다(config.source_key).
 
 절차(클래스별 = stratify 유지):
-  (a) 02 클립의 내용 해시(md5)로 중복·무음·클래스 교차를 걷어낸다(select_clips).
+  (a) 02 클립에서 무음·AI Hub 앞머리 멘트·클래스 교차·중복을 걷어낸다(select_clips).
       제거 내역은 dedup manifest CSV 로 남기고, **02 의 파일 자체는 지우지 않는다**
       (split 대상에서만 제외 — 원본 보존·재현 가능).
   (b) 남은 클립 stem 을 config.source_key 로 그룹핑
@@ -43,6 +43,7 @@ _DEDUP_FIELDS = ["filepath", "class", "stem", "md5", "reason", "kept_stem"]
 REASON_SILENCE = "digital_silence"      # 디코딩 샘플 전부 0
 REASON_CLASS_CROSS = "class_cross"      # 같은 md5 가 2개 이상 클래스 폴더에 → 양쪽 모두 제거
 REASON_SAME_CLASS_DUP = "same_class_dup"  # 한 클래스 안 반복 → 정렬상 첫 stem 만 유지
+REASON_AIHUB_INTRO = "aihub_intro_speech"  # AI Hub 화재 녹음 앞머리 멘트 조각(33.15(d))
 
 
 class SourceSplitError(AssertionError):
@@ -67,19 +68,34 @@ def is_digital_silence(path: Path) -> bool:
     return not audio_io.load_mono(path).any()
 
 
+def is_aihub_intro(cls: str, stem: str) -> bool:
+    """AI Hub 화재 녹음 앞머리 멘트 조각인가(33.15(d)). 조각 suffix 가 없으면 시작 시각을
+    모르므로 빼지 않는다(False)."""
+    m = config.PIECE_SUFFIX_PATTERN.search(stem)
+    return (
+        cls == config.AIHUB_INTRO_CLASS
+        and config.AIHUB_INTRO_MARKER in stem
+        and m is not None
+        and int(m.group()[1:]) < config.AIHUB_INTRO_END_MS
+    )
+
+
 def select_clips(
     by_class: dict[str, dict[str, Path]]
 ) -> tuple[dict[str, dict[str, Path]], list[dict[str, str]]]:
-    """내용 해시 기준으로 split 대상 클립을 고른다(D1). 반환: (유지분, 제거 기록 행).
+    """split 대상 클립을 고른다(D1 + 33.15(d)). 반환: (유지분, 제거 기록 행).
 
-    규칙 — ★ 적용 순서가 규칙의 일부다(무음 → 클래스 교차 → 같은 클래스 중복):
+    규칙 — ★ 적용 순서가 규칙의 일부다(무음 → 멘트 → 클래스 교차 → 같은 클래스 중복):
       1. 디지털 무음 = 디코딩 샘플 전부 0 → 제거.
+      1-b. AI Hub 앞머리 멘트 = is_aihub_intro → 제거(33.15(d), `other` 로 재활용하지 않는다).
       2. 클래스 교차 = 같은 md5 가 2개 이상 클래스 폴더에 존재 → 그 md5 의 **모든** 파일 제거
          (어느 쪽이 정답 라벨인지 알 수 없으므로 한쪽만 남기지 않는다).
       3. 같은 클래스 중복 = 같은 md5 가 한 클래스 안에서만 반복 → 정렬상 첫 stem 1개만 유지.
     🔴 중복 제거(3)를 먼저 돌리면 교차 그룹에 한 클래스만 남아 규칙 2가 무력화된다
     (Step 1 실측: 순서를 뒤집으면 잔존 2299 → 2304). 무음(1)과 교차(2)는 서로 순서를
     바꿔도 잔존 집합이 같고 사유 라벨만 달라진다 — 그래서 순서를 상수처럼 고정한다.
+    멘트(1-b)는 33.15(d) 결정 순서대로 무음 다음 · 교차 앞이다. 멘트 조각끼리 바이트가 같은
+    그룹(33.7(g))은 중복(3)보다 먼저 멘트 사유로 빠진다.
     🔴 02 의 파일은 지우지 않는다 — split 대상에서만 빠진다(원본 보존·재현 가능).
     """
     md5_of: dict[tuple[str, str], str] = {}
@@ -97,6 +113,12 @@ def select_clips(
     # 1. 무음
     for key in sorted(alive & silent):
         reason_of[key] = REASON_SILENCE
+    alive -= set(reason_of)
+
+    # 1-b. AI Hub 앞머리 멘트
+    for key in sorted(alive):
+        if is_aihub_intro(*key):
+            reason_of[key] = REASON_AIHUB_INTRO
     alive -= set(reason_of)
 
     # 2. 클래스 교차 (살아남은 것 기준으로 다시 묶는다)
