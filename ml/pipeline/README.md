@@ -71,7 +71,6 @@ pip install numpy soundfile librosa scipy
 | `VOLUME_GAIN_DB` | `-6.0` |
 | `PITCH_SHIFT_SEMITONES` | `(-2, +2)` — **한국 환경음만** (`PITCH_SHIFT_MODE`) |
 | `SPECAUGMENT` | freq=10/time=5 — **기록만**, 학습 시점 적용(waveform 단계 아님) |
-| `SAMPLE_WEIGHT_RANGE` | `(1.5, 2.0)` — 학습 스크립트가 소비 |
 | `SPLIT_RATIO` / `SEED` | `(0.70,0.15,0.15)` / `42` |
 
 ### pitch shift 적용 대상 (학부생 결정 필요)
