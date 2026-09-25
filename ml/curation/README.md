@@ -5,7 +5,8 @@
 **E3 = 네거티브 출처는 로컬 FSD50K 덤프 우선** 의 첫 단계로, 로컬 dev 덤프에서
 **후보 목록(CSV)만** 만든다.
 
-오디오를 복사·변환·3초 조각내기 하지 않는다(재학습 소관). 데이터셋과 메타데이터는
+`select_negatives` 는 오디오를 복사·변환·3초 조각내기 하지 않는다 — 조각내기는
+아래 「3초 조각내기」 절(`slice_negatives`)이 맡는다. 데이터셋과 메타데이터는
 둘 다 읽기 전용으로만 연다.
 
 ## 실행
@@ -119,3 +120,34 @@ python -m ml.curation.tests.test_select_negatives
 가짜 메타데이터로 T1~T5(제외 ①②③ · 결정성 · 산출 형식)를 돌리고, 이어서
 네거티브 컨트롤 NC-1~NC-3 으로 **규칙을 망가뜨리면 해당 테스트가 실제로 깨지는지**
 확인한 뒤 `finally` 로 복원하고 전건 재통과를 다시 본다.
+
+## 3초 조각내기 (네거티브 모드)
+
+`candidates.csv` 의 원본을 학습 입력 규격(3초 · 16kHz · mono · PCM16) 조각으로 자른다.
+규칙은 pretest `fsd50k_preprocess` 를 계승하되 코드는 새로 썼다(33.7(i) · 33.10(b)).
+
+```bash
+python -m ml.curation.slice_negatives \
+  --candidates "~/ddingdong-측정결과/2026-09-21/negatives/candidates.csv" \
+  --audio-root "~/ML 학습 데이터/ddingdong_dataset/00_source_raw/fsd50k/dev_audio/FSD50K.dev_audio" \
+  --out-dir    "~/ddingdong-측정결과/<날짜>/negative_clips" \
+  --max-clips-per-source <N> --dry-run
+```
+
+- 3초 미만 → 16kHz 리샘플 후 `apad` 로 zero-pad 1클립(`_0000000`) / 3초 이상 → 비중첩
+  3초 분할, 잔여 버림 / 출력 `--out-dir/other/{fsd_id}_{start_ms:07d}.wav`.
+- 🔴 **변환기는 ffmpeg, 인자는 pretest 와 동일**하다. 같은 FSD50K 에서 pretest 로 만든
+  `doorbell` · `knock` 조각과 리샘플러 · pad 방식이 다르면 그 차이가 「other 냐 아니냐」의
+  가짜 단서가 된다. 피크 정규화는 하지 않는다(preprocess 몫).
+- 원본당 상한 `--max-clips-per-source` 는 **필수 · 기본값 없음**(값 미정 — 33.7(i)). 넘으면
+  조각 인덱스 `round(i·(n−1)/(cap−1))` 로 균등 간격 선택(결정적).
+- 같은 이름이 있으면 덮어쓰지 않고 skip. 0바이트 · 디코딩 실패 · `MIN_DURATION_SEC` 미만은
+  거부 사유와 함께 `slice_manifest.csv` · `slice_summary.md` 에 남는다(ffmpeg 버전 포함).
+- `--out-dir` 가 repo 안이거나 데이터셋 스테이지 폴더(`00_source_raw` ~ `05_final_dataset` ·
+  `manifests`) 안이면 거부한다. `01_clips` 투입은 재학습 당일 수동 단계다(5.2(a) · 33.12(e)).
+- `--dry-run` 은 wav · manifest 를 하나도 쓰지 않고 예상 조각 수만 출력한다.
+- 🔴 `config.CLASSES` 에 `other` 를 넣지 않는다 — 계약 PR 순서(33.13(d)).
+
+```bash
+python -m ml.curation.tests.test_slice_negatives   # ffmpeg 필요
+```
