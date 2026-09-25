@@ -93,10 +93,10 @@ decisions.md 카테고리 5 는 SpecAugment(freq=10/time=5)를 **학습 시점 �
   로컬로 분리 로드하는 배선만 남았다.
 
 **→ 발표 전 결정**: SpecAugment 를 실제로 켤지( `logmel` 모드 + 로컬 YAMNet ), 아니면
-`embedding` 모드 + 03 증강으로 충분한지. `KOREAN_SOURCE_MARKERS`(pitch shift 대상 미결)와
-함께 데이터 규모·성능 보고 확정. `SpecAugment` 자체는 언제든 활성화 가능하도록 준비돼 있음.
+`embedding` 모드 + 03 증강으로 충분한지. 데이터 규모·성능 보고와 함께 확정. `SpecAugment` 자체는 언제든 활성화 가능하도록 준비돼 있음.
 
 ## 미결 (upstream)
 
-- **pitch shift 대상 미정**: `ml.pipeline.config.KOREAN_SOURCE_MARKERS` 가 빈 상태 →
-  현재 pitch shift 적용 대상 0. 한국 환경음 소스 명명 규칙 확인 후 채워야 적용됨(발표 전 결정).
+- **pitch shift 대상 = 초인종 · 노크 직접녹음만**: `ml.pipeline.config.KOREAN_SOURCE_MARKERS`
+  = `("direct_doorbell_", "direct_knock_")`(decisions.md 5.3(b) · 33.3①). 직접녹음 클립이
+  train 에 아직 없으면 적용 대상 0 이다.

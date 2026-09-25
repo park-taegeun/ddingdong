@@ -31,7 +31,7 @@
      lsof -nP -iTCP:5000 -sTCP:LISTEN
 2) 노트북 IP 확인:  ipconfig getifaddr en0
 3) 자기검증(수 초, 포트를 열지 않는다):
-     cd "/Users/xorms/Desktop/서경대학교/시험 준비/26-1/공학종합설계1/프로젝트/ddingdong/server"
+     cd "<repo>/server"
      venv/bin/python3 tools/record_receiver.py --self-test
 4) 기동(out-dir 는 repo 밖. 예 = 노크, 유닛 a):
      venv/bin/python3 tools/record_receiver.py --out-dir "$HOME/ddingdong-측정결과/$(date +%F)/direct_rec" \
