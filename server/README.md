@@ -29,6 +29,9 @@ python run.py          # http://127.0.0.1:5000
 | POST | `/api/v1/enrich` | Device Token | ESP32 2차. 해당 notification 에 사진/STT mock 채움 |
 | GET | `/api/v1/notifications` | Dashboard Token | 대시보드 폴링. cursor pagination |
 | GET | `/api/v1/stats` | Dashboard Token | 대시보드 폴링. `period=today` 집계 |
+| GET | `/api/v1/registration` | Dashboard Token | 초인종 등록 상태 조회 (`none` · `collecting` · `registered` · `expired`) |
+| POST | `/api/v1/registration/start` | Dashboard Token | 등록 템플릿 수집 시작. 본문 `target_count` · `expires_in_seconds` 필수. 수집 중·등록 완료면 409 |
+| DELETE | `/api/v1/registration` | Dashboard Token | 등록 해제(템플릿 전부 삭제). 멱등 |
 | GET | `/health` | 없음 | 헬스 체크 |
 
 인증: `Authorization: Bearer <token>` (Device / Dashboard 분리).
