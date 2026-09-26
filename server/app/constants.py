@@ -254,3 +254,48 @@ STT_CLIENT_SECRET_HEADER = "X-NCP-APIGW-API-KEY"
 #   (KAKAO_HTTP_TIMEOUT_SECONDS 주석과 같은 한계). CSR 은 인식 결과를 한 번에
 #   돌려주는 단발 응답이라 다단계 지연이 겹칠 표면이 카카오보다 작다.
 STT_HTTP_TIMEOUT_SECONDS = 3.0
+
+# ── 초인종 등록 (registration.py / registration_api.py) ──────────────────
+# 상태 어휘 4종. API 응답 state 값과 후속 대시보드 타입의 단일 출처.
+#   none = 등록 행 없음 / collecting = 템플릿 수집 중(만료 전)
+#   registered = 목표 개수를 채워 완료(만료와 무관) / expired = 목표 전에 만료
+REGISTRATION_STATE_NONE = "none"
+REGISTRATION_STATE_COLLECTING = "collecting"
+REGISTRATION_STATE_REGISTERED = "registered"
+REGISTRATION_STATE_EXPIRED = "expired"
+REGISTRATION_STATES = (
+    REGISTRATION_STATE_NONE,
+    REGISTRATION_STATE_COLLECTING,
+    REGISTRATION_STATE_REGISTERED,
+    REGISTRATION_STATE_EXPIRED,
+)
+
+# POST /api/v1/registration/start 입력 가드. 하한은 둘 다 1.
+# ★ 두 상한은 정책 값이 아니라 안전 상한이다. 실제 목표 개수와 만료 시간은 요청이
+#   준다(대시보드 PR에서 정하고, 벨 녹음 뒤 확정). 기본값은 두지 않는다 — 요청에 값이
+#   없으면 400.
+REGISTRATION_GUARD_MIN = 1
+
+# 목표 개수 상한 10.
+# 산술: 등록 템플릿이 10개면 /detect 1회 판정 비용 = 템플릿 11개(질의 1 + 저장 PCM 10)
+#       + DTW 거리 10회 = 11T + 10D. 실측(2026-09-26, sound_match, 30회 중앙값,
+#       잡음 PCM 쌍):
+#         입력 길이                 venv(3.14)          venv_real(3.11)
+#         65,536 B(보드 2.048초)    94.5 ms = 1.9%      120.0 ms = 2.4%
+#         320,000 B(AUDIO_MAX)      365.3 ms = 7.3%     560.1 ms = 11.2%
+#       (비율 = 1차 알림 예산 5,000 ms 대비. 시간의 대부분은 D — venv_real 에서
+#        65,536 B 기준 T 0.30 ms · D 11.68 ms.)
+#       10% 기준은 보드가 실제로 보내는 65,536 B 로 판정한다(2.4% 통과). 320,000 B 는
+#       /detect 가 받아 주는 최대 크기일 뿐 보드 송신 경로에는 없다.
+# 저장량: 10 × 65,536 B = 640 KiB(보드 경로), 최악 10 × AUDIO_MAX_BYTES = 3.2 MB.
+# 재판정 트리거: 벨 녹음 뒤 목표 개수를 정할 때 / 후속 /detect 계측 훅의 실측 비교
+#   시간이 위 표와 자릿수가 다를 때 / 보드가 보내는 오디오 길이가 바뀔 때(자동 트리거
+#   도입 등).
+REGISTRATION_TARGET_COUNT_MAX = 10
+
+# 수집 만료 상한 600초(10분).
+# 산술: 10회 × rate limit 5초(DEVICE_RATE_LIMIT_SECONDS) = 50초가 물리적 최소다. 사람이
+#   벨 앞으로 오가는 여유를 둬도 10분이면 충분하다. 목적 = 방치된 수집 모드가 무관한
+#   소리를 템플릿으로 빨아들이지 않게 하는 것.
+# 재판정 트리거: 목표 개수 상한이 바뀔 때 / 벨 녹음 뒤 실제 등록 동선을 잴 때.
+REGISTRATION_EXPIRES_MAX_SECONDS = 600

@@ -129,3 +129,37 @@ class KakaoToken(db.Model):
     def needs_refresh(self, now_utc):
         """access 토큰이 만료됐거나 만료 임박(KAKAO_REFRESH_MARGIN 이내)이면 True."""
         return (self.access_expires_at - now_utc) <= KAKAO_REFRESH_MARGIN
+
+
+class RegistrationState(db.Model):
+    """초인종 등록 상태 (전역 단일 행 — KakaoToken 과 같은 SINGLETON_ID 패턴).
+
+    상태 판정은 registration.state_of() 한 곳에서만 한다. 시각은 전부 naive UTC.
+    ★ 새 테이블로만 추가한다 — db.create_all() 은 기존 테이블에 컬럼을 추가하지 않으므로
+      기존 3테이블을 고치면 이미 만들어진 ddingdong.db 에서 조회가 깨진다.
+    """
+
+    __tablename__ = "registration_state"
+
+    SINGLETON_ID = 1
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+
+    # 시작할 때마다 새로 발급. 템플릿을 이 값으로 묶어 이전 등록분과 섞이지 않게 한다.
+    registration_id: Mapped[str]
+    target_count: Mapped[int]
+    started_at: Mapped[datetime]  # naive UTC
+    expires_at: Mapped[datetime]  # naive UTC
+    completed_at: Mapped[datetime | None]  # naive UTC, 목표 개수를 채운 시각
+
+
+class RegistrationTemplate(db.Model):
+    """등록 템플릿 원본 = /detect 로 받은 int16 PCM 바이트 그대로 (BLOB)."""
+
+    __tablename__ = "registration_templates"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    registration_id: Mapped[str] = mapped_column(index=True)
+    client_request_id: Mapped[str]  # 어느 /detect 요청이 템플릿이 됐는지 추적
+    pcm: Mapped[bytes]
+    created_at: Mapped[datetime]  # naive UTC
