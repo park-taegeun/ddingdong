@@ -3,6 +3,7 @@
 // 설계(decisions.md 카테고리 7 화재경보 정책 정합):
 //   - fire_alarm → role="alert"(aria-live=assertive): 긴급, 진행 중 발화 가로채 즉시 announce
 //   - doorbell/knock → role="status"(aria-live=polite): 대기 후 announce
+//   - other → announce 안 함: 33.13 「other = 알림 차단」을 이 알림 채널도 따른다(목록 행 표시는 유지).
 // 폴링 훅(usePolling/useNotifications) 무수정 — 소비 측 additive. 자체 폴링 구독 1개를
 // AppShell에 상시 마운트해, 어느 페이지에 있든(설정/통계 화면 포함) 신규 알림을 announce.
 // "신규만" 보장: seenRef로 announce 완료 ID 추적 + 첫 성공 로드 시 기존 ID 전량 seed(초기 무announce).
@@ -61,8 +62,10 @@ export function NotificationAnnouncer() {
     if (fresh.length === 0) return
     for (const item of fresh) seen.add(item.request_id)
 
-    const fires = fresh.filter((item) => item.predicted_class === "fire_alarm")
-    const others = fresh.filter((item) => item.predicted_class !== "fire_alarm")
+    // other 는 seen 등록만 하고(위) announce 대상에서 뺀다 → 재announce 도 없다.
+    const targets = fresh.filter((item) => item.predicted_class !== "other")
+    const fires = targets.filter((item) => item.predicted_class === "fire_alarm")
+    const others = targets.filter((item) => item.predicted_class !== "fire_alarm")
 
     if (fires.length > 0) {
       announceIdRef.current += 1
