@@ -1,10 +1,10 @@
 """초인종 등록 저장 층 — 상태 판정 · 조회 · 시작 · 해제 · 템플릿 추가/로드.
 
 ★ 이 모듈의 함수는 전부 commit 하지 않는다. commit 은 호출부가 한 번만 한다
-  (registration_api 의 각 엔드포인트, 후속 /detect 계측 훅).
+  (registration_api 의 각 엔드포인트, /detect 의 단일 commit — 계측 훅은 commit 하지 않는다).
 
-호출처: registration_api(status · start · clear). add_template ·
-load_registered_templates 는 후속 /detect 계측 훅용이며 지금은 호출처가 없다.
+호출처: registration_api(status · start · clear), registration_observe(/detect 등록
+계측 훅, PR #88 — current · add_template · load_registered_templates).
 """
 
 import uuid

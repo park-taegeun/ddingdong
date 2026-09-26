@@ -51,7 +51,7 @@ _EXISTING_COLUMNS = {
         "refresh_expires_at", "updated_at",
     ),
 }
-_NEW_TABLES = ("registration_state", "registration_templates")
+_NEW_TABLES = ("registration_state", "registration_templates", "registration_matches")
 
 
 def setUpModule() -> None:

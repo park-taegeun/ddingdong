@@ -17,7 +17,7 @@ librosa 재현 대상(librosa 0.11.0 설치 소스 기준): stft = periodic hann
 center=True, pad_mode="constant"(양끝 n_fft//2 영 패딩) / 멜 필터 = Slaney 멜 척도
 (htk=False) + norm="slaney" 면적 정규화, float32 가중치.
 
-호출처 = 테스트뿐. 제품 배선(/detect 계측)은 다음 PR.
+호출처 = registration_observe(/detect 등록 계측 훅 — 등록 뒤 거리 기록, PR #88) · 테스트.
 기대값 픽스처 = app/tests/fixtures/make_sound_match_fixture.py (librosa 환경에서
 프로즌 모듈을 import 해 생성).
 """
