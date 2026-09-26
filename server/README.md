@@ -25,8 +25,8 @@ python run.py          # http://127.0.0.1:5000
 
 | 메서드 | 경로 | 인증 | 설명 |
 | --- | --- | --- | --- |
-| POST | `/api/v1/detect` | Device Token | ESP32 1차. mock 추론 + notification 저장, `request_id`(ULID) 발급 |
-| POST | `/api/v1/enrich` | Device Token | ESP32 2차. 해당 notification 에 사진/STT mock 채움 |
+| POST | `/api/v1/detect` | Device Token | ESP32 1차. 추론(`DDINGDONG_MODEL_PATH` 설정 시 실모델, 미설정 시 mock) → 카카오 1차 텍스트 발송 → notification 저장, `request_id`(ULID) 발급. 초인종 등록 계측 훅(수집 중 템플릿 저장 · 등록 뒤 거리 기록)이 같은 commit 에 얹힌다 |
+| POST | `/api/v1/enrich` | Device Token | ESP32 2차. 사진을 로컬 저장해 public URL(`/captures/…`)로 채우고, 자막은 STT(`NCP_CLIENT_ID` · `NCP_CLIENT_SECRET` 설정 시 실 CSR, 미설정 시 mock 문구) → 카카오 2차(사진 feed + 자막 text) 발송 |
 | GET | `/api/v1/notifications` | Dashboard Token | 대시보드 폴링. cursor pagination |
 | GET | `/api/v1/stats` | Dashboard Token | 대시보드 폴링. `period=today` 집계 |
 | GET | `/api/v1/registration` | Dashboard Token | 초인종 등록 상태 조회 (`none` · `collecting` · `registered` · `expired`) |
@@ -57,10 +57,24 @@ server/
     config.py         # .env 로드 + 설정
     extensions.py     # db = SQLAlchemy()
     constants.py      # 매직 넘버 중앙 관리
-    utils.py          # KST 시간 / ULID / mock ML
+    utils.py          # KST 시간 / ULID / 예측 정책 / mock ML
     errors.py         # 통일 JSON 에러 (HTTP 8종)
     auth.py           # Device / Dashboard Bearer Token 데코레이터
     rate_limit.py     # device_id 5초당 1회 (in-memory)
-    models.py         # Notification / IdempotencyKey
-    routes.py         # /api/v1 Blueprint (4종)
+    models.py         # Notification / IdempotencyKey / KakaoToken /
+                      #   RegistrationState / RegistrationTemplate / RegistrationMatch
+    routes.py         # /api/v1 Blueprint — detect · enrich · notifications · stats (4종)
+    registration_api.py     # /api/v1/registration Blueprint (상태 · 시작 · 해제)
+    registration.py         # 초인종 등록 저장 층 (commit 없음)
+    registration_observe.py # /detect 등록 계측 훅 (관측 전용)
+    sound_match.py    # 등록용 소리 비교 (numpy 멜 + DTW-cosine)
+    captures.py       # /captures/<id> public 캡처 이미지 서빙 (비인증)
+    image_store.py    # 로컬 이미지 스토어
+    kakao.py          # 카카오 나에게 보내기 (토큰 · 1차 · 2차 발송)
+    stt.py            # Naver CSR STT 클라이언트 (env 게이트)
+    model_serving.py  # 실추론 모델 싱글턴 로더 (env 게이트)
+    tof_meta.py       # /detect ToF 메타 4종 수신 · 검증
+    tests/            # 서버 회귀 테스트 (detect_regression · sound_match · registration)
+  inference/          # 오디오 디코드 · 모델 실행 (app 과 형제 패키지)
+  tools/              # gate_axis_sweep · record_receiver
 ```
