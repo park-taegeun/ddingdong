@@ -366,7 +366,11 @@ def _stt_from_audio(audio_bytes):
     ★ 재시도 없음 — stt.transcribe 를 정확히 1회 부른다(근거 = stt.py docstring:
       15초 단위 과금 + 소프트 한도). 여기에 루프를 두면 그 근거가 무력화된다.
 
-    ★ confidence=None (신규 미결): CSR 응답은 `{"text": ...}` 뿐이라 신뢰도를 주지
+    ★ confidence=None ([해소] — 아래 판정 방법의 null 가드는 PR #47 로 들어갔다,
+      decisions.md 8.4(d)): 대시보드 formatConfidence 는 null 을 "정보 없음"으로
+      렌더하고(=== null 엄격 비교 — 실측 0.0 은 "0%" 그대로), 서버는 여전히 None 을
+      낸다. 아래는 미결 당시 서술이다.
+      CSR 응답은 `{"text": ...}` 뿐이라 신뢰도를 주지
       않는다(30.9 실측). 없는 값을 지어내지 않고 None 으로 남긴다 — 프론트
       NotificationStt.confidence 타입은 `number` 라서 대시보드는 이 값을 "0%"로
       렌더한다(formatConfidence). 카카오톡 자막 경로에는 영향이 없다.
