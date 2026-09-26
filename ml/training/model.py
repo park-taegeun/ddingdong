@@ -3,7 +3,7 @@
 학습 효율/배치 안정성을 위해 2단계로 분리:
   - backbone(YAMNet, frozen): waveform → per-patch embedding → mean-pool [1024].
     학습 대상 아님(변수 optimizer 미등록) = 사실상 frozen 특징추출기.
-  - head(trainable): Dense(128)+Dropout → Dense(3, softmax). 이 head 만 fit.
+  - head(trainable): Dense(128)+Dropout → Dense(클래스 수, softmax). 이 head 만 fit.
 배포용은 build_inference_model 로 backbone+head 를 waveform→확률 하나로 합성.
 """
 
@@ -48,13 +48,13 @@ def yamnet_embed_fn(yamnet):
 # head (trainable)
 # --------------------------------------------------------------------------
 def build_head(
+    num_classes: int,
     input_dim: int = config.EMBED_DIM,
     hidden_units: int = config.HEAD_HIDDEN_UNITS,
     dropout: float = config.HEAD_DROPOUT,
-    num_classes: int = config.NUM_CLASSES,
     seed: int = config.SEED,
 ) -> tf.keras.Model:
-    """임베딩[input_dim] → 클래스 확률[num_classes]. 이 부분만 학습."""
+    """임베딩[input_dim] → 클래스 확률[num_classes]. 이 부분만 학습. num_classes = run 의 클래스 수."""
     init = tf.keras.initializers.GlorotUniform(seed=seed)
     inputs = tf.keras.Input(shape=(input_dim,), name="embedding")
     x = inputs

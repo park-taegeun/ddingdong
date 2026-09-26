@@ -79,15 +79,15 @@ def test_smoke_end_to_end(tmp_root: Path | None = None):
             print("[clean 가드] 비-05 경로 삭제 거부 OK")
 
         # 2) class_weight 자동 산출(실측 배분 기반, sklearn balanced)
-        train_ex = data.list_examples(final_dir, "train")
-        cw = data.compute_class_weights([y for _, y in train_ex])
-        assert set(cw) == set(range(config.NUM_CLASSES)) and all(v > 0 for v in cw.values())
+        train_ex = data.list_examples(final_dir, "train", config.CLASSES)
+        cw = data.compute_class_weights([y for _, y in train_ex], len(config.CLASSES))
+        assert set(cw) == set(range(len(config.CLASSES))) and all(v > 0 for v in cw.values())
         print(f"[class_weight] {{{', '.join(f'{config.CLASSES[k]}:{v:.3f}' for k, v in cw.items())}}}")
 
         # 3) 학습(head fit 2 epoch, 더미 backbone 주입) → 체크포인트/history
         out_dir = root / "_run"
         summary = train.train(
-            final_dir, out_dir, embed_fn=dummy_embed_fn, epochs=2,
+            final_dir, out_dir, classes=config.CLASSES, embed_fn=dummy_embed_fn, epochs=2,
             batch_size=8, export_inference=False, verbose=0,
         )
         assert Path(summary["checkpoint"]).exists(), "체크포인트 미저장"
@@ -100,11 +100,11 @@ def test_smoke_end_to_end(tmp_root: Path | None = None):
         _assert_spec_augment_train_only()
 
         # 5) test 평가: accuracy + per-class + confusion
-        rep = evaluate.evaluate(final_dir, out_dir, embed_fn=dummy_embed_fn)
+        rep = evaluate.evaluate(final_dir, out_dir, classes=config.CLASSES, embed_fn=dummy_embed_fn)
         assert 0.0 <= rep["accuracy"] <= 1.0
         assert set(rep["per_class"]) == set(config.CLASSES)
         cm = np.array(rep["confusion"])
-        assert cm.shape == (config.NUM_CLASSES, config.NUM_CLASSES)
+        assert cm.shape == (len(config.CLASSES), len(config.CLASSES))
         assert (out_dir / config.EVAL_REPORT_NAME).exists()
         assert (out_dir / config.CONFUSION_NAME).exists()
         print(f"[평가] accuracy={rep['accuracy']:.3f} macro_f1={rep['macro_f1']:.3f} confusion={cm.shape} OK")

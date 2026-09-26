@@ -48,10 +48,11 @@ def _load_dummy_yamnet(work: Path):
 
 
 def _make_best_keras(work: Path) -> Path:
-    """학습 산출물(best.keras=head)만 있는 상태를 모사."""
-    head = model.build_head()
+    """학습 산출물(best.keras=head + labels.json)만 있는 상태를 모사."""
+    head = model.build_head(len(config.CLASSES))
     ckpt = work / config.CHECKPOINT_NAME
     head.save(str(ckpt))
+    config.write_labels(work, config.CLASSES)
     return ckpt
 
 
@@ -72,18 +73,20 @@ def test_untracked_resource_reproduces_then_export_fixes():
         assert raised, "전제 미재현: tf.saved_model.save 가 미추적 리소스로 실패하지 않음"
 
         # (2) 수정 경로: export_savedmodel(model.export) 은 성공해야 한다.
-        summary = export.export_savedmodel(work, checkpoint=ckpt, yamnet=yamnet)
+        summary = export.export_savedmodel(
+            work, classes=config.CLASSES, checkpoint=ckpt, yamnet=yamnet
+        )
         out = Path(summary["savedmodel"])
         assert out.exists() and (out / "saved_model.pb").exists(), "SavedModel 미생성"
         assert summary["classes"] == list(config.CLASSES), "라벨 순서(SSoT) 불일치"
 
-        # (3) 재로드 + 서빙 시그니처 추론: [1, NUM_CLASSES] softmax.
+        # (3) 재로드 + 서빙 시그니처 추론: [1, 클래스 수] softmax.
         loaded = tf.saved_model.load(str(out))
         sig = loaded.signatures["serving_default"]
         wav = tf.constant(np.random.randn(1, config.SAMPLE_RATE).astype(np.float32))
         res = sig(wav)
         probs = list(res.values())[0].numpy()
-        assert probs.shape == (1, config.NUM_CLASSES), f"출력 shape {probs.shape}"
+        assert probs.shape == (1, len(config.CLASSES)), f"출력 shape {probs.shape}"
         assert abs(float(probs.sum()) - 1.0) < 1e-4, f"softmax 합 {probs.sum()}"
         print(
             f"[export] 재현+수정 OK | classes={summary['classes']} "
