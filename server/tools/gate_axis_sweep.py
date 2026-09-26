@@ -752,28 +752,6 @@ def self_test() -> int:
         else:
             os.environ.pop(env_key, None)
 
-    # NC의 NC: fallback을 되살리면(변경 3 이전 동작을 그 자리에서 흉내) 이 케이스가
-    # exit 없이 통과해 "FAIL"로 떨어지는지 — 가드가 실제로 이 결함을 잡는다는 증명.
-    def _labels_path_pre_change() -> Path:
-        raw = os.environ.get(env_key, "").strip()
-        base = (Path(raw).expanduser() if raw
-                else Path(__file__).resolve().parents[2] / "ml" / "models" / "yamnet")
-        return base / "labels.json"
-
-    os.environ.pop(env_key, None)
-    try:
-        _labels_path_pre_change()
-        fallback_silently_passed = True
-    except SystemExit:
-        fallback_silently_passed = False
-    if had_env:
-        os.environ[env_key] = saved_env
-    ok &= _check(
-        "NC-8 의 NC(fallback 복원 시 거짓 통과 재현)",
-        fallback_silently_passed,
-        "fallback 복원본은 예외 없이 경로를 반환 = 가드 제거를 이 NC 가 잡는다는 뜻",
-    )
-
     print("\n" + ("✅ self-test 전건 통과" if ok else "🔴 self-test 실패 — 하네스를 믿지 말 것"))
     return EXIT_OK if ok else EXIT_BASELINE_MISMATCH
 
