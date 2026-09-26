@@ -487,5 +487,222 @@ class SchemaTest(_AppCase):
         self.assertEqual(snapshot(), before)
 
 
+def _tone(freq_hz: float, n_samples: int = 8000) -> bytes:
+    """int16 LE 사인파 PCM (16 kHz). 주파수가 다르면 DTW 거리가 0 이 아니게 된다."""
+    import numpy as np
+
+    t = np.arange(n_samples) / 16000
+    return (np.sin(2 * np.pi * freq_hz * t) * 8000).astype("<i2").tobytes()
+
+
+def _fixed_pred(confidence: float):
+    """utils 실물 판정 함수로 만든 고정 예측 dict. 0.7 미만이면 primary_sent=False."""
+    from ..utils import _apply_prediction_policy
+
+    rest = round((1.0 - confidence) / 2, 2)
+    scores = {"doorbell": confidence, "knock": rest, "fire_alarm": rest}
+    return _apply_prediction_policy("doorbell", confidence, scores, None)
+
+
+# 요청마다 달라지는 값 — 응답 · 저장 비교에서 뺀다
+_VOLATILE = ("client_request_id", "request_id", "detected_at", "device_id")
+
+
+class DetectObserveTest(_AppCase):
+    """/detect 등록 계측 훅 — 템플릿 저장 · 거리 기록 · 발송 · 응답 영향 0."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.db.session.execute(text("DELETE FROM registration_matches"))
+        self.db.session.commit()
+        self._seq = 0
+
+    # ── 헬퍼 ──
+    def _detect(self, pcm, crid=None, confidence=0.5):
+        import io
+
+        self._seq += 1
+        crid = crid or f"obs-{self._testMethodName}-{self._seq}"
+        # rate limit 이 기기별 5초라 요청마다 device_id 를 바꾼다
+        data = {
+            "client_request_id": crid,
+            "device_id": f"dev-{self._testMethodName}-{self._seq}",
+            "audio": (io.BytesIO(pcm), "a.pcm"),
+        }
+        with mock.patch("app.routes.mock_prediction", return_value=_fixed_pred(confidence)):
+            return self.client.post(
+                "/api/v1/detect",
+                headers=self._auth(_DEVICE_TOKEN),
+                data=data,
+                content_type="multipart/form-data",
+            )
+
+    def _count(self, table):
+        return self.db.session.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()
+
+    def _matches(self):
+        import json
+
+        rows = self.db.session.execute(text(
+            "SELECT client_request_id, registration_id, predicted_class, template_count, "
+            "distances, min_distance, mean_distance, compare_ms FROM registration_matches "
+            "ORDER BY id"
+        )).all()
+        return [SimpleNamespace(**{**r._asdict(), "distances": json.loads(r.distances)}) for r in rows]
+
+    def _register(self, pcms):
+        from ..utils import utc_now
+
+        now = utc_now()
+        self._start_direct(len(pcms), seconds=600, now=now)
+        for i, p in enumerate(pcms):
+            self.reg.add_template(p, f"seed-{i}", now)
+        self.db.session.commit()
+        self.assertEqual(self.reg.status(now)["state"], "registered")
+
+    def _stored_notification(self, crid):
+        from ..models import Notification
+
+        self.db.session.expire_all()  # 요청이 쓴 값을 DB 에서 다시 읽는다
+        return self.db.session.query(Notification).filter_by(client_request_id=crid).one().to_dict()
+
+    # ── 상태별 ──
+    def test_none_writes_nothing(self):
+        resp = self._detect(_tone(440))
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual((self._count("registration_templates"), self._count("registration_matches")), (0, 0))
+
+    def test_expired_writes_nothing(self):
+        from ..utils import utc_now
+
+        self._start_direct(2, seconds=1, now=utc_now() - timedelta(seconds=10))
+        resp = self._detect(_tone(440))
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual((self._count("registration_templates"), self._count("registration_matches")), (0, 0))
+
+    def test_collecting_saves_templates_until_registered(self):
+        from ..utils import utc_now
+
+        self._start_direct(2, seconds=600, now=utc_now())
+        pcms = [_tone(440), _tone(660)]
+        crids = []
+        for p in pcms:
+            resp = self._detect(p)
+            self.assertEqual(resp.status_code, 201)
+            crids.append(resp.get_json()["client_request_id"])
+        self.db.session.expire_all()
+        self.assertEqual(self.reg.status(utc_now())["state"], "registered")
+        rows = self.db.session.execute(text(
+            "SELECT client_request_id, pcm FROM registration_templates ORDER BY id"
+        )).all()
+        self.assertEqual([(r[0], r[1]) for r in rows], list(zip(crids, pcms)))
+        self.assertEqual(self._count("registration_matches"), 0)
+
+    def test_registered_records_distances_matching_sound_match(self):
+        from inference.audio_decode import decode_pcm16
+
+        from ..sound_match import dtw_cosine_distance, waveform_to_template
+
+        stored = [_tone(440), _tone(880)]
+        self._register(stored)
+        query_pcm = _tone(660)
+        resp = self._detect(query_pcm)
+        self.assertEqual(resp.status_code, 201)
+
+        (m,) = self._matches()
+        q = waveform_to_template(decode_pcm16(query_pcm)[0])
+        expected = [dtw_cosine_distance(waveform_to_template(decode_pcm16(p)[0]), q) for p in stored]
+        self.assertEqual(m.client_request_id, resp.get_json()["client_request_id"])
+        self.assertEqual(m.predicted_class, "doorbell")
+        self.assertEqual(m.template_count, 2)
+        self.assertEqual(m.distances, expected)
+        self.assertTrue(all(d > 0 for d in expected))  # 거리가 전부 0 이면 비교가 무딘 것
+        self.assertEqual(m.min_distance, min(expected))
+        self.assertAlmostEqual(m.mean_distance, sum(expected) / 2)
+        self.assertGreaterEqual(m.compare_ms, 0)
+        reg_id = self.db.session.execute(
+            text("SELECT registration_id FROM registration_state")
+        ).scalar_one()
+        self.assertEqual(m.registration_id, reg_id)
+        self.assertEqual(self._count("registration_templates"), 2)  # 등록 뒤엔 템플릿 불변
+
+    def test_idempotent_replay_writes_nothing(self):
+        from ..utils import utc_now
+
+        with self.subTest("collecting"):
+            self._start_direct(3, seconds=600, now=utc_now())
+            self.assertEqual(self._detect(_tone(440), crid="replay-c").status_code, 201)
+            resp = self._detect(_tone(440), crid="replay-c")
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.headers.get("Idempotent-Replay"), "true")
+            self.assertEqual(self._count("registration_templates"), 1)
+        with self.subTest("registered"):
+            self.reg.clear()
+            self.db.session.commit()
+            self._register([_tone(440)])
+            self.assertEqual(self._detect(_tone(660), crid="replay-r").status_code, 201)
+            self.assertEqual(self._detect(_tone(660), crid="replay-r").status_code, 200)
+            self.assertEqual(self._count("registration_matches"), 1)
+            self.assertEqual(self._count("registration_templates"), 1)
+
+    def test_response_and_stored_notification_unchanged_by_registration(self):
+        from ..utils import utc_now
+
+        def strip(d):
+            return {k: v for k, v in d.items() if k not in _VOLATILE}
+
+        def run(label):
+            resp = self._detect(_tone(660))
+            self.assertEqual(resp.status_code, 201, label)
+            body = resp.get_json()
+            return strip(body), strip(self._stored_notification(body["client_request_id"]))
+
+        baseline = run("none")
+        self._start_direct(3, seconds=600, now=utc_now())
+        collecting = run("collecting")
+        self.reg.clear()
+        self.db.session.commit()
+        self._register([_tone(440)])
+        registered = run("registered")
+
+        self.assertEqual(self._count("registration_matches"), 1)  # 훅이 실제로 돌았다
+        self.assertEqual(collecting, baseline)
+        self.assertEqual(registered, baseline)
+        # 응답 본문과 저장 행이 같은 내용이다(저장 뒤 훅이 행을 바꾸지 않았다)
+        self.assertEqual(registered[0], registered[1])
+
+    def test_hook_failure_is_logged_and_detect_proceeds(self):
+        self._register([_tone(440)])
+        with mock.patch(
+            "app.registration_observe.dtw_cosine_distance", side_effect=RuntimeError("boom")
+        ), self.assertLogs(self.app.logger, "ERROR") as logs:
+            resp = self._detect(_tone(660))
+        self.assertEqual(resp.status_code, 201)
+        crid = resp.get_json()["client_request_id"]
+        self.assertIn(crid, "\n".join(logs.output))
+        self.assertIn("boom", "\n".join(logs.output))  # traceback 포함(logger.exception)
+        self.assertEqual(self._stored_notification(crid)["client_request_id"], crid)
+        self.assertEqual(self._count("registration_matches"), 0)
+
+    def test_template_saved_after_kakao_send_in_same_commit(self):
+        # 훅이 카카오 발송 앞에서 템플릿을 add 하면 진짜 가드가 RuntimeError 를 내 500 이 된다.
+        from .. import kakao
+        from ..utils import utc_now
+
+        real_guard = kakao._assert_commit_is_safe
+
+        def fake_send(predicted_class):
+            real_guard()
+            return None
+
+        self._start_direct(2, seconds=600, now=utc_now())
+        with mock.patch("app.kakao.send_primary_text", side_effect=fake_send) as send:
+            resp = self._detect(_tone(440), confidence=0.9)
+        self.assertEqual(resp.status_code, 201, resp.get_data(as_text=True))
+        send.assert_called_once_with("doorbell")
+        self.assertTrue(resp.get_json()["notification_status"]["primary_sent"])
+        self.assertEqual(self._count("registration_templates"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
