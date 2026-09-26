@@ -30,7 +30,7 @@ from pathlib import Path
 from ..pipeline.config import MIN_DURATION_SEC, SAMPLE_RATE, source_key
 from .select_negatives import CANDIDATE_FIELDS
 
-CLASS_DIR = "other"   # 🔴 config.CLASSES 에는 아직 넣지 않는다(33.13(d) 머지 순서)
+CLASS_DIR = "other"   # config.CLASSES 인덱스 3 과 같은 이름(33.13(d))
 CLIP_SEC = 3.0
 CLIP_SAMPLES = int(CLIP_SEC * SAMPLE_RATE)  # 48000
 REPO_ROOT = Path(__file__).resolve().parents[2]
