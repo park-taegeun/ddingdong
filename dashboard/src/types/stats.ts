@@ -35,6 +35,7 @@ export interface TimingMetrics {
 }
 
 export interface SkipReasonCounts {
+  not_target: number
   low_confidence: number
   tof_rejected: number
   kakao_api_error: number

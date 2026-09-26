@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { formatPercent } from "@/lib/format"
-import { CLASS_META, PREDICTED_CLASS_ORDER } from "@/lib/notification-meta"
+import { CLASS_META, STATS_CLASS_ORDER } from "@/lib/notification-meta"
 import { cn } from "@/lib/utils"
 import type { ClassDistribution } from "@/types/stats"
 
@@ -15,7 +15,7 @@ export function ClassDistributionCard({
         <CardTitle className="text-h3">소리 종류별 분포</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {PREDICTED_CLASS_ORDER.map((cls) => {
+        {STATS_CLASS_ORDER.map((cls) => {
           const meta = CLASS_META[cls]
           const item = distribution[cls]
           const Icon = meta.icon
