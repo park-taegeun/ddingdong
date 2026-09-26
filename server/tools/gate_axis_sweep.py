@@ -8,7 +8,7 @@
 33.6(a)(d)에 「사용자 판단 대기」로 등재된 별건이며 본 하네스는 그 판단을 대신하지 않는다.
 
 **측정 경로**(33.6(b)(d)와 동일): HTTP 미경유. 프로즌 `inference.model_runner.ModelRunner`
-(= `tf.saved_model.load` + (1, len(`PREDICTED_CLASSES`)) 시그니처 계약 검사)로 직접 추론하고, 전처리는 프로즌
+(= `tf.saved_model.load` + (1, `NUM_CLASSES`)(`inference.constants`) 시그니처 계약 검사)로 직접 추론하고, 전처리는 프로즌
 `inference.audio_decode.decode_pcm16`을 **import해서** 쓴다(자체 구현 금지 — 학습 파이프라인과
 동일 전처리임을 보장하는 것이 33.6(b) 재현의 핵심). 판정 어휘는 프로즌
 `app.model_serving.scores_to_prediction`(2자리 반올림)과 `app.constants.CONFIDENCE_THRESHOLD`
@@ -60,9 +60,9 @@
    - `[raw vs rounded]` 줄 = 두 게이트 기준의 분류 일치 여부(33.6(e)).
    - ⓐ `not_target` 축 = 예측이 `other`인 행(신뢰도와 무관, 신뢰도 게이트보다 **앞** —
      33.13(a) E1·E2). 3클래스 모델(33.6(b)(d) 기준값) 입력에서는 원리상 전 칸 0이다.
-   - ⓑ 기준 세트가 아닌 입력(재학습 모델 · 새 split)에서는 `[재현 대조]`가 거의 항상
-     불일치라 종료 코드는 **항상 1**로 끝난다 — 그 상태에서 raw↔rounded 불일치(33.6(e))
-     건수는 종료 코드가 아니라 `[raw vs rounded]` 줄과 `--rows-out` rows CSV로 읽는다.
+   - ⓑ 기준 세트가 아닌 입력(재학습 모델 · 새 split)에서는 총 건수부터 `BASELINE_TOTAL`과
+     어긋나 종료 코드는 1(기준값 불일치)로 끝난다(33.8) — 그 상태에서 raw↔rounded 불일치
+     (33.6(e)) 건수는 종료 코드가 아니라 `[raw vs rounded]` 줄과 `--rows-out` rows CSV로 읽는다.
      `other` 예측 행은 raw·rounded 두 열 모두 `not_target`이라 그 건수에 안 들어간다
      (제품에서도 other 게이트가 반올림 영향을 받는 신뢰도 게이트보다 앞에 있다).
    - 종료 코드: 0 전건 일치 / 1 재현 불일치 / 2 raw↔rounded 불일치(결과이지 실패 아님) /
@@ -545,9 +545,9 @@ def self_test() -> int:
     import numpy as np
 
     def scores(*p):
-        # 폭 = len(PREDICTED_CLASSES) — 모자란 열은 0.0으로 채운다(NC 가 · Step 6에서
-        # 4클래스 브랜치에 이 커밋을 얹으면 폭 고정 3 복원이 다시 IndexError를 내는지로
-        # 검출된다). 3클래스에선 len(p)==폭이라 패딩이 0개 = 바이트 동일.
+        # 폭 = len(PREDICTED_CLASSES) — 모자란 열은 0.0으로 채운다. 폭을 3으로 고정하면
+        # 4클래스(#83 이후)에서 IndexError — main 3클래스에선 도달 불가라 이 결함은 4클래스
+        # 체크아웃에서만 검출된다. 3클래스에선 len(p)==폭이라 패딩이 0개 = 바이트 동일.
         width = len(PREDICTED_CLASSES)
         padded = list(p) + [0.0] * (width - len(p))
         return np.array([padded], dtype=np.float32)
