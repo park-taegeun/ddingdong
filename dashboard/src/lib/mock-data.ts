@@ -21,7 +21,7 @@ export const MOCK_NOTIFICATIONS: NotificationItem[] = [
     detected_at: "2026-05-28T16:02:11.900+09:00",
     predicted_class: "knock",
     confidence: 0.79,
-    all_scores: { doorbell: 0.16, knock: 0.79, fire_alarm: 0.05 },
+    all_scores: { doorbell: 0.16, knock: 0.79, fire_alarm: 0.05, other: 0 },
     tof_check: {
       applied: true,
       passed: true,
@@ -48,7 +48,7 @@ export const MOCK_NOTIFICATIONS: NotificationItem[] = [
     detected_at: "2026-05-28T15:30:45.456+09:00",
     predicted_class: "doorbell",
     confidence: 0.87,
-    all_scores: { doorbell: 0.87, knock: 0.09, fire_alarm: 0.04 },
+    all_scores: { doorbell: 0.87, knock: 0.09, fire_alarm: 0.04, other: 0 },
     tof_check: {
       applied: true,
       passed: true,
@@ -80,7 +80,7 @@ export const MOCK_NOTIFICATIONS: NotificationItem[] = [
     detected_at: "2026-05-28T14:12:08.220+09:00",
     predicted_class: "knock",
     confidence: 0.81,
-    all_scores: { doorbell: 0.14, knock: 0.81, fire_alarm: 0.05 },
+    all_scores: { doorbell: 0.14, knock: 0.81, fire_alarm: 0.05, other: 0 },
     tof_check: {
       applied: true,
       passed: true,
@@ -113,7 +113,7 @@ export const MOCK_NOTIFICATIONS: NotificationItem[] = [
     detected_at: "2026-05-28T13:05:33.100+09:00",
     predicted_class: "fire_alarm",
     confidence: 0.93,
-    all_scores: { doorbell: 0.04, knock: 0.03, fire_alarm: 0.93 },
+    all_scores: { doorbell: 0.04, knock: 0.03, fire_alarm: 0.93, other: 0 },
     tof_check: {
       applied: false,
       passed: null,
@@ -140,7 +140,7 @@ export const MOCK_NOTIFICATIONS: NotificationItem[] = [
     detected_at: "2026-05-28T11:48:20.700+09:00",
     predicted_class: "doorbell",
     confidence: 0.52,
-    all_scores: { doorbell: 0.52, knock: 0.39, fire_alarm: 0.09 },
+    all_scores: { doorbell: 0.52, knock: 0.39, fire_alarm: 0.09, other: 0 },
     tof_check: {
       // 거부 상태(passed=false). 신뢰도 게이트가 ToF 보다 먼저 걸려(G12 확정, PR #46)
       // skip_reason 은 low_confidence 지만, 게이트를 적용해 사람이 없었다는 기록은 남는다.
@@ -196,6 +196,12 @@ export const MOCK_STATS: StatsResponse = {
       average_confidence: 0.91,
       notifications_sent: 1,
     },
+    other: {
+      count: 0,
+      percentage: 0,
+      average_confidence: 0,
+      notifications_sent: 0,
+    },
   },
   timing_metrics: {
     primary_notification_avg_ms: 2847,
@@ -206,6 +212,7 @@ export const MOCK_STATS: StatsResponse = {
     secondary_under_15s_rate: 0.92,
   },
   skip_reasons: {
+    not_target: 0,
     low_confidence: 2,
     tof_rejected: 1,
     kakao_api_error: 0,

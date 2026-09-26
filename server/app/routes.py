@@ -546,7 +546,7 @@ def _build_stats(rows, start_kst, end_kst):
     skipped = [n for n in rows if not n.primary_sent]
     avg_conf = round(sum(n.confidence for n in rows) / total, 2) if total else 0.0
 
-    # 클래스별 분포 (3종 모두 키 존재 — ClassDistribution = Record<PredictedClass, ...>)
+    # 클래스별 분포 (4종 모두 키 존재 — ClassDistribution = Record<PredictedClass, ...>)
     class_distribution = {}
     for cls in PREDICTED_CLASSES:
         group = [n for n in rows if n.predicted_class == cls]
@@ -560,8 +560,9 @@ def _build_stats(rows, start_kst, end_kst):
             "notifications_sent": sum(1 for n in group if n.primary_sent),
         }
 
-    # skip 사유별 집계 (SkipReasonCounts 4종 키 고정)
+    # skip 사유별 집계 (SkipReasonCounts 5종 키 고정)
     skip_reasons = {
+        "not_target": 0,
         "low_confidence": 0,
         "tof_rejected": 0,
         "kakao_api_error": 0,
