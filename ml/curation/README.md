@@ -192,3 +192,45 @@ python -m ml.curation.zeroth_negatives slice \
 ```bash
 python -m ml.curation.tests.test_zeroth_negatives   # ffmpeg 필요
 ```
+
+## 직접녹음 모드 (소리 시작점 기준 3초)
+
+녹음 전용 수신기(`server/tools/record_receiver.py`)가 만든 폴더의 `post/`(누른 뒤 5.12초)를
+33.7(i) 「소리 시작점 기준 3초」 조각으로 자른다. `pre/` 는 읽지 않는다.
+
+```bash
+python -m ml.curation.slice_direct \
+  --recording-dir "~/ddingdong-측정결과/<날짜>/direct_rec" \
+  --out-dir       "~/ddingdong-측정결과/<날짜>/direct_clips" \
+  --baseline-ms <ms> --onset-ratio <배수> --onset-floor <|x|> --dry-run
+```
+
+- **onset** — 분석 스크립트 `take_check.py` 정의를 그대로 따르고, 다른 점은 하나다:
+  **클램프 샘플(|x| ≥ 32767, −32767 · −32768 포함)을 기준 계산과 탐색에서 건너뛴다**
+  (6.3(q) 고립 1샘플 글리치가 onset 이 되지 않게).
+  기준 = 첫 `baseline_ms` 구간 |x| 의 `median_high`(0 이면 1), onset = 0번 샘플부터 처음으로
+  |x| > `onset_ratio` × 기준 이고 |x| > `onset_floor` 인 샘플.
+- **창** — onset 을 ms 로 내림한 지점부터 정확히 48000 샘플(원본 샘플 그대로 — 리샘플 ·
+  정규화 · pad 0). 시작 + 3초가 파일 끝을 넘으면 끝에 맞춰 앞으로 당기고 `shifted=1` 로 남긴다
+  (5.3(d) 설계 입력). 창 앞 여유 구간은 두지 않는다.
+- **출력** — `{out-dir}/{label}/{입력 stem}_{start_ms:07d}.wav`. `source_key` = `direct_{label}_{unit}`
+  (유닛 그룹 키, D3). 산출 조각은 `KOREAN_SOURCE_MARKERS` 로 pitch 대상이 된다.
+- **멱등(테이크 단위)** — 같은 입력 stem 의 기존 조각이 새 PCM 과 같으면 `skipped_exists`,
+  다르면(start 가 달라도) `rejected_conflict` — 기존 파일은 건드리지 않는다. 대소문자만 다른
+  stem(macOS 기본 FS 에서 같은 파일)은 `rejected_case_conflict`. ⇒ 한 테이크 = 조각 ≤ 1.
+- **거부 사유** — `rejected_name`(`direct_{label}_{unit}_{take}.wav` 아님) · `rejected_label`
+  (doorbell · knock 외 — 화재경보는 5.3(b) 학습용 녹음 보류) · `rejected_decode` ·
+  `rejected_format`(1ch · 2byte · 16kHz 외, 변환 안 함) · `rejected_too_short`(48000 샘플 미만,
+  pad 안 함) · `rejected_no_onset`(임계 · 비클램프 최대 |x| 기록, onset 대체 안 함).
+  거부는 실패가 아니다(종료 코드 0). 쓰기 실패(`failed_write`)만 종료 코드 1.
+- **산출** — `direct_slice_manifest.csv`(세션마다 **append**, 헤더 1회. `clip_clamp_count` =
+  입력 전체의 |x| ≥ 32767 샘플 수) · `direct_slice_summary.md`(실행마다 덮어씀 — 수신기
+  `manifest.csv` 의 `post_saved` 행 수 ↔ `post/` wav 수 대조를 기록, 불일치는 기록만).
+  `--dry-run` 은 폴더 · wav · manifest 를 만들지 않고 요약만 출력한다.
+- `--out-dir` 가드 = 네거티브 모드와 같고(repo · 데이터셋 폴더 밖), `--recording-dir` 안도 거부한다.
+- 🔴 값 3개(`--baseline-ms` · `--onset-ratio` · `--onset-floor`)는 **필수 · 기본값 없음** — 재학습
+  당일 결정. `01_clips` 투입은 재학습 당일 **수동 단계**다(도구는 하지 않는다).
+
+```bash
+python -m ml.curation.tests.test_slice_direct   # ffmpeg 불요
+```
