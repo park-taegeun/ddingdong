@@ -1,0 +1,75 @@
+{
+  "generator": "server/app/tests/fixtures/make_sound_match_fixture.py",
+  "command": "python -B server/app/tests/fixtures/make_sound_match_fixture.py (repo 루트, librosa 환경)",
+  "path": "soundfile PCM_16 wav → features.wav_to_template → distance.dtw_cosine(backend='exact')",
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "1.26.4",
+    "librosa": "0.11.0",
+    "soundfile": "0.14.0",
+    "fastdtw_installed": false
+  },
+  "frozen_sha256": {
+    "features.py": "7fd4832f3eec557a6cb8236e7444b4deb9969fb00f13f81e1b1814a6726dd8a2",
+    "distance.py": "7b00a841bdab1d809310fa21097278809c87d18ada8174902b33a9d37f63a16f",
+    "constants.py": "3145d06eaee09c1cb2b45d8e67de77aa10d1b0437b9af27222b3df5c1313b0d0"
+  },
+  "frames": {
+    "bell_a": 205,
+    "bell_b": 205,
+    "sweep_noise": 205,
+    "long_mix": 421
+  },
+  "distances": [
+    {
+      "a": "bell_a",
+      "b": "bell_a",
+      "distance": 1.7445261885480182e-08
+    },
+    {
+      "a": "bell_a",
+      "b": "bell_b",
+      "distance": 0.06705448569321051
+    },
+    {
+      "a": "bell_a",
+      "b": "sweep_noise",
+      "distance": 0.4525701599877055
+    },
+    {
+      "a": "bell_a",
+      "b": "long_mix",
+      "distance": 0.4466160719059716
+    },
+    {
+      "a": "bell_b",
+      "b": "bell_b",
+      "distance": 4.5357680902248476e-08
+    },
+    {
+      "a": "bell_b",
+      "b": "sweep_noise",
+      "distance": 0.45171615830281886
+    },
+    {
+      "a": "bell_b",
+      "b": "long_mix",
+      "distance": 0.45489225909729636
+    },
+    {
+      "a": "sweep_noise",
+      "b": "sweep_noise",
+      "distance": 0.08536585118712449
+    },
+    {
+      "a": "sweep_noise",
+      "b": "long_mix",
+      "distance": 0.45676769057581246
+    },
+    {
+      "a": "long_mix",
+      "b": "long_mix",
+      "distance": 0.058749974966049195
+    }
+  ]
+}
