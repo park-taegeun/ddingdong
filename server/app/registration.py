@@ -147,6 +147,17 @@ def add_template(pcm, client_request_id, now):
     return "added"
 
 
+def current(now):
+    """(상태 문자열, 상태 행 또는 None). 읽기 전용 — 상태 행 조회 1회.
+
+    /detect 계측 훅이 none · expired 를 이 조회 하나로 끝내고, registered 면 측정 기록에
+    registration_id 를 남기려고 쓴다. 뒤이은 add_template · load_registered_templates 의
+    행 조회는 세션 identity map 에서 나와 쿼리가 더 나가지 않는다.
+    """
+    row = _row()
+    return state_of(row, now), row
+
+
 def load_registered_templates():
     """registered 면 현재 registration_id 의 PCM bytes 목록(생성 순), 아니면 []."""
     row = _row()

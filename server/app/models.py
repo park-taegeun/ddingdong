@@ -163,3 +163,26 @@ class RegistrationTemplate(db.Model):
     client_request_id: Mapped[str]  # 어느 /detect 요청이 템플릿이 됐는지 추적
     pcm: Mapped[bytes]
     created_at: Mapped[datetime]  # naive UTC
+
+
+class RegistrationMatch(db.Model):
+    """등록 뒤 /detect 마다 저장 템플릿과 잰 DTW-cosine 거리 기록 (관측 전용, 판정 0).
+
+    로그가 아니라 테이블인 이유: 이 서버는 로그 레벨을 설정하지 않아 INFO 줄이 기본
+    출력되지 않는다(/detect 의 "detect audio decoded" 줄이 기본 로그 레벨에서 안 보였다).
+    테이블이면 세션이 끝난 뒤에도 거리 분포를 꺼내 볼 수 있다.
+    PCM 은 저장하지 않는다 — 숫자만. 삭제 경로 없음(등록을 해제해도 분석용 이력으로 남는다).
+    """
+
+    __tablename__ = "registration_matches"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    client_request_id: Mapped[str] = mapped_column(index=True)
+    registration_id: Mapped[str]
+    predicted_class: Mapped[str]  # 클래스와 무관하게 전부 기록 — 클래스 간 거리도 판정 입력
+    template_count: Mapped[int]
+    distances: Mapped[list] = mapped_column(JSON)  # 템플릿 생성 순
+    min_distance: Mapped[float]
+    mean_distance: Mapped[float]
+    compare_ms: Mapped[float]  # 저장 템플릿 디코드 · 특징 + 질의 특징 + DTW 전체
+    created_at: Mapped[datetime]  # naive UTC

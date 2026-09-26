@@ -13,7 +13,7 @@ import numpy as np
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import select
 
-from . import image_store, kakao, model_serving, rate_limit, stt, tof_meta
+from . import image_store, kakao, model_serving, rate_limit, registration_observe, stt, tof_meta
 from .auth import dashboard_auth, device_auth
 from .constants import (
     AUDIO_FILE_FIELD,
@@ -214,6 +214,11 @@ def detect():
             response_json=body,
             created_at=now,
         )
+    )
+    # 등록 계측(관측 전용 — 발송 · 응답 영향 0). 카카오 발송 뒤 · commit 앞이어야 한다:
+    # 발송 앞에서 템플릿을 add 하면 kakao._assert_commit_is_safe() 가 RuntimeError 를 낸다.
+    registration_observe.observe(
+        audio_bytes, waveform, client_request_id, pred["predicted_class"], now
     )
     db.session.commit()
     return jsonify(body), 201
