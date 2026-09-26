@@ -12,7 +12,6 @@ YAMNet 임베딩은 backbone(embed_fn)에 위임 — 실학습은 hub YAMNet, �
 from __future__ import annotations
 
 import csv
-import logging
 from pathlib import Path
 
 import numpy as np
@@ -20,57 +19,62 @@ import numpy as np
 from ml.pipeline import audio_io
 from . import config
 
-log = logging.getLogger("ml.training.data")
-
 
 # --------------------------------------------------------------------------
 # 1) 인덱싱 (TF 불필요 — 단독 테스트 가능)
 # --------------------------------------------------------------------------
-def list_examples(final_dir: Path, split: str) -> list[tuple[Path, int]]:
+def list_examples(
+    final_dir: Path, split: str, classes: tuple[str, ...]
+) -> list[tuple[Path, int]]:
     """05_final_dataset/{split}/{class}/*.wav → [(path, label_index)] (정렬 = 재현성).
 
-    라벨 인덱스는 config.CLASS_TO_INDEX(SSoT). 빈 클래스 폴더는 조용히 건너뜀.
+    라벨 인덱스 = classes 안의 위치(resolve_classes 로 정규화된 튜플을 넘길 것).
+    요청 클래스가 이 split 에서 0개면 즉시 ValueError(조용히 건너뛰지 않음).
     """
     if split not in config.SPLITS:
         raise ValueError(f"알 수 없는 split: {split!r} (허용: {config.SPLITS})")
     examples: list[tuple[Path, int]] = []
     split_dir = final_dir / split
-    for cls in config.CLASSES:               # CLASSES 순서로 순회 → 라벨 인덱스 고정
-        label = config.CLASS_TO_INDEX[cls]
-        for wav in audio_io.iter_audio_files(split_dir / cls):
-            examples.append((wav, label))
-    if not examples:
-        raise FileNotFoundError(
-            f"학습 예제 0개: {split_dir} 아래 {config.CLASSES} 클립이 없음.\n"
-            f"  → 먼저 `python -m ml.pipeline.run_all` 로 05_final_dataset 생성 필요."
-        )
+    for label, cls in enumerate(classes):
+        wavs = list(audio_io.iter_audio_files(split_dir / cls))
+        if not wavs:
+            raise ValueError(
+                f"빈 클래스: split={split} class={cls} 클립 0개 @ {split_dir / cls}\n"
+                f"  → 05_final_dataset 을 확인하거나 이 클래스를 --classes 에서 뺄 것."
+            )
+        examples.extend((wav, label) for wav in wavs)
     return examples
 
 
-def load_manifest(manifests_dir: Path, split: str) -> list[tuple[Path, int]]:
-    """대안 인덱싱: final_manifest.csv 에서 split 행만 → [(path, label)].
+def load_manifest(
+    manifests_dir: Path, split: str, classes: tuple[str, ...]
+) -> list[tuple[Path, int]]:
+    """대안 인덱싱: final_manifest.csv 에서 split·classes 행만 → [(path, label)].
 
     (기본은 list_examples 폴더 스캔. manifest 를 쓰고 싶을 때만 호출.)
     """
     path = manifests_dir / "final_manifest.csv"
+    index = {c: i for i, c in enumerate(classes)}
     with path.open(newline="", encoding="utf-8") as f:
-        rows = [r for r in csv.DictReader(f) if r["split"] == split]
-    return [(Path(r["filepath"]), config.CLASS_TO_INDEX[r["class"]]) for r in rows]
+        rows = [r for r in csv.DictReader(f) if r["split"] == split and r["class"] in index]
+    empty = [c for c in classes if not any(r["class"] == c for r in rows)]
+    if empty:
+        raise ValueError(f"빈 클래스: split={split} class={empty} 행 0개 @ {path}")
+    return [(Path(r["filepath"]), index[r["class"]]) for r in rows]
 
 
-def compute_class_weights(labels: list[int]) -> dict[int, float]:
+def compute_class_weights(labels: list[int], num_classes: int) -> dict[int, float]:
     """sklearn 'balanced' 방식으로 실측 배분에서 class_weight 자동 산출(하드코딩 금지).
 
     balanced: w_c = n_total / (n_classes * n_c). 소수 클래스에 큰 가중.
+    어떤 클래스가 0개면 balanced 가 정의되지 않으므로 즉시 ValueError(균등 폴백 없음).
     """
     from sklearn.utils.class_weight import compute_class_weight
 
-    classes = np.arange(config.NUM_CLASSES)
-    present = np.array(sorted(set(labels)))
-    if len(present) < config.NUM_CLASSES:
-        # 방어: 어떤 클래스가 train 에 0개면 balanced 가 계산 불가 → 균등 1.0 로 폴백 + 경고.
-        log.warning("일부 클래스가 train 에 없음(%s) → class_weight 균등 1.0 폴백", present.tolist())
-        return {int(c): 1.0 for c in classes}
+    classes = np.arange(num_classes)
+    missing = sorted(set(classes.tolist()) - set(labels))
+    if missing:
+        raise ValueError(f"class_weight 산출 불가: 라벨 인덱스 {missing} 가 0개")
     weights = compute_class_weight("balanced", classes=classes, y=np.asarray(labels))
     return {int(c): float(w) for c, w in zip(classes, weights)}
 
