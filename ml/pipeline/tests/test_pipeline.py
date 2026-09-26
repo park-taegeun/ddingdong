@@ -583,6 +583,33 @@ def test_zeroth_speaker_group_key():
     return len(stems) + 1
 
 
+def test_boardbg_unit_group_key():
+    """T11 — 보드 배경 조각은 유닛 단위로 묶인다(테이크마다 갈리면 같은 보드 잡음이 train·test 로 누수)."""
+    stems = ("boardbg_home_03_0000000", "boardbg_home_04_0000000", "boardbg_home_123_0003000",
+             "boardbg_home_03")
+    for stem in stems:
+        assert config.source_key(stem) == "boardbg_home", stem
+    assert config.source_key("boardbg_bg2_01_0000000") == "boardbg_bg2"
+    # 대표 stem(공개데이터 3계열 · direct_ · zeroth_ · 접두 불일치) — 기존 키 불변
+    for stem, key in (("100634_0000000", "100634"),
+                      ("S-211107_S_103_C_015_0001_0003000", "S-211107_S_103_C_015_0001"),
+                      ("_Uf47SnKl5Q_30.0_40.0_0003000", "_Uf47SnKl5Q_30.0_40.0"),
+                      ("direct_doorbell_home_01_0001000", "direct_doorbell_home"),
+                      ("zeroth_106_003_0077_0000000", "zeroth_106"),
+                      ("xboardbg_home_03_0000000", "xboardbg_home_03")):
+        assert config.source_key(stem) == key, stem
+    return len(stems) + 1
+
+
+def test_other_snr_lookup():
+    """T12 — 결정 D-b: other 증강 SNR = 초인종·노크와 같은 (10, 20). CLASSES 는 건드리지 않는다."""
+    assert "other" not in config.CLASSES
+    assert config.BG_NOISE_SNR_DB["other"] == config.BG_NOISE_SNR_DB["knock"] == (10.0, 20.0)
+    out = augment._augment_one(_tone(46), "other", "boardbg_home_01_0000000")
+    assert {"snr10", "snr20"} <= set(out), sorted(out)
+    return sorted(out)
+
+
 def _main() -> int:
     counts, guard = test_pipeline_end_to_end()
     print("PASS — test_pipeline_end_to_end")
@@ -624,6 +651,10 @@ def _main() -> int:
     print(f"PASS — T9 test_pitch_markers_per_class (대상 {n_t} / 비대상 {n_o})")
     n_z = test_zeroth_speaker_group_key()
     print(f"PASS — T10 test_zeroth_speaker_group_key (zeroth stem {n_z} → 화자 키)")
+    n_b = test_boardbg_unit_group_key()
+    print(f"PASS — T11 test_boardbg_unit_group_key (boardbg stem {n_b} → 유닛 키 · 대표 stem 불변)")
+    tags = test_other_snr_lookup()
+    print(f"PASS — T12 test_other_snr_lookup (other 증강 태그 {tags})")
     for split_name in ("train", "val", "test"):
         row = counts[split_name]
         print(f"  {split_name:<5} " + " ".join(f"{c}={row[c]}" for c in config.CLASSES)
