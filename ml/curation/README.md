@@ -146,7 +146,7 @@ python -m ml.curation.slice_negatives \
 - `--out-dir` 가 repo 안이거나 데이터셋 스테이지 폴더(`00_source_raw` ~ `05_final_dataset` ·
   `manifests`) 안이면 거부한다. `01_clips` 투입은 재학습 당일 수동 단계다(5.2(a) · 33.12(e)).
 - `--dry-run` 은 wav · manifest 를 하나도 쓰지 않고 예상 조각 수만 출력한다.
-- 🔴 `config.CLASSES` 에 `other` 를 넣지 않는다 — 계약 PR 순서(33.13(d)).
+- 출력 폴더 이름 `other` = `config.CLASSES` 인덱스 3(33.13(d)).
 
 ```bash
 python -m ml.curation.tests.test_slice_negatives   # ffmpeg 필요
@@ -271,7 +271,7 @@ python -m ml.curation.slice_boardbg \
 - **산출** — `boardbg_slice_manifest.csv`(append, 헤더 1회 — 테이크 · 판정 · 사유 · 피크 · 클램프 수 ·
   검출 ms · 산출 파일 · 파라미터). `--dry-run` 은 판정 표만 출력한다.
 - `--out-dir` 가드 = 직접녹음 모드와 같다. 값 3개는 **필수 · 기본값 없음**. 증강 SNR 은
-  `BG_NOISE_SNR_DB["other"]` = (10, 20)(결정 D-b), `CLASSES` 편입은 재학습 당일.
+  `BG_NOISE_SNR_DB["other"]` = (10, 20)(결정 D-b), `CLASSES` 인덱스 3.
 
 **한계 — 소리 검사는 조용한 이벤트를 놓친다.** 2026-09-25 초인종 녹음(`direct_rec`, post 18개,
 유닛 home)에 이 도구를 값 100 / 20 / 500(take_check 값 — 확정 아님)으로 dry-run 한 결과:

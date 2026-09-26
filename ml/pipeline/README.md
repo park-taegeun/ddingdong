@@ -64,10 +64,10 @@ pip install numpy soundfile librosa scipy
 
 | 항목 | 값 (카테고리 5) |
 |---|---|
-| `CLASSES` | `("doorbell","knock","fire_alarm")` (코드 식별자 = 영문 고정) |
+| `CLASSES` | `("doorbell","knock","fire_alarm","other")` (코드 식별자 = 영문 고정, 순서 = 라벨 인덱스) |
 | `SAMPLE_RATE` / `CHANNELS` | 16000 / mono, 저장 `PCM_16` |
 | `TIME_STRETCH_RATES` | `(0.85, 1.15)` |
-| `BG_NOISE_SNR_DB` | doorbell·knock `(10,20)` / fire_alarm `(25,35)` dB |
+| `BG_NOISE_SNR_DB` | doorbell·knock·other `(10,20)` / fire_alarm `(25,35)` dB |
 | `VOLUME_GAIN_DB` | `-6.0` |
 | `PITCH_SHIFT_SEMITONES` | `(-2, +2)` — **한국 환경음만** (`PITCH_SHIFT_MODE`) |
 | `SPECAUGMENT` | freq=10/time=5 — **기록만**, 학습 시점 적용(waveform 단계 아님) |

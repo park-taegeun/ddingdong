@@ -15,6 +15,7 @@ import numpy as np
 from .. import assemble, augment, config, preprocess, split
 from ..audio_io import iter_audio_files, probe, save_wav
 from ..guards import ContentLeakageError, assert_no_content_leakage, assert_no_leakage
+from .. import make_dummy
 from ..make_dummy import make_dummy_dataset
 
 PER_CLASS = 6
@@ -203,7 +204,7 @@ def _make_piece_dataset(
     (AudioSet)와 source_key 파싱(끝 앵커·Path 함정)을 관통 검증.
     """
     rng = np.random.default_rng(seed)
-    freq = {"doorbell": 880.0, "knock": 220.0, "fire_alarm": 3000.0}
+    freq = {"doorbell": 880.0, "knock": 220.0, "fire_alarm": 3000.0, "other": 1500.0}
     paths = config.resolve_paths(root)
     for cls in config.CLASSES:
         for s in range(sources_per_class):
@@ -602,12 +603,26 @@ def test_boardbg_unit_group_key():
 
 
 def test_other_snr_lookup():
-    """T12 — 결정 D-b: other 증강 SNR = 초인종·노크와 같은 (10, 20). CLASSES 는 건드리지 않는다."""
-    assert "other" not in config.CLASSES
+    """T12 — 결정 D-b: other 증강 SNR = 초인종·노크와 같은 (10, 20). other 는 CLASSES 편입 클래스."""
+    assert "other" in config.CLASSES
     assert config.BG_NOISE_SNR_DB["other"] == config.BG_NOISE_SNR_DB["knock"] == (10.0, 20.0)
     out = augment._augment_one(_tone(46), "other", "boardbg_home_01_0000000")
     assert {"snr10", "snr20"} <= set(out), sorted(out)
     return sorted(out)
+
+
+def test_class_order_server_contract():
+    """T13 — 서버 계약 순서: 0·1·2 불변(doorbell/knock/fire_alarm), other = 3(33.13(d) 끝에 추가)."""
+    assert config.CLASSES[:3] == ("doorbell", "knock", "fire_alarm"), config.CLASSES
+    assert config.CLASSES[3] == "other" and len(config.CLASSES) == 4, config.CLASSES
+    return config.CLASSES
+
+
+def test_dummy_class_freq_distinct():
+    """T14 — 더미 클래스 분리 가능: 클래스마다 대표 주파수가 달라야 한다(같으면 KeyError 없이 학습만 흐려진다)."""
+    freqs = [make_dummy._CLASS_FREQ[c] for c in config.CLASSES]
+    assert len(set(freqs)) == len(freqs), dict(zip(config.CLASSES, freqs))
+    return dict(zip(config.CLASSES, freqs))
 
 
 def _main() -> int:
@@ -655,6 +670,8 @@ def _main() -> int:
     print(f"PASS — T11 test_boardbg_unit_group_key (boardbg stem {n_b} → 유닛 키 · 대표 stem 불변)")
     tags = test_other_snr_lookup()
     print(f"PASS — T12 test_other_snr_lookup (other 증강 태그 {tags})")
+    print(f"PASS — T13 test_class_order_server_contract ({test_class_order_server_contract()})")
+    print(f"PASS — T14 test_dummy_class_freq_distinct ({test_dummy_class_freq_distinct()})")
     for split_name in ("train", "val", "test"):
         row = counts[split_name]
         print(f"  {split_name:<5} " + " ".join(f"{c}={row[c]}" for c in config.CLASSES)
