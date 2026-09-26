@@ -234,3 +234,51 @@ python -m ml.curation.slice_direct \
 ```bash
 python -m ml.curation.tests.test_slice_direct   # ffmpeg 불요
 ```
+
+## 보드 배경 (INMP441 잡음 바닥 → `other`)
+
+사용자 결정 D-a(2026-09-26, PoC-(59)): 현 모델은 보드 배경(pre, 19개)을 19/19 knock 0.80~1.00 으로
+본다 ⇒ 보드 배경음을 `other` 네거티브에 넣는다. 소재는 **소리 없이 `s` 만 누른 전용 배경 테이크의
+`post/`(5.12초)** 다. `pre/`(2.048초)는 3초 미만이라 쓰지 않는다.
+
+**녹음 절차** — 녹음 전용 수신기를 **전용 `--out-dir`** 와 **`bg…` 유닛**으로 띄운다(`--label` 은
+수신기 필수 인자일 뿐 판정에 쓰지 않는다). 아무 소리도 내지 않고 `s` 를 12번 누르고, 12번마다
+보드 물리 리셋(수신기 세션 상한)을 한다.
+
+```bash
+cd server
+venv/bin/python3 tools/record_receiver.py --out-dir "$HOME/ddingdong-측정결과/$(date +%F)/boardbg_rec" \
+    --label knock --unit bg1 --port 5000
+```
+
+```bash
+python -m ml.curation.slice_boardbg \
+  --recording-dir "~/ddingdong-측정결과/<날짜>/boardbg_rec" \
+  --out-dir       "~/ddingdong-측정결과/<날짜>/boardbg_clips" \
+  --unit bg1 --baseline-ms <ms> --onset-ratio <배수> --onset-floor <|x|> --dry-run
+```
+
+- **유닛 가드** — `post/` 에 `direct_{label}_{unit}_{take}.wav` 규칙 밖 파일이 있거나 유닛이 `--unit` 과
+  하나라도 다르면(대소문자 포함) **실행 전체를 거부**한다(쓰기 0). 초인종 녹음 폴더를 잘못 넣는 사고 방지.
+- **테이크별 판정**(첫 매치에서 멈춤) — `rejected_format`(1ch · 2byte · 16kHz 외) → `rejected_short`
+  (48000 샘플 미만, pad 하지 않음 — 33.17(e) 끝 무음 가짜 단서) → `rejected_clamp`(|x| ≥ 32767 ≥ 1)
+  → `rejected_sound`(직접녹음 모드의 onset 검출이 파일 어디서든 걸림, 검출 ms 기록) → 통과.
+- **통과** — 비중첩 3초 분할, 잔여 버림(네거티브 모드와 같다. 5.12초 → `_0000000` 1조각). 원본 샘플
+  그대로(리샘플 · 정규화 0). 출력 `{out-dir}/other/boardbg_{unit}_{take}_{start_ms:07d}.wav`,
+  `source_key` = `boardbg_{unit}`(유닛 그룹 키 — D3 · Zeroth 화자 키와 같은 원칙).
+- **멱등** — 직접녹음 모드와 같다(`skipped_exists` · `rejected_conflict` · `rejected_case_conflict`).
+  label 만 다른 같은 테이크 번호(같은 산출 이름)는 둘 다 `rejected_name_conflict`.
+- **산출** — `boardbg_slice_manifest.csv`(append, 헤더 1회 — 테이크 · 판정 · 사유 · 피크 · 클램프 수 ·
+  검출 ms · 산출 파일 · 파라미터). `--dry-run` 은 판정 표만 출력한다.
+- `--out-dir` 가드 = 직접녹음 모드와 같다. 값 3개는 **필수 · 기본값 없음**. 증강 SNR 은
+  `BG_NOISE_SNR_DB["other"]` = (10, 20)(결정 D-b), `CLASSES` 편입은 재학습 당일.
+
+**한계 — 소리 검사는 조용한 이벤트를 놓친다.** 2026-09-25 초인종 녹음(`direct_rec`, post 18개,
+유닛 home)에 이 도구를 값 100 / 20 / 500(take_check 값 — 확정 아님)으로 dry-run 한 결과:
+`rejected_sound` 16 · `rejected_clamp` 1(11번, 클램프 5샘플) · **통과 1(19번 — 피크 614 의 조용한
+초인종)**. 초인종이 든 테이크 18개 중 1개(19번)가 「배경」으로 통과했다 ⇒ 가드는 보조 수단이고,
+배경 테이크는 **녹음 시점에 소리를 내지 않는 절차**가 1차 방어다.
+
+```bash
+python -m ml.curation.tests.test_slice_boardbg   # ffmpeg 불요
+```

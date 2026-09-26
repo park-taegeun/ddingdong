@@ -53,6 +53,9 @@ BG_NOISE_SNR_DB: dict[str, tuple[float, ...]] = {
     "doorbell": (10.0, 20.0),
     "knock": (10.0, 20.0),
     "fire_alarm": (25.0, 35.0),
+    # 2026-09-26 사용자 결정 D-b(PoC-(59)): other 도 초인종·노크와 같은 SNR — 양성만 증강하면
+    #   증강 흔적이 「양성」의 가짜 단서가 된다(33.17(e) pad 원리와 같다). CLASSES 편입은 재학습 당일.
+    "other": (10.0, 20.0),
 }
 # 실제 배경소음 파일 디렉토리(있으면 그 wav들을 잡음 소스로 사용). None이면 합성 잡음.
 BG_NOISE_DIR: Path | None = None
@@ -123,6 +126,11 @@ DIRECT_TAKE_PATTERN: re.Pattern[str] = re.compile(r"_\d+$")
 ZEROTH_PREFIX: str = "zeroth_"
 ZEROTH_UTT_PATTERN: re.Pattern[str] = re.compile(r"_\d+_\d+$")
 
+# 보드 배경음(INMP441 잡음 바닥) 네거티브 그룹 키 — 사용자 결정 D-a(2026-09-26, PoC-(59)).
+#   조각명 `boardbg_{유닛}_{테이크}_{start_ms:07d}`(ml/curation/slice_boardbg). 직접녹음 D3 ·
+#   Zeroth 화자 키와 같은 원칙으로 유닛까지를 그룹 키로 삼는다 ⇒ 끝 `_{테이크}` 를 한 번 더 제거.
+BOARDBG_PREFIX: str = "boardbg_"
+
 
 def source_key(stem: str) -> str:
     """파일 stem → 원본(source) key. 맨 끝 조각 suffix(`_\\d{7}$`) 하나만 제거.
@@ -140,12 +148,16 @@ def source_key(stem: str) -> str:
       여기서 건드리지 않는다.
     - Zeroth-Korean(`zeroth_` prefix)은 조각 suffix 제거 **후** 끝 `_{대본}_{발화}` 를 제거해
       **화자**를 그룹 키로 삼는다(`zeroth_{화자}`). 다른 stem 은 이 분기를 타지 않는다.
+    - 보드 배경(`boardbg_` prefix)은 조각 suffix 제거 **후** 끝 `_{테이크}` 를 제거해
+      **유닛**을 그룹 키로 삼는다(`boardbg_{유닛}`). 다른 stem 은 이 분기를 타지 않는다.
     """
     key = PIECE_SUFFIX_PATTERN.sub("", stem, count=1) or stem
     if key.startswith(DIRECT_RECORDING_PREFIX):
         key = DIRECT_TAKE_PATTERN.sub("", key, count=1) or key
     elif key.startswith(ZEROTH_PREFIX):
         key = ZEROTH_UTT_PATTERN.sub("", key, count=1) or key
+    elif key.startswith(BOARDBG_PREFIX):
+        key = DIRECT_TAKE_PATTERN.sub("", key, count=1) or key
     return key
 
 
