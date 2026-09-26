@@ -1,3 +1,4 @@
+import { DoorbellRegistrationCard } from "@/components/settings/DoorbellRegistrationCard"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Switch } from "@/components/ui/switch"
@@ -52,6 +53,8 @@ export function SettingsPage() {
           화면을 보기 편하게 맞춰보세요.
         </p>
       </header>
+
+      <DoorbellRegistrationCard />
 
       <Card>
         <CardHeader>
