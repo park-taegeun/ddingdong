@@ -16,6 +16,8 @@
     파일 전체 — 클램프 샘플은 건너뛰므로 고립 1샘플 클램프가 섞인 진짜 소리는 이웃 진폭으로 걸린다) → 통과.
   - 소리 검사 입력은 |x| 판정용 복사본에서 클램프 ±CLAMP_MASK_HALF_WIDTH 샘플(2ms)을 건너뛴다 — 글리치
     뒤 +18샘플의 두 번째 스파이크를 소리로 세지 않게. 마스크 밖으로 이어지는 소리는 그대로 걸린다.
+    상수 · 헬퍼 출처 = slice_direct(mask_glitch_clamps — 고립 1샘플만 가린다. 여기선 연속 런이 앞 단계에서
+    거부되므로 남은 클램프는 전부 고립이다).
   - 통과 = 비중첩 3초 분할, 잔여 버림(33.7(i) 네거티브 모드). 5.12초 → 1조각 @0. 리샘플 · 정규화 0.
   - 출력 `{out-dir}/other/boardbg_{unit}_{take}_{start_ms:07d}.wav` — source_key = `boardbg_{unit}`.
   - 멱등 = 테이크 단위(slice_direct 와 같다): 같은 이름 · 같은 PCM 이면 skip, 다르면 conflict(무접촉),
@@ -38,19 +40,16 @@ from collections import Counter
 from pathlib import Path
 
 from ..pipeline.config import SAMPLE_RATE, source_key
-from .slice_direct import (CLAMP, MS, NAME_RE, OUT_RE, existing_stems, find_onset, read_pcm,
-                           write_clip)
+from .slice_direct import (CLAMP, MS, NAME_RE, OUT_RE, existing_stems, find_onset,
+                           mask_glitch_clamps, read_pcm, write_clip)
 from .slice_negatives import CLASS_DIR, CLIP_SAMPLES, check_out_dir
 
 # 결정 2026-09-27 ① — 고립 1샘플(ToF 글리치, 6.3(q))은 통과, 연속 2샘플 이상만 거부.
 # 배경만 글리치 테이크를 버리면 「글리치 = 노크」 가짜 단서가 생긴다(slice_direct 는 클램프 테이크 유지).
 # 재판정 트리거: 재학습 E4 ③ 결과가 글리치 테이크 구간에서 나쁠 때 · 펌웨어 글리치 필터 도입 시(6.3(n) ①).
 CLAMP_REJECT_MIN_RUN = 2
-# 결정 2026-09-27 — 글리치 뒤 +18샘플 두 번째 스파이크(glitch_shape 측정)를 소리로 오인하지 않게
-# 소리 검사 입력(판정용 복사본)의 클램프 ±K샘플을 클램프 값으로 채운다. K 16→24에서 결과 전환,
-# 진짜 소리 3건은 K≤128 불변. 재판정 트리거: 스파이크 오프셋 분포가 바뀔 때(펌웨어 · 결선 변경) ·
-# onset 3값 확정 시.
-CLAMP_MASK_HALF_WIDTH = 32
+# 클램프 주변 마스크(±K) = slice_direct.mask_glitch_clamps · CLAMP_MASK_HALF_WIDTH 단일 출처.
+# 배경 측정 기록: K 16→24에서 결과 전환, 진짜 소리 3건은 K≤128 불변.
 UNIT_RE = re.compile(r"^[A-Za-z0-9]+$")   # 녹음 수신기 UNIT_RE 와 같다(밑줄 금지)
 PREFIX = "boardbg_"
 MANIFEST = "boardbg_slice_manifest.csv"
@@ -101,11 +100,8 @@ def judge(src: Path, unit: str, params: dict) -> tuple[dict, list[tuple[str, byt
         return reject("rejected_short", f"{n}샘플 < {CLIP_SAMPLES}(pad 하지 않음)")
     if longest >= CLAMP_REJECT_MIN_RUN:
         return reject("rejected_clamp", f"|x| ≥ {CLAMP} 연속 {longest}샘플 런(클램프 총 {clamp}개)")
-    masked = a[:]   # 판정용 복사본 — 출력은 frames 에서 자르므로 마스크가 새지 않는다
-    for i in (i for i, v in enumerate(a) if v >= CLAMP):
-        lo, hi = max(i - CLAMP_MASK_HALF_WIDTH, 0), min(i + CLAMP_MASK_HALF_WIDTH + 1, n)
-        masked[lo:hi] = [CLAMP] * (hi - lo)   # find_onset 이 기준 · 탐색에서 건너뛰는 값
-    onset, _ = find_onset(masked, params["baseline_ms"] * MS, params["onset_ratio"],
+    # 판정용 복사본 — 출력은 frames 에서 자르므로 마스크가 새지 않는다
+    onset, _ = find_onset(mask_glitch_clamps(a), params["baseline_ms"] * MS, params["onset_ratio"],
                           params["onset_floor"])
     if onset is not None:
         row["onset_ms"] = onset // MS
