@@ -29,7 +29,8 @@ FIXTURES = {
 EXPECTED = {
     "direct_knock_bg1_01": ("written", "", "other/boardbg_bg1_01_0000000.wav"),
     "direct_knock_bg1_02": ("rejected_sound", "2000", ""),
-    "direct_knock_bg1_03": ("rejected_clamp", "", ""),
+    # 결정 2026-09-27 ①: 고립 1샘플 클램프(ToF 글리치)는 통과 — 옛 기대 rejected_clamp 에서 갱신.
+    "direct_knock_bg1_03": ("written", "", "other/boardbg_bg1_03_0000000.wav"),
     "direct_knock_bg1_04": ("rejected_short", "", ""),
     "direct_knock_bg1_05": ("rejected_format", "", ""),
     "direct_doorbell_bg1_06": ("written", "",
@@ -89,9 +90,51 @@ class SliceBoardbgTest(unittest.TestCase):
 
     def test_clamp_and_peak_recorded(self) -> None:
         self.assertEqual((self.rows["direct_knock_bg1_03"]["clamp_count"],
-                          self.rows["direct_knock_bg1_03"]["peak"]), ("1", "32767"))
+                          self.rows["direct_knock_bg1_03"]["clamp_max_run"],
+                          self.rows["direct_knock_bg1_03"]["peak"]), ("1", "1", "32767"))
         self.assertEqual((self.rows["direct_knock_bg1_01"]["clamp_count"],
-                          self.rows["direct_knock_bg1_01"]["peak"]), ("0", "5"))
+                          self.rows["direct_knock_bg1_01"]["clamp_max_run"],
+                          self.rows["direct_knock_bg1_01"]["peak"]), ("0", "0", "5"))
+
+    def one(self, name: str, x: list[int]) -> dict:
+        """테이크 1개 폴더 → manifest 행."""
+        rec, out = self.root / f"rec_{name}", self.root / f"out_{name}"
+        write(rec / "post" / "direct_knock_bg1_01.wav", x)
+        self.assertEqual(run(rec, out), 0)
+        return manifest(out)[-1]
+
+    def test_isolated_clamps_pass(self) -> None:          # (a) 결정 ① — 글리치 여러 개도 통과
+        x = samples(POST_N)
+        for t in (0.5, 1.5, 2.5, 3.5, 4.5):
+            x[int(t * SAMPLE_RATE)] = 32767
+        r = self.one("iso", x)
+        self.assertEqual((r["status"], r["clamp_count"], r["clamp_max_run"]), ("written", "5", "1"))
+        _, clip = read(self.root / "out_iso" / "other" / "boardbg_bg1_01_0000000.wav")
+        self.assertEqual(list(clip), x[:sb.CLIP_SAMPLES])     # 글리치 샘플 수정 0
+
+    def test_run_of_two_rejected(self) -> None:           # (b)
+        x = samples(POST_N)
+        x[SAMPLE_RATE] = x[SAMPLE_RATE + 1] = 32767
+        r = self.one("run2", x)
+        self.assertEqual((r["status"], r["clamp_count"], r["clamp_max_run"]),
+                         ("rejected_clamp", "2", "2"))
+
+    def test_loud_single_clamp_caught_by_sound(self) -> None:   # (c) 안전장치 — 5.3(d) 11번 모양
+        x = samples(POST_N)
+        s = 2 * SAMPLE_RATE
+        x[s - 2:s + 3] = [11_876, 23_371, 32_767, 29_472, 7_528]   # 클램프는 고립 1샘플
+        r = self.one("loud", x)
+        self.assertEqual((r["status"], r["clamp_max_run"], r["onset_ms"]),
+                         ("rejected_sound", "1", "1999"))
+
+    def test_sign_boundary(self) -> None:                 # (d) −32768 · +32767 모두 클램프
+        for name, at, vals, want in (("neg", SAMPLE_RATE, [-32768], ("written", "1")),
+                                     ("pos", SAMPLE_RATE, [32767], ("written", "1")),
+                                     ("pn", SAMPLE_RATE, [32767, -32768], ("rejected_clamp", "2"))):
+            x = samples(POST_N)
+            x[at:at + len(vals)] = vals
+            r = self.one(name, x)
+            self.assertEqual((r["status"], r["clamp_max_run"]), want, name)
 
     def test_clips_are_original_samples(self) -> None:
         names = {str(p.relative_to(self.out)) for p in self.out.rglob("*.wav")}
@@ -106,7 +149,7 @@ class SliceBoardbgTest(unittest.TestCase):
 
     def test_group_key_is_unit(self) -> None:
         keys = {source_key(p.stem) for p in self.out.rglob("*.wav")}
-        self.assertEqual(keys, {"boardbg_bg1"})     # 테이크 2개(01 · 06)가 같은 키
+        self.assertEqual(keys, {"boardbg_bg1"})     # 테이크 3개(01 · 03 · 06)가 같은 키
 
     def test_short_not_padded(self) -> None:
         self.assertFalse(list(self.out.rglob("boardbg_bg1_04_*")))
@@ -168,7 +211,7 @@ class SliceBoardbgTest(unittest.TestCase):
             self.assertEqual(sb.main(["--recording-dir", str(self.rec), "--out-dir", str(out),
                                       "--unit", UNIT, *PARAMS, "--dry-run"]), 0)
         self.assertFalse(out.exists())
-        self.assertIn("planned: 2", buf.getvalue())
+        self.assertIn("planned: 3", buf.getvalue())   # 03(고립 1샘플 클램프)이 결정 ①로 통과
         self.assertIn("| direct_knock_bg1_02.wav | rejected_sound |", buf.getvalue())
 
     def test_out_dir_guards(self) -> None:
