@@ -122,10 +122,33 @@ class SliceBoardbgTest(unittest.TestCase):
     def test_loud_single_clamp_caught_by_sound(self) -> None:   # (c) 안전장치 — 5.3(d) 11번 모양
         x = samples(POST_N)
         s = 2 * SAMPLE_RATE
+        # 실측 11번처럼 소리가 클램프 앞뒤로 이어진다(앞 기준 |x| 1,061~7,054) — ±2ms 마스크 밖에서 걸림.
+        x[s - 800:s + 800] = [3000 if i % 2 else -3000 for i in range(1600)]
         x[s - 2:s + 3] = [11_876, 23_371, 32_767, 29_472, 7_528]   # 클램프는 고립 1샘플
         r = self.one("loud", x)
         self.assertEqual((r["status"], r["clamp_max_run"], r["onset_ms"]),
-                         ("rejected_sound", "1", "1999"))
+                         ("rejected_sound", "1", "1950"))
+
+    def glitch_then(self, name: str, at: int, vals: list[int]) -> tuple[dict, list[int]]:
+        """1초 지점 고립 클램프 + 그 +at샘플부터 vals."""
+        x = samples(POST_N)
+        x[SAMPLE_RATE] = 32767
+        x[SAMPLE_RATE + at:SAMPLE_RATE + at + len(vals)] = vals
+        return self.one(name, x), x
+
+    def test_glitch_spike_masked(self) -> None:           # (e) +18 두 번째 스파이크는 소리 아님
+        r, x = self.glitch_then("spike18", 18, [2000])
+        self.assertEqual((r["status"], r["clamp_max_run"]), ("written", "1"))
+        _, clip = read(self.root / "out_spike18" / "other" / "boardbg_bg1_01_0000000.wav")
+        self.assertEqual(list(clip), x[:sb.CLIP_SAMPLES])     # 마스크는 판정용 — 출력 PCM 원본 그대로
+
+    def test_burst_after_glitch_caught(self) -> None:     # (f) 마스크 밖으로 이어지는 50ms 버스트
+        r, _ = self.glitch_then("burst", 18, [2000 if i % 2 else -2000 for i in range(800)])
+        self.assertEqual((r["status"], r["onset_ms"]), ("rejected_sound", "1002"))   # +33 = 마스크 다음
+
+    def test_spike_outside_mask_caught(self) -> None:     # (g) 마스크 경계(+32) 밖 한 점
+        r, _ = self.glitch_then("spike40", 40, [2000])
+        self.assertEqual((r["status"], r["onset_ms"]), ("rejected_sound", "1002"))
 
     def test_sign_boundary(self) -> None:                 # (d) −32768 · +32767 모두 클램프
         for name, at, vals, want in (("neg", SAMPLE_RATE, [-32768], ("written", "1")),
