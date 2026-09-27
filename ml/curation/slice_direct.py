@@ -9,6 +9,8 @@
   - 입력 = `--recording-dir/post/direct_{label}_{unit}_{take}.wav` 만. pre/ 는 읽지 않는다.
   - onset = 분석 스크립트 take_check.py 정의 그대로, 차이는 하나 — |x| ≥ 32767(클램프) 샘플을
     기준 계산과 탐색에서 건너뛴다(6.3(q) 고립 1샘플 글리치가 onset 이 되지 않게).
+    탐색 입력은 |x| 판정용 복사본에서 고립 1샘플 클램프 ±CLAMP_MASK_HALF_WIDTH 샘플(2ms)을 건너뛴다 —
+    글리치 뒤 +18샘플의 두 번째 스파이크를 소리 시작으로 잡지 않게. 연속 클램프(진짜 클립)는 가리지 않는다.
       기준 = 첫 baseline_ms 구간 |x| 의 median_high(= take_check `sorted(a[:n])[n // 2]`, 0 이면 1)
       onset = 0번부터 처음으로 |x| > ratio × 기준 이고 |x| > floor 인 샘플
   - 창 = onset 을 ms 로 내림한 지점부터 정확히 48000 샘플. 파일 끝을 넘으면 끝에 맞춰 앞으로 당긴다.
@@ -46,6 +48,12 @@ NAME_RE = re.compile(r"^direct_([a-z][a-z_]*)_([A-Za-z0-9]+)_(\d+)$")
 OUT_RE = re.compile(r"^(.+)_\d{7}\.wav$")
 MANIFEST = "direct_slice_manifest.csv"
 SUMMARY = "direct_slice_summary.md"
+# 결정 2026-09-27 — 글리치 뒤 +18샘플 두 번째 스파이크(glitch_shape 측정)를 소리 시작으로 오인하지 않게
+# onset 판정용 복사본의 고립 1샘플 클램프 ±K샘플을 클램프 값으로 채운다. slice_boardbg 와 단일 출처.
+# 대가 = 글리치 ±2ms 안에서만 끝나는 소리는 onset 탐색이 못 본다(수용된 위험).
+# 고립만 가리는 이유(사용자 결정 2026-09-27): 연속 클램프까지 가리면 촘촘히 클립된 큰 소리(6.3(q) 조건 D)
+# 전체가 가려져 미검출된다. 재판정 트리거: 스파이크 오프셋 분포가 바뀔 때(펌웨어 · 결선 변경) · onset 3값 확정 시.
+CLAMP_MASK_HALF_WIDTH = 32
 MANIFEST_FIELDS = ("recording_dir", "source_path", "label", "unit", "take", "n_samples",
                    "onset_ms", "start_ms", "shifted", "clip_clamp_count", "out_rel_path",
                    "status", "reason", "baseline_ms", "onset_ratio", "onset_floor")
@@ -62,6 +70,20 @@ def find_onset(a: list[int], base_n: int, ratio: float, floor: float) -> tuple[i
         peak = max((v for v in a if v < CLAMP), default=0)
         return None, f"임계 {thr:g} 초과 샘플 없음(비클램프 최대 |x| {peak})"
     return onset, ""
+
+
+def mask_glitch_clamps(a: list[int]) -> list[int]:
+    """a = |x| 목록 → 고립 1샘플 클램프 ±CLAMP_MASK_HALF_WIDTH 를 CLAMP 로 채운 새 목록(a 무변경).
+
+    클램프 위치 · 고립 여부는 원본 a 에서 본다 — 채운 값을 다시 클램프로 보고 번지지 않게.
+    """
+    n = len(a)
+    out = a[:]
+    for i, v in enumerate(a):
+        if v >= CLAMP and (i == 0 or a[i - 1] < CLAMP) and (i + 1 == n or a[i + 1] < CLAMP):
+            lo, hi = max(i - CLAMP_MASK_HALF_WIDTH, 0), min(i + CLAMP_MASK_HALF_WIDTH + 1, n)
+            out[lo:hi] = [CLAMP] * (hi - lo)   # find_onset 이 기준 · 탐색에서 건너뛰는 값
+    return out
 
 
 def window(onset: int, n: int) -> tuple[int, bool]:
@@ -123,8 +145,8 @@ def judge(src: Path, params: dict) -> tuple[dict, bytes | None]:
     row.update(n_samples=n, clip_clamp_count=sum(v >= CLAMP for v in a))
     if n < CLIP_SAMPLES:
         return reject("rejected_too_short", f"{n}샘플 < {CLIP_SAMPLES}(pad 하지 않음)")
-    onset, why = find_onset(a, params["baseline_ms"] * MS, params["onset_ratio"],
-                            params["onset_floor"])
+    onset, why = find_onset(mask_glitch_clamps(a), params["baseline_ms"] * MS, params["onset_ratio"],
+                            params["onset_floor"])   # 마스크는 판정용 — 출력은 frames 에서 자른다
     if onset is None:
         return reject("rejected_no_onset", why)
     start_ms, shifted = window(onset, n)

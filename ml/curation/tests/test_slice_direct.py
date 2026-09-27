@@ -56,7 +56,7 @@ FIXTURES = {
     "direct_doorbell_A_02": dict(n=POST_N, onset=3.5),                   # 늦은 onset → 당김
     "direct_doorbell_A_03": dict(n=POST_N),                              # 조용함
     "direct_knock_B_04": dict(n=POST_N, onset=1.2, glitch=0.5),          # 소리 앞 고립 클램프
-    "direct_knock_B_05": dict(n=POST_N, onset=1.0, clamp_sine=True),     # 큰 소리 연속 클램프
+    "direct_knock_B_05": dict(n=POST_N, onset=1.0, clamp_sine=True),     # 큰 소리 연속 클램프(마스크 안 함)
     "direct_knock_B_123": dict(n=POST_N, onset=0.25),                    # 3자리 테이크
     "direct_fire_alarm_A_01": dict(n=POST_N, onset=1.0),
     "direct_knock_C_03": dict(n=32_768, onset=0.5),                      # pre 길이 2.048초
@@ -230,6 +230,38 @@ class SliceDirectTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             run(self.rec / "post", self.root / "x", "--dry-run")
         self.assertFalse((self.root / "x").exists())
+
+    def judge_one(self, name: str, x: list[int]) -> tuple[dict, bytes | None]:
+        src = self.root / f"mask_{name}" / "direct_knock_M_01.wav"
+        write(src, x)
+        return sd.judge(src, {"baseline_ms": 100, "onset_ratio": 20, "onset_floor": 500})
+
+    def test_glitch_spike_masked(self) -> None:           # (i) +18 두 번째 스파이크는 onset 아님
+        x = samples(POST_N, onset=1.5, glitch=1.0)
+        x[SAMPLE_RATE + 18] = 2000
+        row, pcm = self.judge_one("spike", x)
+        self.assertIsNotNone(pcm)
+        self.assertEqual(row["onset_ms"], 1500)                # 스파이크(1001ms)가 아니라 버스트
+
+    def test_burst_before_glitch_unchanged(self) -> None:  # (j) 버스트가 먼저면 마스크 전후 같다
+        x = samples(POST_N, onset=0.8)
+        x[SAMPLE_RATE] = 32767
+        a = [abs(v) for v in x]
+        args = (100 * sd.MS, 20, 500)
+        before = a[:]
+        self.assertEqual(sd.find_onset(sd.mask_glitch_clamps(a), *args), sd.find_onset(a, *args))
+        self.assertEqual(a, before)                            # 헬퍼는 원본 목록을 바꾸지 않는다
+        row, _ = self.judge_one("before", x)
+        self.assertEqual(row["onset_ms"], 800)
+
+    def test_mask_not_in_output(self) -> None:           # (k) 마스크는 판정용 — 출력 PCM 원본 그대로
+        x = samples(POST_N, onset=1.5, glitch=1.0)
+        x[SAMPLE_RATE + 18] = 2000
+        x[SAMPLE_RATE + 1_600] = -32768                      # 창 안 글리치(1.6초)
+        row, pcm = self.judge_one("pcm", x)
+        start = row["start_ms"] * sd.MS
+        self.assertEqual(pcm, array("h", x[start:start + sd.CLIP_SAMPLES]).tobytes())
+        self.assertEqual(row["clip_clamp_count"], 2)
 
     def test_required_args(self) -> None:
         full = ["--recording-dir", str(self.rec), "--out-dir", str(self.root / "y"), *PARAMS]
