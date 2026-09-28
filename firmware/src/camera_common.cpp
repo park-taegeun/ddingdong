@@ -80,6 +80,9 @@ bool initCameraWithDiagnostics() {
       // Khangura 함정 #6 보정 (OV3660 한정). id.PID는 uint16_t 0x3660 — 잘린 0x36 비교 시 영영 미실행 (카테고리 25/32.4).
       sensor->set_brightness(sensor, 1);
       sensor->set_saturation(sensor, -2);
+      // 2026-09-28 보드 실측 — 사진 180° 뒤집힘. 상하·좌우 중 어느 축이 맞는지는 보드 재촬영으로 확정(미확정 시 이 주석 유지)
+      sensor->set_vflip(sensor, 1);
+      sensor->set_hmirror(sensor, 1);
       Serial.println("[CAMERA] OV3660 brightness/saturation 보정 적용");
     }
   }
