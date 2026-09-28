@@ -8,7 +8,7 @@
 33.6(a)(d)에 「사용자 판단 대기」로 등재된 별건이며 본 하네스는 그 판단을 대신하지 않는다.
 
 **측정 경로**(33.6(b)(d)와 동일): HTTP 미경유. 프로즌 `inference.model_runner.ModelRunner`
-(= `tf.saved_model.load` + (1,3) 시그니처 계약 검사)로 직접 추론하고, 전처리는 프로즌
+(= `tf.saved_model.load` + (1, `NUM_CLASSES`)(`inference.constants`) 시그니처 계약 검사)로 직접 추론하고, 전처리는 프로즌
 `inference.audio_decode.decode_pcm16`을 **import해서** 쓴다(자체 구현 금지 — 학습 파이프라인과
 동일 전처리임을 보장하는 것이 33.6(b) 재현의 핵심). 판정 어휘는 프로즌
 `app.model_serving.scores_to_prediction`(2자리 반올림)과 `app.constants.CONFIDENCE_THRESHOLD`
@@ -28,7 +28,7 @@
 
      lsof -nP -iTCP:5000 -sTCP:LISTEN
 
-1) 자기검증(데이터·모델 없이 수초, negative control 4종 동시 실행):
+1) 자기검증(데이터·모델 없이 수초, negative control 8종 동시 실행):
 
      cd "<repo>/server"
      venv_real/bin/python3 tools/gate_axis_sweep.py --self-test
@@ -42,6 +42,7 @@
 
      DDINGDONG_DATA_ROOT="$HOME/ML 학습 데이터/ddingdong_dataset" \
      DDINGDONG_MODEL_PATH="<repo>/ml/models/yamnet/inference_savedmodel" \
+     DDINGDONG_MODEL_DIR="<repo>/ml/models/yamnet" \
      venv_real/bin/python3 tools/gate_axis_sweep.py
 
 4) 로그 저장(repo 밖 — 카테고리 실측 로그 규약. repo 안은 `.gitignore` 차단분):
@@ -57,6 +58,13 @@
      ★ 이 3축이 mock 반증이다 — 셋 다 보이지 않으면 실모델이 아니다.
    - `[재현 대조]` 줄 = 33.6(b)(d) 기준값과 전건 일치 여부.
    - `[raw vs rounded]` 줄 = 두 게이트 기준의 분류 일치 여부(33.6(e)).
+   - ⓐ `not_target` 축 = 예측이 `other`인 행(신뢰도와 무관, 신뢰도 게이트보다 **앞** —
+     33.13(a) E1·E2). 3클래스 모델(33.6(b)(d) 기준값) 입력에서는 원리상 전 칸 0이다.
+   - ⓑ 기준 세트가 아닌 입력(재학습 모델 · 새 split)에서는 총 건수부터 `BASELINE_TOTAL`과
+     어긋나 종료 코드는 1(기준값 불일치)로 끝난다(33.8) — 그 상태에서 raw↔rounded 불일치
+     (33.6(e)) 건수는 종료 코드가 아니라 `[raw vs rounded]` 줄과 `--rows-out` rows CSV로 읽는다.
+     `other` 예측 행은 raw·rounded 두 열 모두 `not_target`이라 그 건수에 안 들어간다
+     (제품에서도 other 게이트가 반올림 영향을 받는 신뢰도 게이트보다 앞에 있다).
    - 종료 코드: 0 전건 일치 / 1 재현 불일치 / 2 raw↔rounded 불일치(결과이지 실패 아님) /
      3 환경·입력 오류 / 4 라벨 순서 불일치.
    - 소요: 424건 수 초(33.6(b) 실측 2.2초 + 모델 로드 ~4초).
@@ -88,7 +96,9 @@ from inference.constants import SAMPLE_RATE  # noqa: E402
 AXIS_OK = "pass_ok"        # 게이트 통과 + 예측 일치
 AXIS_NG = "pass_NG"        # 게이트 통과 + 오분류 = 게이트를 넘은 오알림
 AXIS_BLOCKED = "blocked"   # 신뢰도 < 임계 → 1차 알림 skip(low_confidence)
-AXES = (AXIS_OK, AXIS_NG, AXIS_BLOCKED)
+AXIS_NOT_TARGET = "not_target"  # predicted == "other" → 1차·2차 skip, 신뢰도 무관(E1·E2)
+                                # 4클래스(#83)에서만 도달 — 3클래스 모델에선 원리상 0건
+AXES = (AXIS_OK, AXIS_NG, AXIS_BLOCKED, AXIS_NOT_TARGET)
 
 # ── 재현 대조 기준값 ────────────────────────────────────────────────────────
 # 출처 = docs/decisions.md 33.6(d) 「대조군 재현 (3회차)」 표 (33.6(b) 표와 전건 일치).
@@ -144,11 +154,17 @@ def axis_of(predicted: str, confidence: float, true_class: str,
 
     비교는 프로즌 `utils._apply_prediction_policy` 와 동일한 **strict `<`** 다
     (카테고리 3 `CONFIDENCE_THRESHOLD=0.7`). 경계값 0.7 자체는 **통과**다.
+    `predicted == "other"` 는 신뢰도 판정보다 **앞**에서 걸린다 — #83
+    `_apply_prediction_policy` 와 같은 순서(33.13(a) E1·E2): other 는 신뢰도와 무관하게
+    `skip_reason="not_target"`. main(3클래스)에선 `PREDICTED_CLASSES`에 "other"가 없어
+    이 분기에 도달할 수 없다.
     ★ ToF 게이트(G12 `fire_alarm` 우회)는 본 축에 들어오지 않는다 — 33.6(b)의 축 정의가
       신뢰도 게이트 단독이고, 본 하네스는 ToF telemetry 를 입력으로 받지 않는다.
       `pass_NG` 중 「위험 방향」(타클래스 → `fire_alarm`)이 presence 무관 발송이 되는 이유가
       바로 그 G12 우회지만, 그 판정은 서버 경로의 몫이며 여기서 재현하지 않는다.
     """
+    if predicted == "other":
+        return AXIS_NOT_TARGET
     if confidence < threshold:
         return AXIS_BLOCKED
     return AXIS_OK if predicted == true_class else AXIS_NG
@@ -163,6 +179,9 @@ def judge(scores, true_class: str, classes=PREDICTED_CLASSES) -> dict:
       않고 "이 하네스가 라벨 순서에 실제로 의존하는가"를 때리기 위한 것.
     - `conf_rounded` 는 프로즌 `scores_to_prediction` 이 낸 값을 그대로 쓴다(재구현 금지).
       제품 경로의 반올림 그 자체여야 33.6(e) 비교가 성립한다.
+
+    scores 의 shape 은 (1, len(`PREDICTED_CLASSES`)) — 클래스 수가 늘면 이 함수는 그대로
+    따라간다(변경 없음). 폭이 안 맞는 입력을 만드는 건 호출부(self-test 합성 점수)의 책임.
     """
     row = scores[0]
     idx = int(row.argmax())
@@ -178,13 +197,15 @@ def judge(scores, true_class: str, classes=PREDICTED_CLASSES) -> dict:
     }
 
 
+def _empty_axis_cell() -> dict[str, int]:
+    return {"n": 0, **{axis: 0 for axis in AXES}}
+
+
 def tally(results: list[dict], axis_key: str) -> dict[str, dict[str, int]]:
-    """판정 목록 → 클래스별 게이트 축 집계(기준값 표와 동형)."""
-    out = {c: {"n": 0, AXIS_OK: 0, AXIS_NG: 0, AXIS_BLOCKED: 0} for c in PREDICTED_CLASSES}
+    """판정 목록 → 클래스별 게이트 축 집계(기준값 표와 동형, `not_target` 축 포함)."""
+    out = {c: _empty_axis_cell() for c in PREDICTED_CLASSES}
     for r in results:
-        cell = out.setdefault(
-            r["true"], {"n": 0, AXIS_OK: 0, AXIS_NG: 0, AXIS_BLOCKED: 0}
-        )
+        cell = out.setdefault(r["true"], _empty_axis_cell())
         cell["n"] += 1
         cell[r[axis_key]] += 1
     return out
@@ -205,6 +226,9 @@ def compare_baseline(axis_counts, ng_counts, correct, total,
     """33.6(b)(d) 기준값과 **전 칸 정확 일치** 대조. 반환 = 불일치 설명 목록(빈 목록 = 일치).
 
     ★ 느슨한 비교(부분 일치·근사)를 쓰면 NC-2 가 통과해 버린다 — 전 칸 `!=` 비교를 유지할 것.
+    ★ `not_target` 축은 `BASELINE_AXIS`(바이트 동일 유지)에 키 자체가 없다 — 기대값은
+      **0** 으로 보고 정확 비교한다(근사가 아니라 `expect.get(key, 0)` 기본값 비교, NC-7).
+      3클래스 모델(33.6(b)(d))에서 `other` 예측은 원리상 0건이라 이 기본값이 항상 맞는다.
     """
     diffs: list[str] = []
     for cls, expect in baseline_axis.items():
@@ -213,8 +237,9 @@ def compare_baseline(axis_counts, ng_counts, correct, total,
             diffs.append(f"클래스 누락: {cls}")
             continue
         for key in ("n", *AXES):
-            if got[key] != expect[key]:
-                diffs.append(f"{cls}.{key}: 실측 {got[key]} != 기준 {expect[key]}")
+            expected = expect.get(key, 0)
+            if got[key] != expected:
+                diffs.append(f"{cls}.{key}: 실측 {got[key]} != 기준 {expected}")
     for cls in axis_counts:
         if cls not in baseline_axis:
             diffs.append(f"기준값에 없는 클래스 출현: {cls}")
@@ -245,16 +270,38 @@ def fail_env(msg: str):
 
 
 def labels_path() -> Path:
-    """배포 라벨 스냅샷(`labels.json`) 경로. `ml.training.config.model_dir()` 과 같은 규칙.
+    """배포 라벨 스냅샷(`labels.json`) 경로. `ml.training.config.resolve_run_dir()` 과 같은
+    규칙(env 필수 · fallback 없음, PR #80).
 
     (ml 패키지를 import 하지 않는다 — 이 하네스는 server/ 런타임에서 돌고 ml 은 의존성이
-     다르다. 규칙만 복제하고 근거를 여기 각인한다: env DDINGDONG_MODEL_DIR 우선,
-     없으면 repo 내 `ml/models/yamnet`.)
+     다르다. 규칙만 복제하고 근거를 여기 각인한다: env DDINGDONG_MODEL_DIR 필수, 기본
+     경로 fallback 없음 — 조용히 서빙 모델 폴더로 떨어지면 실스윕이 재현이 아니라
+     엉뚱한 폴더를 보고 있는지도 모르고 통과해버린다.)
+
+    ★ 이 확인은 **실스윕 경로에서만** 돈다 — `main()`은 `--self-test` · `--dry-run` 일 때
+      이 함수를 부르지 않는다(둘 다 모델이 필요 없다). NC-5의 「실물 labels.json
+      미접촉」 관찰은 이 함수가 아니라 `_served_labels_snapshot_for_observation()`을 쓴다
+      (관찰용 경로가 판정용 fallback으로 다시 쓰이지 않게 분리).
     """
     raw = os.environ.get("DDINGDONG_MODEL_DIR", "").strip()
-    base = (Path(raw).expanduser() if raw
-            else Path(__file__).resolve().parents[2] / "ml" / "models" / "yamnet")
-    return base / "labels.json"
+    if not raw:
+        raise fail_env(
+            "DDINGDONG_MODEL_DIR 미설정(빈 문자열 · 공백 포함) — 라벨 스냅샷 경로에 "
+            "기본값 fallback을 두지 않는다(PR #80, ml.training.config.resolve_run_dir() "
+            "과 같은 규칙).\n"
+            "  예: DDINGDONG_MODEL_DIR=\"…\" venv_real/bin/python3 tools/gate_axis_sweep.py"
+        )
+    return Path(raw).expanduser() / "labels.json"
+
+
+def _served_labels_snapshot_for_observation() -> Path:
+    """NC-5 전용 — 실물 서빙 라벨 스냅샷 위치(읽기 전용 관찰).
+
+    `labels_path()` 의 판정 fallback이 **아니다** — 그 함수는 이제 env 필수라 실행 경로
+    에서 이 값으로 떨어지는 일이 없다. NC-5가 「원본 미접촉」을 확인하려면 원본 위치를
+    알아야 하므로, 관찰 전용으로 같은 경로 계산을 별도 함수에 분리해 둔다.
+    """
+    return Path(__file__).resolve().parents[2] / "ml" / "models" / "yamnet" / "labels.json"
 
 
 def assert_label_order(path: Path, classes=PREDICTED_CLASSES) -> None:
@@ -449,13 +496,16 @@ def sweep(data_root: Path, model_path: Path, rows_out) -> int:
 def print_summary(axis_counts, ngc, correct, total) -> None:
     print("\n[게이트 축] 신뢰도 임계 "
           f"{CONFIDENCE_THRESHOLD} strict `<` · 계수 단위 = 클립 수(파일 수)")
-    print(f"{'true':<12}{'n':>5}{'pass_ok':>9}{'pass_NG':>9}{'blocked':>9}{'pass%':>8}")
+    print(f"{'true':<12}{'n':>5}{'pass_ok':>9}{'pass_NG':>9}{'blocked':>9}"
+          f"{'not_target':>12}{'pass%':>8}")
     for cls in PREDICTED_CLASSES:
-        c = axis_counts.get(cls, {"n": 0, AXIS_OK: 0, AXIS_NG: 0, AXIS_BLOCKED: 0})
+        c = axis_counts.get(cls, _empty_axis_cell())
         pct = (c[AXIS_OK] + c[AXIS_NG]) / c["n"] * 100 if c["n"] else 0.0
-        print(f"{cls:<12}{c['n']:>5}{c[AXIS_OK]:>9}{c[AXIS_NG]:>9}{c[AXIS_BLOCKED]:>9}{pct:>7.1f}%")
+        print(f"{cls:<12}{c['n']:>5}{c[AXIS_OK]:>9}{c[AXIS_NG]:>9}{c[AXIS_BLOCKED]:>9}"
+              f"{c[AXIS_NOT_TARGET]:>12}{pct:>7.1f}%")
     tot = {k: sum(c[k] for c in axis_counts.values()) for k in ("n", *AXES)}
-    print(f"{'합계':<11}{tot['n']:>5}{tot[AXIS_OK]:>9}{tot[AXIS_NG]:>9}{tot[AXIS_BLOCKED]:>9}")
+    print(f"{'합계':<11}{tot['n']:>5}{tot[AXIS_OK]:>9}{tot[AXIS_NG]:>9}{tot[AXIS_BLOCKED]:>9}"
+          f"{tot[AXIS_NOT_TARGET]:>12}")
 
     print("\n[pass_NG 오분류 대상] 게이트를 넘은 오알림의 행선지")
     for true_cls in PREDICTED_CLASSES:
@@ -486,7 +536,7 @@ def write_rows(results: list[dict], out) -> None:
 
 
 def self_test() -> int:
-    """TF·데이터 없이 도는 NC 4종 + 각 축의 baseline(통과가 정상인 대조군).
+    """TF·데이터 없이 도는 NC 8종 + 각 축의 baseline(통과가 정상인 대조군).
 
     ★ 프로즌 파일을 **변형하지 않는다** — 라벨 매핑은 `judge(classes=…)` 주입구로, 기준값은
       `compare_baseline(baseline_*=…)` 주입구로 때린다. 따라서 복원할 원본이 없다
@@ -495,7 +545,12 @@ def self_test() -> int:
     import numpy as np
 
     def scores(*p):
-        return np.array([list(p)], dtype=np.float32)
+        # 폭 = len(PREDICTED_CLASSES) — 모자란 열은 0.0으로 채운다. 폭을 3으로 고정하면
+        # 4클래스(#83 이후)에서 IndexError — main 3클래스에선 도달 불가라 이 결함은 4클래스
+        # 체크아웃에서만 검출된다. 3클래스에선 len(p)==폭이라 패딩이 0개 = 바이트 동일.
+        width = len(PREDICTED_CLASSES)
+        padded = list(p) + [0.0] * (width - len(p))
+        return np.array([padded], dtype=np.float32)
 
     # 합성 판정 입력: doorbell 정답 3건(통과 / 오분류 통과 / 차단)
     fixture = [
@@ -530,6 +585,24 @@ def self_test() -> int:
         f"뒤집은 축={[r['axis_raw'] for r in flipped]}",
     )
 
+    # --- NC-6 게이트 순서: other 는 신뢰도 판정보다 앞이다 ------------------
+    # 불변식: predicted=="other" 는 confidence · true_class 와 무관하게 not_target
+    #   (E1·E2 순서, #83 `_apply_prediction_policy` 와 동형).
+    # 결함 조건 ⓐ other 분기를 삭제 → 저신뢰(0.50)는 blocked, 고신뢰(0.95)는 정답 일치
+    #   여부에 따라 pass_ok/pass_NG로 샌다. ⓑ other 분기를 신뢰도 판정 **뒤**로 옮기면
+    #   저신뢰 케이스(0.50)만 blocked로 잘못 떨어진다.
+    # 함정: 고신뢰 케이스만 두면 ⓑ(뒤로 이동)를 못 잡는다 — 저신뢰 케이스를 반드시 같이 둔다.
+    gate_order_cases = [
+        (axis_of("other", 0.95, "doorbell"), AXIS_NOT_TARGET),
+        (axis_of("other", 0.50, "doorbell"), AXIS_NOT_TARGET),
+        (axis_of("other", 0.95, "other"), AXIS_NOT_TARGET),
+    ]
+    ok &= _check(
+        "NC-6 게이트 순서(other→not_target, 신뢰도 무관)",
+        all(got_axis == want for got_axis, want in gate_order_cases),
+        f"축={[g for g, _ in gate_order_cases]}",
+    )
+
     # --- NC-2 재현 대조가 실제로 대조하는가 -------------------------------
     # 불변식: 기준값 한 칸만 틀려도 불일치로 잡힌다.
     # 함정: 부분 일치·근사 비교를 쓰면 통과해 버린다.
@@ -546,6 +619,26 @@ def self_test() -> int:
     dirty = compare_baseline(counts, ngc, 1, 3, baseline_axis=tampered,
                              baseline_ng=dict(ngc), baseline_correct=1, baseline_total=3)
     ok &= _check("NC-2 기준값 한 칸 변조", bool(dirty), f"불일치={dirty}")
+
+    # --- NC-7 기준값에 없는 not_target 축도 정확 비교되는가 -----------------
+    # 불변식: `BASELINE_AXIS` 처럼 기준값 표에 `not_target` 키가 아예 없어도 기대값 0 으로
+    #   **정확 비교**된다(compare_baseline 의 `expect.get(key, 0)`).
+    # 결함 조건: not_target 을 비교에서 빼먹으면(예: `for key in ("n", *AXES[:3])`) 4클래스
+    #   자료가 새는데도(other 예측 유출) 재현 대조가 조용히 통과해버린다.
+    # 함정: not_target=0 대 0 대조군만 두면 "비교 자체를 안 하는" 결함을 못 잡는다 —
+    #   반드시 not_target 을 1 로 변조해 실지점을 때린다.
+    baseline_like_real = {  # 실제 BASELINE_AXIS 처럼 not_target 키가 아예 없는 기준값 표
+        cls: {k: v for k, v in cell.items() if k != AXIS_NOT_TARGET}
+        for cls, cell in full.items()
+    }
+    clean_nt = compare_baseline(counts, ngc, 1, 3, baseline_axis=baseline_like_real,
+                                baseline_ng=dict(ngc), baseline_correct=1, baseline_total=3)
+    ok &= _check("NC-7 not_target 대조군(기준값 0 암묵)", clean_nt == [], f"불일치={clean_nt}")
+    counts_leaked = {cls: dict(cell) for cls, cell in counts.items()}
+    counts_leaked["doorbell"][AXIS_NOT_TARGET] += 1   # other 예측 1건이 샌 상황을 흉내
+    dirty_nt = compare_baseline(counts_leaked, ngc, 1, 3, baseline_axis=baseline_like_real,
+                                baseline_ng=dict(ngc), baseline_correct=1, baseline_total=3)
+    ok &= _check("NC-7 not_target 유출 검출", bool(dirty_nt), f"불일치={dirty_nt}")
 
     # --- NC-3 입력 위생이 침묵하지 않는가 ---------------------------------
     # 불변식: 계약 위반 파일은 조용히 건너뛰지 않고 **실패**한다.
@@ -595,7 +688,7 @@ def self_test() -> int:
     # 함정: 실물 `ml/models/yamnet/labels.json` 은 **git 미추적**이라 잃으면 export 없이
     #   복구가 안 된다 → 원본은 읽지도 쓰지도 않고 tmp 에 **합성 복제본**만 때린다.
     #   (파일 변형형 NC 가 아니므로 복원 증명 대신 "원본 미접촉"이 증명 대상이다.)
-    real = labels_path()
+    real = _served_labels_snapshot_for_observation()
     before = real.read_bytes() if real.is_file() else None
     tmp2 = Path(tempfile.mkdtemp())
     try:
@@ -631,6 +724,34 @@ def self_test() -> int:
                      f"{real} {'무변경' if after == before else '★변경됨★'}"
                      f" (존재={after is not None})")
 
+    # --- NC-8 라벨 경로 fail-fast (env 필수, fallback 0) ---------------------
+    # 불변식: DDINGDONG_MODEL_DIR 미설정 · 빈 문자열 · 공백 3분기 전부 fail_env(exit 3),
+    #   조용한 repo 기본 경로 fallback이 없다. 실물 labels.json 은 이 확인 중 한 번도
+    #   읽지 않는다(env 검사가 파일 접근보다 먼저 실패한다) — NC-5 가 이미 그 전후
+    #   무변경을 증명했으므로 여기서 다시 접촉하지 않는다.
+    # 함정: `.strip()` 없이 공백만 검사하면 " " 값이 "설정됨"으로 새서 존재하지 않는
+    #   경로로 내려가 버린다 — 3분기(미설정 · 빈 문자열 · 공백)를 모두 때린다.
+    env_key = "DDINGDONG_MODEL_DIR"
+    had_env = env_key in os.environ
+    saved_env = os.environ.get(env_key)
+    try:
+        for label, val in (("미설정", None), ("빈 문자열", ""), ("공백", "   ")):
+            if val is None:
+                os.environ.pop(env_key, None)
+            else:
+                os.environ[env_key] = val
+            try:
+                labels_path()
+                ok &= _check(f"NC-8 {label} → exit 3", False, "예외 없이 통과 — 조용한 fallback")
+            except SystemExit as exc:
+                ok &= _check(f"NC-8 {label} → exit 3", exc.code == EXIT_ENV,
+                             f"exit={exc.code} (기대 {EXIT_ENV})")
+    finally:
+        if had_env:
+            os.environ[env_key] = saved_env
+        else:
+            os.environ.pop(env_key, None)
+
     print("\n" + ("✅ self-test 전건 통과" if ok else "🔴 self-test 실패 — 하네스를 믿지 말 것"))
     return EXIT_OK if ok else EXIT_BASELINE_MISMATCH
 
@@ -650,7 +771,7 @@ def main(argv=None) -> int:
         epilog=__doc__,
     )
     ap.add_argument("--self-test", action="store_true",
-                    help="negative control 4종 실행(데이터·모델 불필요)")
+                    help="negative control 8종 실행(데이터·모델 불필요)")
     ap.add_argument("--dry-run", action="store_true",
                     help="환경변수·매니페스트 파싱까지만(추론 0건, TF 미로드)")
     ap.add_argument("--rows-out", type=Path, default=None,

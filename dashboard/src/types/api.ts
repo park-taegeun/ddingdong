@@ -10,6 +10,9 @@ export const API_ENDPOINTS = {
   // 대시보드 폴링 대상
   notifications: "/api/v1/notifications",
   stats: "/api/v1/stats",
+  // 초인종 등록 (설정 페이지 카드) — 조회 · 해제는 같은 경로의 GET · DELETE
+  registration: "/api/v1/registration",
+  registrationStart: "/api/v1/registration/start",
 } as const
 
 export interface NotificationsApiResponse {
