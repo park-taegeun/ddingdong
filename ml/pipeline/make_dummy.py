@@ -12,8 +12,8 @@ import numpy as np
 
 from . import audio_io, config
 
-# 클래스별 대표 주파수(구분용, 의미 없음)
-_CLASS_FREQ = {"doorbell": 880.0, "knock": 220.0, "fire_alarm": 3000.0}
+# 클래스별 대표 주파수(구분용, 의미 없음). other 1500 = 테스트 픽스처 값(2026-09-26), 기존 값과 겹치지 않게.
+_CLASS_FREQ = {"doorbell": 880.0, "knock": 220.0, "fire_alarm": 3000.0, "other": 1500.0}
 
 
 def make_dummy_dataset(root: Path, per_class: int = 6, seed: int = 0) -> Path:

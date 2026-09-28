@@ -2,7 +2,7 @@
 
 ★ 클래스 순서/오디오 규격/시드/경로는 ml.pipeline.config 가 단일 출처.
   실행마다 학습할 클래스 집합은 인자로 받되(기본값 없음), resolve_classes 가 CLASSES 순서로
-  정규화한다 → 라벨 인덱스는 재정의 없이 CLASSES 순서를 상속(doorbell=0, knock=1, fire_alarm=2).
+  정규화한다 → 라벨 인덱스는 재정의 없이 CLASSES 순서를 상속(doorbell=0, knock=1, fire_alarm=2, other=3).
   그 실행이 실제로 쓴 클래스·인덱스는 run 폴더 labels.json 이 단일 출처(평가·배포가 읽는다).
 """
 
@@ -17,7 +17,7 @@ from ml.pipeline import config as pipe
 # --------------------------------------------------------------------------
 # 파이프라인에서 상속하는 SSoT 값 (재정의 금지)
 # --------------------------------------------------------------------------
-CLASSES: tuple[str, ...] = pipe.CLASSES        # ("doorbell", "knock", "fire_alarm") — 허용 집합·순서
+CLASSES: tuple[str, ...] = pipe.CLASSES        # ("doorbell", "knock", "fire_alarm", "other") — 허용 집합·순서
 SAMPLE_RATE: int = pipe.SAMPLE_RATE            # 16_000
 SEED: int = pipe.SEED                          # 42
 SPLITS: tuple[str, ...] = ("train", "val", "test")

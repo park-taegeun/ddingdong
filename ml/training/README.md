@@ -2,7 +2,7 @@
 
 `05_final_dataset`(파이프라인 출력) → **YAMNet 임베딩 위 분류 head 학습**.
 학습할 클래스는 실행마다 `--classes` 로 준다(기본값 없음). 허용 집합 = `ml.pipeline.config.CLASSES`
-= 초인종(doorbell) / 노크(knock) / 화재경보(fire_alarm). (decisions.md 카테고리 4·5 SSoT)
+= 초인종(doorbell) / 노크(knock) / 화재경보(fire_alarm) / 기타(other, 33.13(a) D4). (decisions.md 카테고리 4·5 SSoT)
 
 - **backbone = YAMNet (16kHz mono waveform → 1024-d embedding), frozen.** 원본 2,798개는
   backbone 재학습에 부족 → transfer learning 정석(Hershey 2017 / Piczak 2015). **head 만 학습.**
@@ -101,7 +101,7 @@ python -m ml.training.evaluate --data-root "$DATA" --classes doorbell,knock,fire
 python -m ml.training.train    --data-root "$DATA" --classes doorbell,knock,fire_alarm --out-dir ~/ddingdong_runs/cmp_3cls
 python -m ml.training.evaluate --data-root "$DATA" --classes doorbell,knock,fire_alarm --out-dir ~/ddingdong_runs/cmp_3cls
 
-# 4클래스 — ml.pipeline.config.CLASSES 에 other 가 들어온 뒤(다음 PR). other 인덱스 = 3.
+# 4클래스 — other 인덱스 = 3.
 python -m ml.training.train    --data-root "$DATA" --classes doorbell,knock,fire_alarm,other --out-dir ~/ddingdong_runs/cmp_4cls
 python -m ml.training.evaluate --data-root "$DATA" --classes doorbell,knock,fire_alarm,other --out-dir ~/ddingdong_runs/cmp_4cls
 ```

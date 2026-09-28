@@ -21,10 +21,10 @@ from ml.pipeline import config as pipe
 from ml.pipeline import run_all
 from ml.pipeline.audio_io import iter_audio_files
 from ml.pipeline.make_dummy import make_dummy_dataset
-from ml.training import config, data, evaluate, model, train
+from ml.training import config, data, evaluate, export, model, train
 from ml.training.spec_augment import SpecAugment
 
-PER_CLASS = 20  # split 비율(0.7/0.15/0.15) × 클래스 3 → 각 split·클래스 ≥1 보장
+PER_CLASS = 22  # split 은 해시 배정(비율=기대값) — 4클래스 더미 stem 이 각 split·클래스 ≥1 이 되는 최소값(20 은 val/other 0)
 
 
 def dummy_embed_fn(waveform: np.ndarray) -> np.ndarray:
@@ -134,5 +134,52 @@ def _assert_spec_augment_train_only():
     print("[SpecAugment] inference=항등 / train=마스킹 OK")
 
 
+def test_four_class_dummy_through_export():
+    """4클래스(other=3) 더미 관통 → export + 같은 05 로 3클래스 비교 실행(33.17(c)).
+
+    인자는 전부 명시(클래스 문자열 · tempdir 산출 폴더). 실데이터 · hub · 서빙 모델 폴더 무접촉.
+    """
+    import json
+
+    import tensorflow as tf
+
+    from ml.training.tests.test_export_smoke import _load_dummy_yamnet
+
+    four = ("doorbell", "knock", "fire_alarm", "other")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_dummy_dataset(root, per_class=PER_CLASS, seed=1)
+        paths = pipe.resolve_paths(root)
+        run_all.run(paths, clean=True)          # 전처리 → split → 증강 → 조립 → 누수 가드
+        counts = _count_final(paths)
+        for split in config.SPLITS:
+            assert counts[split]["other"] >= 1, f"05 {split}/other 0개: {counts}"
+        yamnet = _load_dummy_yamnet(root)
+        runs = {}
+        for name, classes in (("four", "other,fire_alarm,knock,doorbell"),
+                              ("three", "doorbell,knock,fire_alarm")):
+            run = root / f"_run_{name}"
+            train.train(paths.final, run, classes=classes, embed_fn=dummy_embed_fn, epochs=1,
+                        batch_size=8, export_inference=False, verbose=0)
+            lab = json.loads((run / config.LABELS_NAME).read_text(encoding="utf-8"))
+            head = tf.keras.models.load_model(str(run / config.CHECKPOINT_NAME))
+            summary = export.export_savedmodel(run, classes=classes, yamnet=yamnet)
+            sig = tf.saved_model.load(summary["savedmodel"]).signatures["serving_default"]
+            probs = list(sig(tf.zeros([1, config.SAMPLE_RATE])).values())[0].numpy()
+            runs[name] = (lab, head.output_shape, summary["classes"], probs.shape)
+
+        lab, out, exp, served = runs["four"]
+        assert lab["classes"] == list(four) == exp, (lab, exp)
+        assert lab["index"] == {"doorbell": 0, "knock": 1, "fire_alarm": 2, "other": 3}, lab
+        assert out == (None, 4) and served == (1, 4), (out, served)
+        lab, out, exp, served = runs["three"]
+        assert lab["classes"] == list(four[:3]) == exp, (lab, exp)
+        assert lab["index"] == {"doorbell": 0, "knock": 1, "fire_alarm": 2}, lab
+        assert out == (None, 3) and served == (1, 3), (out, served)
+    print(f"[4클래스 관통] 05 {counts}")
+    print("[4클래스 관통] 4: head 4 · labels 4 · other=3 · serving (1,4) / 3: head 3 · labels 3 · 0/1/2 · serving (1,3) OK")
+
+
 if __name__ == "__main__":
     test_smoke_end_to_end()
+    test_four_class_dummy_through_export()

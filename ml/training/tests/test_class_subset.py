@@ -22,7 +22,8 @@ from ml.training import config, data, evaluate, export, train
 from ml.training.tests.test_export_smoke import _load_dummy_yamnet
 from ml.training.tests.test_training_smoke import dummy_embed_fn
 
-WITH_OTHER = config.CLASSES + ("other",)       # 4클래스 경로 — 전역 수정 없이 인자로 주입
+WITH_OTHER = config.CLASSES                    # 4클래스 경로 — other 편입(33.13(d)) 후 전역 CLASSES 그대로
+THREE = ("doorbell", "knock", "fire_alarm")    # other 가 없는 허용 집합 — 집합 밖 이름 거부 확인용
 _FREQ = {"doorbell": 880.0, "knock": 120.0, "fire_alarm": 3000.0, "other": 440.0}
 
 
@@ -70,8 +71,9 @@ def test_resolve_classes():
     assert config.resolve_classes("fire_alarm,doorbell,knock") == ("doorbell", "knock", "fire_alarm")
     assert config.resolve_classes(["fire_alarm", "doorbell"]) == ("doorbell", "fire_alarm")
     assert config.resolve_classes("other,knock", WITH_OTHER) == ("knock", "other")
-    for bad in ("", "doorbell,,knock", "doorbell,siren", "knock,knock", [], "other"):
+    for bad in ("", "doorbell,,knock", "doorbell,siren", "knock,knock", []):
         _raises(ValueError, lambda b=bad: config.resolve_classes(b))
+    _raises(ValueError, lambda: config.resolve_classes("other", THREE))   # 허용 집합 밖 other 는 거부
     print("[classes] 정규화 · 거부(빈/모름/중복) OK")
 
 
@@ -95,7 +97,7 @@ def test_empty_class_fails():
         final = _make_final(Path(tmp), config.CLASSES, empty=("val", "knock"))
         _raises(ValueError, lambda: data.list_examples(final, "val", config.CLASSES),
                 "split=val", "class=knock", str(final / "val" / "knock"))
-        assert len(data.list_examples(final, "train", config.CLASSES)) == 3 * 3
+        assert len(data.list_examples(final, "train", config.CLASSES)) == 4 * 3
         out = Path(tmp) / "run"
         _raises(ValueError, lambda: _train(final, out, "doorbell,knock,fire_alarm"), "split=val")
         assert not out.exists(), "빈 클래스 실패인데 산출 폴더가 생김(부분 산출물)"
@@ -167,12 +169,12 @@ def test_two_class_subset_through_export():
         _raises(ValueError, lambda: export.export_savedmodel(
             run, classes=config.CLASSES, yamnet=yamnet), "클래스 불일치")
         assert not (run / config.SAVEDMODEL_NAME).exists()
-        # --checkpoint 로 다른 run(3클래스) head 를 주면 labels.json(2클래스)과 출력 수 불일치 → 거부
+        # --checkpoint 로 다른 run(4클래스) head 를 주면 labels.json(2클래스)과 출력 수 불일치 → 거부
         other = work / "other_run"
         _train(final, other, config.CLASSES)
         _raises(ValueError, lambda: export.export_savedmodel(
             run, classes="doorbell,fire_alarm", checkpoint=other / config.CHECKPOINT_NAME,
-            yamnet=yamnet), "head 출력 3")
+            yamnet=yamnet), "head 출력 4")
         assert not (run / config.SAVEDMODEL_NAME).exists()
 
         summary = export.export_savedmodel(run, classes="doorbell,fire_alarm", yamnet=yamnet)
@@ -198,8 +200,8 @@ def test_four_class_other_index():
         rep = evaluate.evaluate(final, run, classes=list(WITH_OTHER), allowed=WITH_OTHER,
                                 embed_fn=dummy_embed_fn)
         assert rep["per_class"]["other"]["pretrained_baseline_top1"] is None
-        assert config.CLASSES == ("doorbell", "knock", "fire_alarm"), "전역 CLASSES 가 바뀜"
-    print("[4클래스] head 4 · other=3 · config.CLASSES 3개 유지 OK")
+        assert config.CLASSES == ("doorbell", "knock", "fire_alarm", "other"), "전역 CLASSES 가 바뀜"
+    print("[4클래스] head 4 · other=3 · config.CLASSES 4개 유지 OK")
 
 
 if __name__ == "__main__":
