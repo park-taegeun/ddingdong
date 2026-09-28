@@ -1,4 +1,4 @@
-"""클래스 집합 명시 · 산출 폴더 필수 · 덮어쓰기 거부 · 빈 클래스 즉시 실패 · 실행별 라벨.
+"""클래스 집합 명시 · 산출 폴더 필수 · 덮어쓰기 거부 · 빈 클래스 즉시 실패 · 실행별 라벨 · early stop patience.
 
 05_final_dataset 을 tempdir 에 직접 만들고(파이프라인 생략) 더미 embed_fn · 더미 YAMNet 으로
 train → evaluate → export 를 관통한다. 실데이터 · hub · 서빙 모델 폴더 무접촉.
@@ -43,9 +43,9 @@ def _make_final(root: Path, classes, per=3, empty: tuple[str, str] | None = None
     return final
 
 
-def _train(final, out, classes, allowed=config.CLASSES):
+def _train(final, out, classes, allowed=config.CLASSES, **kw):
     return train.train(final, out, classes=classes, allowed=allowed, embed_fn=dummy_embed_fn,
-                       epochs=1, batch_size=4, export_inference=False, verbose=0)
+                       epochs=1, batch_size=4, export_inference=False, verbose=0, **kw)
 
 
 def _labels(run: Path) -> dict:
@@ -110,7 +110,7 @@ def test_empty_class_fails():
 def test_overwrite_refused():
     with tempfile.TemporaryDirectory() as tmp:
         final = _make_final(Path(tmp), config.CLASSES)
-        for name in config.TRAIN_ARTIFACTS:
+        for name in config.TRAIN_ARTIFACTS + (train.TRAIN_CONFIG_NAME,):
             out = Path(tmp) / f"run_{name}"
             out.mkdir()
             sentinel = out / name
@@ -131,7 +131,7 @@ def test_overwrite_refused():
         (run / config.SAVEDMODEL_NAME).mkdir()
         _raises(FileExistsError, lambda: export.export_savedmodel(
             run, classes=config.CLASSES, yamnet=object()), config.SAVEDMODEL_NAME)
-    print("[덮어쓰기] train(체크포인트/labels/savedmodel) · evaluate · export 거부 + 해시 불변 OK")
+    print("[덮어쓰기] train(체크포인트/labels/savedmodel/train_config) · evaluate · export 거부 + 해시 불변 OK")
 
 
 def test_three_class_shuffled_order():
@@ -204,6 +204,49 @@ def test_four_class_other_index():
     print("[4클래스] head 4 · other=3 · config.CLASSES 4개 유지 OK")
 
 
+def test_early_stop_patience():
+    import tensorflow as tf
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        # CLI → train() 전달: 미지정 = config 값, 15 = 15 (학습은 가로채서 생략)
+        seen = []
+        orig_train = train.train
+        train.train = lambda *a, **kw: seen.append(kw) or {}
+        try:
+            base = ["--data-root", tmp, "--classes", "doorbell", "--out-dir", str(work / "cli"), "--quiet"]
+            train.main(base)
+            train.main(base + ["--early-stop-patience", "15"])
+        finally:
+            train.train = orig_train
+        assert [kw["early_stop_patience"] for kw in seen] == [config.EARLY_STOP_PATIENCE, 15], seen
+
+        # train() → EarlyStopping 콜백 patience + train_config.json
+        final = _make_final(work, config.CLASSES)
+        built = []
+        orig_cb = train._callbacks
+        train._callbacks = lambda *a, **kw: built.append(orig_cb(*a, **kw)) or built[-1]
+        try:
+            run = work / "run"
+            _train(final, run, "doorbell,knock", early_stop_patience=15)
+        finally:
+            train._callbacks = orig_cb
+        es = [cb for cb in built[0] if isinstance(cb, tf.keras.callbacks.EarlyStopping)]
+        assert len(es) == 1 and es[0].patience == 15, es
+        cfg = json.loads((run / train.TRAIN_CONFIG_NAME).read_text(encoding="utf-8"))
+        assert cfg == {"epochs": 1, "batch_size": 4, "early_stop_patience": 15,
+                       "classes": ["doorbell", "knock"]}, cfg
+
+        # 1 미만 거부 — 쓰기 전에 실패(부분 산출물 0)
+        for bad in (0, -1):
+            out = work / f"bad_{bad}"
+            _raises(ValueError, lambda o=out, b=bad: _train(final, o, "doorbell,knock",
+                                                            early_stop_patience=b), str(bad))
+            assert not out.exists(), f"patience={bad} 거부인데 산출 폴더가 생김"
+    print(f"[patience] CLI 기본 {config.EARLY_STOP_PATIENCE} · 15 전달 · EarlyStopping 15 · "
+          "train_config.json · 0/-1 거부 OK")
+
+
 if __name__ == "__main__":
     test_resolve_classes()
     test_run_dir_required()
@@ -212,4 +255,5 @@ if __name__ == "__main__":
     test_three_class_shuffled_order()
     test_two_class_subset_through_export()
     test_four_class_other_index()
-    print("=== 클래스 집합 · 산출 폴더 전체 통과 (7) ===")
+    test_early_stop_patience()
+    print("=== 클래스 집합 · 산출 폴더 전체 통과 (8) ===")
