@@ -24,11 +24,14 @@ def create_app(config_class=Config):
     # 모델 import 후 Blueprint 등록 (import 시점에 db.Model 메타데이터 채워짐)
     from . import models  # noqa: F401  (create_all 이 인식하도록 import)
     from .captures import captures_bp
+    from .registration_api import bp as registration_bp
     from .routes import bp as api_v1_bp
 
     app.register_blueprint(api_v1_bp)
     # 캡처 이미지 public 서빙(비인증, 앱 루트 /captures — 카테고리 7). url_prefix 없음.
     app.register_blueprint(captures_bp)
+    # 초인종 등록 API(Dashboard Token, url_prefix /api/v1/registration).
+    app.register_blueprint(registration_bp)
     register_error_handlers(app)
 
     # 실추론 모델 싱글턴 로드 + warmup (카테고리 6.2, env 게이트 DDINGDONG_MODEL_PATH)
