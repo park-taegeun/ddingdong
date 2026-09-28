@@ -9,7 +9,8 @@ best val_loss 체크포인트 + fit history(json) 저장. 실데이터는 학부
 `--data-root` 또는 `DDINGDONG_DATA_ROOT` 는 **필수** — 둘 다 없으면 기본값 fallback 없이
 `ValueError`로 즉시 실패한다(PR #60, `ml.pipeline.config.resolve_data_root`).
 `--classes` 와 산출 폴더(`--out-dir` 또는 `DDINGDONG_MODEL_DIR`)도 필수 — 기본값 없음.
-산출 폴더에 체크포인트 · labels.json · inference_savedmodel 중 하나라도 있으면 거부(덮어쓰기 0).
+산출 폴더에 체크포인트 · labels.json · inference_savedmodel · train_config.json 중 하나라도 있으면 거부(덮어쓰기 0).
+`--early-stop-patience` 기본값 = config.EARLY_STOP_PATIENCE. 사용값은 train_config.json 에 fit 전 기록.
 """
 
 from __future__ import annotations
@@ -25,6 +26,9 @@ import numpy as np
 from . import config, data, model
 
 log = logging.getLogger("ml.training.train")
+
+# 이 run 의 학습 인자 기록(fit 전). config.TRAIN_ARTIFACTS 는 무변경 — 거부 목록에 여기서 덧붙인다.
+TRAIN_CONFIG_NAME = "train_config.json"
 
 
 def _macro_f1_callback(val_ds, y_val):
@@ -44,6 +48,26 @@ def _macro_f1_callback(val_ds, y_val):
     return _MacroF1()
 
 
+def _callbacks(ckpt_path: Path, val_ds, y_val, *, early_stop_patience: int, verbose: int) -> list:
+    import tensorflow as tf
+
+    return [
+        tf.keras.callbacks.ModelCheckpoint(
+            str(ckpt_path), monitor="val_loss", save_best_only=True, verbose=verbose
+        ),
+        tf.keras.callbacks.EarlyStopping(
+            monitor="val_loss", patience=early_stop_patience,
+            restore_best_weights=True, verbose=verbose,
+        ),
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="val_loss", factor=config.REDUCE_LR_FACTOR,
+            patience=config.REDUCE_LR_PATIENCE, verbose=verbose,
+        ),
+        tf.keras.callbacks.TerminateOnNaN(),  # NaN loss 시 임의 진행 말고 즉시 중단(§9)
+        _macro_f1_callback(val_ds, y_val),
+    ]
+
+
 def train(
     final_dir: Path,
     out_dir: Path,
@@ -54,6 +78,7 @@ def train(
     yamnet_handle: str = config.YAMNET_HUB_HANDLE,
     epochs: int = config.EPOCHS,
     batch_size: int = config.BATCH_SIZE,
+    early_stop_patience: int = config.EARLY_STOP_PATIENCE,
     export_inference: bool = True,
     verbose: int = 1,
 ) -> dict:
@@ -64,8 +89,10 @@ def train(
     """
     import tensorflow as tf
 
+    if early_stop_patience < 1:
+        raise ValueError(f"early_stop_patience 는 1 이상이어야 한다: {early_stop_patience}")
     classes = config.resolve_classes(classes, allowed)
-    config.refuse_existing(out_dir, config.TRAIN_ARTIFACTS)   # 쓰기 전에 검사
+    config.refuse_existing(out_dir, config.TRAIN_ARTIFACTS + (TRAIN_CONFIG_NAME,))  # 쓰기 전에 검사
 
     # 1) 인덱싱 + class_weight(실측 자동 산출) — 빈 클래스면 여기서 실패(아직 쓴 파일 0)
     train_ex = data.list_examples(final_dir, "train", classes)
@@ -75,10 +102,17 @@ def train(
     class_weights = data.compute_class_weights(y_train, len(classes))
     log.info("train=%d val=%d | class_weight=%s", len(train_ex), len(val_ex),
              {classes[k]: round(v, 3) for k, v in class_weights.items()})
+    log.info("epochs=%d batch_size=%d early_stop_patience=%d", epochs, batch_size, early_stop_patience)
 
     tf.keras.utils.set_random_seed(config.SEED)
     out_dir.mkdir(parents=True, exist_ok=True)
     labels_path = config.write_labels(out_dir, classes)       # 체크포인트보다 먼저 = 짝 보장
+    (out_dir / TRAIN_CONFIG_NAME).write_text(
+        json.dumps({"epochs": epochs, "batch_size": batch_size,
+                    "early_stop_patience": early_stop_patience, "classes": list(classes)},
+                   ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
     # 2) backbone(embed_fn)
     yamnet = None
@@ -105,21 +139,8 @@ def train(
     log.info("head params: trainable=%(head_trainable)d non_trainable=%(head_non_trainable)d", params)
 
     ckpt_path = out_dir / config.CHECKPOINT_NAME
-    callbacks = [
-        tf.keras.callbacks.ModelCheckpoint(
-            str(ckpt_path), monitor="val_loss", save_best_only=True, verbose=verbose
-        ),
-        tf.keras.callbacks.EarlyStopping(
-            monitor="val_loss", patience=config.EARLY_STOP_PATIENCE,
-            restore_best_weights=True, verbose=verbose,
-        ),
-        tf.keras.callbacks.ReduceLROnPlateau(
-            monitor="val_loss", factor=config.REDUCE_LR_FACTOR,
-            patience=config.REDUCE_LR_PATIENCE, verbose=verbose,
-        ),
-        tf.keras.callbacks.TerminateOnNaN(),  # NaN loss 시 임의 진행 말고 즉시 중단(§9)
-        _macro_f1_callback(val_ds, y_val),
-    ]
+    callbacks = _callbacks(ckpt_path, val_ds, y_val,
+                           early_stop_patience=early_stop_patience, verbose=verbose)
 
     # 5) fit
     history = head.fit(
@@ -168,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="새 run 폴더(미지정=env DDINGDONG_MODEL_DIR, 둘 다 없으면 실패)")
     parser.add_argument("--epochs", type=int, default=config.EPOCHS)
     parser.add_argument("--batch-size", type=int, default=config.BATCH_SIZE)
+    parser.add_argument("--early-stop-patience", type=int, default=config.EARLY_STOP_PATIENCE,
+                        help=f"EarlyStopping patience(1 이상, 기본 config = {config.EARLY_STOP_PATIENCE})")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
@@ -178,7 +201,8 @@ def main(argv: list[str] | None = None) -> int:
     final_dir = config.resolve_final_dir(args.data_root)
     out_dir = config.resolve_run_dir(args.out_dir)
     summary = train(final_dir, out_dir, classes=args.classes,
-                    epochs=args.epochs, batch_size=args.batch_size)
+                    epochs=args.epochs, batch_size=args.batch_size,
+                    early_stop_patience=args.early_stop_patience)
     print("\n=== 학습 완료 ===")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
