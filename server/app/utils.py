@@ -90,6 +90,9 @@ def _apply_prediction_policy(predicted_class, confidence, all_scores, tof_meta=N
     pivot) — 랜덤 생성이든 ModelRunner 실추론이든 이 함수를 거치면 동일 판정을 받는다.
 
     분기(위에서부터 순서대로 — 먼저 걸린 사유가 skip_reason 이 된다):
+      - other → 1차 알림 skip (skip_reason="not_target"), 신뢰도 무관, enrich skipped
+        (33.13(a) D4·E1~E4: DB 기록만 하고 알림만 막는다. 게이트 **맨 앞** — 저신뢰
+        other 도 low_confidence 가 아니라 not_target 으로 기록된다)
       - 신뢰도 < 임계값 → 1차 알림 skip (skip_reason="low_confidence"), 클래스 무관
       - fire_alarm → ToF 우회, 1차 알림만(enrich skipped) (카테고리 7 화재경보)
       - ToF 게이트 적용 + 미통과 → 1차 알림 skip (skip_reason="tof_rejected")
@@ -122,6 +125,16 @@ def _apply_prediction_policy(predicted_class, confidence, all_scores, tof_meta=N
         tof_meta = tof_meta_wire.absent_meta()
     tof = _tof_decision(predicted_class, tof_meta)
 
+    if predicted_class == "other":
+        return {
+            "predicted_class": predicted_class,
+            "confidence": confidence,
+            "all_scores": all_scores,
+            "tof": tof,
+            "primary_sent": False,
+            "enrich_status": "skipped",
+            "skip_reason": "not_target",
+        }
     if confidence < CONFIDENCE_THRESHOLD:
         return {
             "predicted_class": predicted_class,
@@ -172,10 +185,14 @@ def mock_prediction(tof_meta=None):
     top = round(random.uniform(0.45, 0.97), 2)
     others = [c for c in PREDICTED_CLASSES if c != predicted]
     rest = round(1.0 - top, 2)
-    a = round(random.uniform(0.0, rest), 2)
-    b = round(rest - a, 2)
-    raw = {predicted: top, others[0]: a, others[1]: b}
-    # 출력 키 순서를 enum 순서(doorbell/knock/fire_alarm)로 고정 (AllScores 타입 일치)
+    # 나머지 확률을 앞쪽 클래스부터 무작위로 떼어 주고 마지막이 잔여를 받는다
+    # (클래스 수가 PREDICTED_CLASSES 에서만 정해지도록 — 별도 목록 금지, 33.17(f)③).
+    raw = {predicted: top}
+    for c in others[:-1]:
+        raw[c] = round(random.uniform(0.0, rest), 2)
+        rest = round(rest - raw[c], 2)
+    raw[others[-1]] = rest
+    # 출력 키 순서를 enum 순서(doorbell/knock/fire_alarm/other)로 고정 (AllScores 타입 일치)
     all_scores = {c: raw[c] for c in PREDICTED_CLASSES}
     return _apply_prediction_policy(predicted, top, all_scores, tof_meta)
 

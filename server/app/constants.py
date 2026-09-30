@@ -2,8 +2,10 @@
 
 from datetime import timedelta, timezone
 
-# 카테고리 4: ML predicted_class 3종 enum (코드 식별자만 영어, "도어벨" 미사용 — 카테고리 29.5)
-PREDICTED_CLASSES = ("doorbell", "knock", "fire_alarm")
+# 카테고리 4: ML predicted_class 4종 enum (코드 식별자만 영어, "도어벨" 미사용 — 카테고리 29.5)
+# other(33.13(a)(d)) = 인덱스 3. DB 기록만 하고 알림은 게이트 맨 앞에서 차단(not_target).
+# inference.constants.CLASSES 의 리터럴 복제 — 두 값의 일치는 회귀 스위트가 매 실행 대조한다.
+PREDICTED_CLASSES = ("doorbell", "knock", "fire_alarm", "other")
 
 # 카테고리 6.1: device_id 5초당 1회 (초과 시 429 + Retry-After)
 DEVICE_RATE_LIMIT_SECONDS = 5

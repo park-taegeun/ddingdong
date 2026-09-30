@@ -1,7 +1,8 @@
 // GET /api/v1/notifications 응답 타입 (SSoT: 위임 프롬프트 섹션 4)
 // Phase 1 = mock, Phase 2 = 실제 서버 응답. 구조는 동일.
 
-export type PredictedClass = "doorbell" | "knock" | "fire_alarm"
+// other = 알림 대상이 아닌 소리(33.13(a)(d), 인덱스 3). DB 기록·목록 표시만, 알림은 서버가 차단.
+export type PredictedClass = "doorbell" | "knock" | "fire_alarm" | "other"
 
 export type EnrichStatus =
   | "completed"
@@ -11,6 +12,7 @@ export type EnrichStatus =
   | "failed"
 
 export type SkipReason =
+  | "not_target"
   | "low_confidence"
   | "tof_rejected"
   | "kakao_api_error"
@@ -20,6 +22,7 @@ export interface AllScores {
   doorbell: number
   knock: number
   fire_alarm: number
+  other: number
 }
 
 export interface TofCheck {
