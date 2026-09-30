@@ -15,12 +15,25 @@ test_serving_level 이 ml 원문 텍스트와 매 실행 대조한다.
   둬야 두 쪽 레벨이 맞는다. STT(/enrich)도 원본.
 ★ 재판정 트리거: 학습 정규화 규칙이 바뀌면(예: 3차 재학습 후보 「글리치 제외 피크」 채택) 이 식도
   함께 바꿔야 한다 — 대조 테스트가 ml 원문 변경을 FAIL 로 알린다.
+★ 규칙 계보(사용자 결정 B, 2026-09-30): 모델이 자기 입력 규칙을 선언하고 서버가 따라간다. 학습 run
+  폴더 train_config.json 의 peak_rule(02 전처리 기록 → 05 → 학습이 옮긴 값)을 기동 시 읽어(resolve_rule)
+  RULES 의 같은 이름 함수로 정규화한다. 두 규칙 모두 ml/pipeline/audio_io 원문과 매 실행 대조된다.
 """
+
+import json
+from pathlib import Path
 
 import numpy as np
 
-# ml/pipeline/config.TARGET_PEAK 복제(0.95 linear ≈ -0.45 dBFS).
+# ml/pipeline/config 복제 — TARGET_PEAK(0.95 linear ≈ -0.45 dBFS) · 규칙 이름 · 클램프 끝값 · 가림 폭.
 TARGET_PEAK = 0.95
+RULE_PLAIN = "peak_plain_v1"
+RULE_CLAMPMASK32 = "peak_clampmask32_v1"
+CLAMP_LEVEL = 32767 / 32768
+CLAMP_GUARD_SAMPLES = 32
+# ml/training/train.TRAIN_CONFIG_NAME 과 그 안의 규칙 키.
+TRAIN_CONFIG_NAME = "train_config.json"
+RULE_KEY = "peak_rule"
 
 LEVEL_RAW = "raw"
 LEVEL_PEAK = "peak"
@@ -33,6 +46,42 @@ def peak_normalize(waveform):
     if peak <= 1e-9:
         return waveform
     return waveform * (TARGET_PEAK / peak)
+
+
+def peak_normalize_clampmask(waveform):
+    """(1, N) float32 → 모든 클램프(|x| ≥ CLAMP_LEVEL) ±CLAMP_GUARD_SAMPLES 를 피크 계산에서 뺀 이득을 전체에 적용.
+    남는 샘플이 없거나 남은 피크 ≤ 1e-9 면 원본 그대로(학습 식 audio_io.peak_normalize_clampmask 와 동일)."""
+    flat = np.abs(waveform).reshape(-1)
+    clamp = (flat >= CLAMP_LEVEL).astype(np.int32)
+    kernel = np.ones(2 * CLAMP_GUARD_SAMPLES + 1, dtype=np.int32)
+    masked = np.convolve(clamp, kernel, mode="full")[CLAMP_GUARD_SAMPLES:CLAMP_GUARD_SAMPLES + flat.size] > 0
+    rest = flat[~masked]
+    peak = float(rest.max()) if rest.size else 0.0
+    if peak <= 1e-9:
+        return waveform
+    return waveform * (TARGET_PEAK / peak)
+
+
+RULES = {RULE_PLAIN: peak_normalize, RULE_CLAMPMASK32: peak_normalize_clampmask}
+
+
+def resolve_rule(model_path):
+    """기동 시 1회(peak 모드 + 실모델). MODEL_PATH 상위 run 폴더 train_config.json 의 peak_rule → (규칙, 옛 모델 여부).
+
+    파일 또는 키가 없음 = 옛 모델 → (RULE_PLAIN, True). 근거 = 사실: 정규화는 ml/pipeline 첫 커밋(#10 de05c7e)부터
+    PEAK_NORMALIZE=True · audio_io.peak_normalize 단일 식이었고(git log -S PEAK_NORMALIZE · audio_io 커밋 1개),
+    peak_rule 필드는 이 규칙 계보 PR 에서 처음 생긴다 — 그 전 학습(1차 run = train_config.json 자체 없음,
+    2차 run = 키 없음)은 전부 plain 이다. 호출자가 WARNING 을 남긴다.
+    그 밖의 값(null · 빈 문자열 · 모르는 이름)은 전부 ValueError — 기본값 fallback 없음.
+    """
+    path = Path(model_path).parent / TRAIN_CONFIG_NAME
+    cfg = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    if RULE_KEY not in cfg:
+        return RULE_PLAIN, True
+    rule = cfg[RULE_KEY]
+    if not isinstance(rule, str) or rule not in RULES:
+        raise ValueError(f"{path} {RULE_KEY}={rule!r}: 서버가 모르는 정규화 규칙입니다(허용: {tuple(RULES)}).")
+    return rule, False
 
 
 def resolve_mode(classes, env_value):

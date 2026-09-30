@@ -42,9 +42,23 @@ def create_app(config_class=Config):
     app.config["SERVING_LEVEL_MODE"] = serving_level.resolve_mode(
         constants.PREDICTED_CLASSES, app.config.get("SERVING_LEVEL")
     )
+    # 정규화 규칙 = 모델이 선언(run 폴더 train_config.json peak_rule). peak 모드 + 실모델일 때만 의미 —
+    # raw 모드 · mock(MODEL_PATH 미설정)은 정규화를 안 하므로 None. 모르는 규칙 = 기동 실패.
+    rule = None
+    if app.config["SERVING_LEVEL_MODE"] == serving_level.LEVEL_PEAK and app.config.get("MODEL_PATH"):
+        rule, legacy = serving_level.resolve_rule(app.config["MODEL_PATH"])
+        if legacy:
+            app.logger.warning(
+                "serving_level: 모델 run 폴더 %s 에 %s 없음 → %s(이 필드 이전 학습은 전부 plain)",
+                serving_level.TRAIN_CONFIG_NAME,
+                serving_level.RULE_KEY,
+                rule,
+            )
+    app.config["SERVING_LEVEL_RULE"] = rule
     app.logger.warning(
-        "serving_level: /detect 추론 입력 = %s (classes=%s, %s=%r)",
+        "serving_level: /detect 추론 입력 = %s rule=%s (classes=%s, %s=%r)",
         app.config["SERVING_LEVEL_MODE"],
+        app.config["SERVING_LEVEL_RULE"],
         constants.PREDICTED_CLASSES,
         serving_level.LEVEL_ENV,
         app.config.get("SERVING_LEVEL"),

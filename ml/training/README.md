@@ -77,7 +77,8 @@ python -m ml.training.train    --data-root "$DATA" --classes doorbell,knock,fire
 python -m ml.training.evaluate --data-root "$DATA" --classes doorbell,knock,fire_alarm --out-dir "$RUN"
 ```
 
-- run 폴더 산출물: `best.keras`(head 가중치) · `history.json` · `train_config.json`(학습 인자) · `labels.json`(이 run 의 클래스 ·
+- run 폴더 산출물: `best.keras`(head 가중치) · `history.json` · `train_config.json`(학습 인자 + `peak_rule` = 05 의 `norm_rule.json`
+  을 옮긴 정규화 규칙 — 서버 peak 모드가 이 규칙을 따른다. 기록 없는 05 는 학습 실패 → run_all 재실행) · `labels.json`(이 run 의 클래스 ·
   인덱스) · `eval_report.json` · `confusion_matrix.csv` · `inference_savedmodel/`(waveform→확률 배포용).
 - `train` 은 hub YAMNet 으로 `inference_savedmodel/` 까지 만든다. head 만 있을 때 따로 만들려면
   `python -m ml.training.export --classes … --out-dir "$RUN"`.

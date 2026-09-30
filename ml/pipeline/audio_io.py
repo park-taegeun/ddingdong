@@ -60,6 +60,35 @@ def peak_normalize(y: np.ndarray, target_peak: float = config.TARGET_PEAK) -> np
     return y * (target_peak / peak)
 
 
+def peak_normalize_clampmask(
+    y: np.ndarray,
+    target_peak: float = config.TARGET_PEAK,
+    guard: int = config.CLAMP_GUARD_SAMPLES,
+) -> np.ndarray:
+    """피크 계산에서 모든 클램프 샘플(|x| ≥ CLAMP_LEVEL)과 앞뒤 guard 샘플을 빼고 그 이득을 전체에 적용.
+
+    남는 샘플이 없거나(창 전체가 가려짐) 남은 피크가 0 이면 원본 반환(plain 무음 가드와 나란히).
+    런 길이 판정 없음 — 진짜 잘린 큰 소리는 주변도 끝값 근처라 이득 ≈ 1(결정 A 논증).
+    """
+    flat = np.abs(y).reshape(-1)
+    clamp = (flat >= config.CLAMP_LEVEL).astype(np.int32)
+    # full 의 [guard : guard+n] = 샘플 i 기준 [i-guard, i+guard] 합(n < 커널이어도 길이 n).
+    kernel = np.ones(2 * guard + 1, dtype=np.int32)
+    masked = np.convolve(clamp, kernel, mode="full")[guard:guard + flat.size] > 0
+    rest = flat[~masked]
+    peak = float(rest.max()) if rest.size else 0.0
+    if peak <= 1e-9:
+        return y
+    return y * (target_peak / peak)
+
+
+# 규칙 이름 → 함수(config.PEAK_RULE_* 참조). 모르는 이름은 KeyError — 기본값 fallback 없음.
+PEAK_RULES = {
+    config.PEAK_RULE_PLAIN: peak_normalize,
+    config.PEAK_RULE_CLAMPMASK32: peak_normalize_clampmask,
+}
+
+
 def fix_duration(y: np.ndarray, seconds: float, sr: int = config.SAMPLE_RATE) -> np.ndarray:
     """고정 길이 정책: 짧으면 뒤를 zero-pad, 길면 앞에서 trim."""
     target = int(round(seconds * sr))

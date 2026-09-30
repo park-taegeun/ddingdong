@@ -33,7 +33,7 @@ def _print_summary(final_counts: dict[str, dict[str, int]], guard: dict[str, int
           f"val={content_guard['val']} test={content_guard['test']} (split 교차 0)")
 
 
-def run(paths: Paths, clean: bool = True) -> dict[str, dict[str, int]]:
+def run(paths: Paths, clean: bool = True, rule: str = config.PEAK_RULE) -> dict[str, dict[str, int]]:
     log = logging.getLogger("ml.pipeline")
     log.info("DATA_ROOT = %s", paths.root)
 
@@ -45,7 +45,7 @@ def run(paths: Paths, clean: bool = True) -> dict[str, dict[str, int]]:
 
     # clean=True(기본): 각 스테이지가 write 전 자기 산출 폴더(02/03/05)를 비워 stale
     # 잔재를 제거. 특히 02 stale(가드 도입 전 빈 클립)이 05 로 부활하던 회귀 차단.
-    preprocess.preprocess(paths, clean=clean)
+    preprocess.preprocess(paths, clean=clean, rule=rule)  # rule = 02 정규화 규칙(02 → 05 → 학습에 기록)
     split.split_dataset(paths)
     augment.augment(paths, clean=clean)
     if clean:

@@ -625,6 +625,65 @@ def test_dummy_class_freq_distinct():
     return dict(zip(config.CLASSES, freqs))
 
 
+def _clampmask_reference(y: np.ndarray, guard: int = config.CLAMP_GUARD_SAMPLES) -> np.ndarray:
+    """결정 A 정의를 루프로 그대로 옮긴 참조 구현(모든 클램프 ±guard 제외, 남는 샘플 0 이면 원본)."""
+    a = np.abs(y)
+    keep = np.ones(a.size, dtype=bool)
+    for i in np.flatnonzero(a >= config.CLAMP_LEVEL):
+        keep[max(0, i - guard):i + guard + 1] = False
+    peak = float(a[keep].max()) if keep.any() else 0.0
+    return y if peak <= 1e-9 else y * (config.TARGET_PEAK / peak)
+
+
+def test_peak_clampmask_rule():
+    """T15 규칙 함수 peak_clampmask32_v1 — 무음 · 전체 가림 · 고립 · 2샘플 런+두 번째 튐 · 진짜 잘림 · 클램프 없음 · 짧은 창."""
+    from ..audio_io import PEAK_RULES, peak_normalize, peak_normalize_clampmask
+
+    assert set(PEAK_RULES) == {config.PEAK_RULE_PLAIN, config.PEAK_RULE_CLAMPMASK32}
+    assert config.PEAK_RULE in PEAK_RULES
+    rng = np.random.default_rng(0)
+    noise = (rng.standard_normal(16000) * 0.01).astype(np.float32)
+    hi = np.float32(config.CLAMP_LEVEL)
+
+    # 무음 · 창 전체 가림 → 원본 그대로
+    for y in (np.zeros(16000, np.float32), np.full(16000, hi, np.float32)):
+        assert peak_normalize_clampmask(y) is y
+
+    # 고립 1샘플 클램프 → 그 ±32 를 뺀 피크로 정규화(plain 은 클램프에 묶임)
+    iso = noise.copy()
+    iso[5000] = -1.0
+    got = peak_normalize_clampmask(iso)
+    np.testing.assert_allclose(got, _clampmask_reference(iso), rtol=1e-6)
+    assert not np.allclose(got, peak_normalize(iso))
+
+    # 2샘플 글리치 + 글리치 끝 뒤 +17샘플 두 번째 튐(0.5) → 튐까지 빠져 잡음 바닥이 TARGET_PEAK
+    run2 = noise.copy()
+    run2[[5000, 5001]] = hi
+    run2[5001 + 17] = 0.5
+    got = peak_normalize_clampmask(run2)
+    np.testing.assert_allclose(got, _clampmask_reference(run2), rtol=1e-6)
+    far = np.r_[0:5001 - 32 - 17, 5001 + 17 + 33:16000]
+    assert abs(float(np.max(np.abs(got[far]))) - config.TARGET_PEAK) < 0.05, "두 번째 튐이 피크를 잡음"
+
+    # 진짜 잘린 큰 소리(1kHz · 천천히 커지는 포락선 → 끝값에 잘림) → 이득 ≈ 1
+    t = np.arange(16000) / config.SAMPLE_RATE
+    loud = np.clip(1.5 * np.minimum(t / 0.5, 1.0) * np.sin(2 * np.pi * 1000 * t), -1.0, hi).astype(np.float32)
+    assert int(np.sum(np.abs(loud) >= config.CLAMP_LEVEL)) > 100
+    gain = float(np.max(np.abs(peak_normalize_clampmask(loud)))) / float(np.max(np.abs(loud)))
+    assert 0.9 < gain < 1.1, gain
+
+    # 클램프 없음 → plain 과 바이트 동일
+    np.testing.assert_array_equal(peak_normalize_clampmask(noise), peak_normalize(noise))
+
+    # 커널(65)보다 짧은 창 · (1, N) 모양 → 모양 유지
+    short = noise[:20].copy()
+    short[3] = hi
+    assert peak_normalize_clampmask(short) is short          # 20샘플 전부 ±32 안
+    two_d = iso.reshape(1, -1)
+    assert peak_normalize_clampmask(two_d).shape == (1, 16000)
+    return gain
+
+
 def _main() -> int:
     counts, guard = test_pipeline_end_to_end()
     print("PASS — test_pipeline_end_to_end")
@@ -672,6 +731,7 @@ def _main() -> int:
     print(f"PASS — T12 test_other_snr_lookup (other 증강 태그 {tags})")
     print(f"PASS — T13 test_class_order_server_contract ({test_class_order_server_contract()})")
     print(f"PASS — T14 test_dummy_class_freq_distinct ({test_dummy_class_freq_distinct()})")
+    print(f"PASS — T15 test_peak_clampmask_rule (진짜 잘림 이득 {test_peak_clampmask_rule():.3f})")
     for split_name in ("train", "val", "test"):
         row = counts[split_name]
         print(f"  {split_name:<5} " + " ".join(f"{c}={row[c]}" for c in config.CLASSES)
