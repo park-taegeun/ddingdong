@@ -1,4 +1,5 @@
-"""클래스 집합 명시 · 산출 폴더 필수 · 덮어쓰기 거부 · 빈 클래스 즉시 실패 · 실행별 라벨 · early stop patience.
+"""클래스 집합 명시 · 산출 폴더 필수 · 덮어쓰기 거부 · 빈 클래스 즉시 실패 · 실행별 라벨 · early stop patience
+· 정규화 규칙 계보(02 기록 → 05 → train_config.json peak_rule).
 
 05_final_dataset 을 tempdir 에 직접 만들고(파이프라인 생략) 더미 embed_fn · 더미 YAMNet 으로
 train → evaluate → export 를 관통한다. 실데이터 · hub · 서빙 모델 폴더 무접촉.
@@ -17,10 +18,12 @@ from pathlib import Path
 
 import numpy as np
 
-from ml.pipeline import audio_io
+from ml.pipeline import audio_io, preprocess, run_all
+from ml.pipeline import config as pipe
+from ml.pipeline.make_dummy import make_dummy_dataset
 from ml.training import config, data, evaluate, export, train
 from ml.training.tests.test_export_smoke import _load_dummy_yamnet
-from ml.training.tests.test_training_smoke import dummy_embed_fn
+from ml.training.tests.test_training_smoke import PER_CLASS, dummy_embed_fn
 
 WITH_OTHER = config.CLASSES                    # 4클래스 경로 — other 편입(33.13(d)) 후 전역 CLASSES 그대로
 THREE = ("doorbell", "knock", "fire_alarm")    # other 가 없는 허용 집합 — 집합 밖 이름 거부 확인용
@@ -40,6 +43,7 @@ def _make_final(root: Path, classes, per=3, empty: tuple[str, str] | None = None
             for i in range(per):
                 y = (0.3 + 0.1 * i) * np.sin(2 * np.pi * _FREQ[cls] * t)
                 audio_io.save_wav(d / f"{cls}_{i}.wav", y.astype(np.float32))
+    preprocess.write_norm_rule(final, pipe.PEAK_RULE)  # run_all 이 남기는 규칙 기록(학습 필수 입력)
     return final
 
 
@@ -235,7 +239,7 @@ def test_early_stop_patience():
         assert len(es) == 1 and es[0].patience == 15, es
         cfg = json.loads((run / train.TRAIN_CONFIG_NAME).read_text(encoding="utf-8"))
         assert cfg == {"epochs": 1, "batch_size": 4, "early_stop_patience": 15,
-                       "classes": ["doorbell", "knock"]}, cfg
+                       "classes": ["doorbell", "knock"], "peak_rule": pipe.PEAK_RULE}, cfg
 
         # 1 미만 거부 — 쓰기 전에 실패(부분 산출물 0)
         for bad in (0, -1):
@@ -247,6 +251,49 @@ def test_early_stop_patience():
           "train_config.json · 0/-1 거부 OK")
 
 
+def test_peak_rule_lineage():
+    """02 가 실제로 쓴 규칙 → 05 기록 → train_config.json peak_rule. 기록 없는 02 · 05 는 실패.
+
+    ★ 02 를 config 기본(pipe.PEAK_RULE)과 **다른** 규칙으로 만든다 — 같으면 학습이 config 값을 적어도
+      통과해 버린다(NC-3 함정). 클램프 1샘플을 심어 두 규칙의 02 출력이 실제로 갈리는지도 확인.
+    """
+    other_rule = next(r for r in audio_io.PEAK_RULES if r != pipe.PEAK_RULE)
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_dummy_dataset(root, per_class=PER_CLASS, seed=1)
+        paths = pipe.resolve_paths(root)
+        src = sorted((paths.clips / "doorbell").glob("*.wav"))[0]
+        y = audio_io.load_mono(src)
+        y[len(y) // 2] = 1.0  # 저장하면 +32767 = 클램프
+        audio_io.save_wav(src, y)
+        run_all.run(paths, clean=True, rule=other_rule)
+
+        assert preprocess.read_norm_rule(paths.preprocessed) == other_rule
+        assert preprocess.read_norm_rule(paths.final) == other_rule
+        got = audio_io.load_mono(paths.preprocessed / "doorbell" / src.name)
+        raw = audio_io.load_mono(src)
+        lsb = 1.5 / 32768
+        assert np.max(np.abs(got - audio_io.PEAK_RULES[other_rule](raw))) < lsb, "02 출력 ≠ 기록된 규칙"
+        assert np.max(np.abs(got - audio_io.PEAK_RULES[pipe.PEAK_RULE](raw))) > lsb, "두 규칙이 안 갈림"
+
+        run = root / "run"
+        _train(paths.final, run, "doorbell,knock")
+        cfg = json.loads((run / train.TRAIN_CONFIG_NAME).read_text(encoding="utf-8"))
+        assert cfg["peak_rule"] == other_rule != pipe.PEAK_RULE, cfg
+
+        # 기록 없는 05 로 학습 = 쓰기 전에 실패(산출 폴더 생성 0)
+        (paths.final / pipe.NORM_RULE_FILE).unlink()
+        out = root / "no_record"
+        _raises(FileNotFoundError, lambda: _train(paths.final, out, "doorbell,knock"), pipe.NORM_RULE_FILE)
+        assert not out.exists()
+        # 기록 없는 02 로 조립 = 실패
+        (paths.preprocessed / pipe.NORM_RULE_FILE).unlink()
+        from ml.pipeline import assemble
+        _raises(FileNotFoundError, lambda: assemble.assemble(paths), pipe.NORM_RULE_FILE)
+    print(f"[계보] 02 {other_rule} → 05 → train_config peak_rule 일치(config 기본 {pipe.PEAK_RULE} 아님) · "
+          "기록 없는 05 학습 · 02 조립 실패 OK")
+
+
 if __name__ == "__main__":
     test_resolve_classes()
     test_run_dir_required()
@@ -256,4 +303,5 @@ if __name__ == "__main__":
     test_two_class_subset_through_export()
     test_four_class_other_index()
     test_early_stop_patience()
-    print("=== 클래스 집합 · 산출 폴더 전체 통과 (8) ===")
+    test_peak_rule_lineage()
+    print("=== 클래스 집합 · 산출 폴더 전체 통과 (9) ===")

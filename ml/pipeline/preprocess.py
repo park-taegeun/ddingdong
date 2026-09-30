@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -18,12 +19,16 @@ from .config import Paths
 log = logging.getLogger("ml.pipeline.preprocess")
 
 
-def preprocess(paths: Paths, clean: bool = True) -> dict[str, dict]:
+def preprocess(paths: Paths, clean: bool = True, rule: str = config.PEAK_RULE) -> dict[str, dict]:
     """클래스별 전처리 실행. 반환: {class: {"ok": n, "skipped": [(stem, reason)]}}.
 
     clean=True(기본): write 전 02_preprocessed/{class} 를 비워 이전 실행의 stale 산출물
     (특히 가드 도입 전 흘러든 빈 클립)을 제거. --no-clean 로 opt-out(run_all).
+    rule = 피크 정규화 규칙 이름(audio_io.PEAK_RULES). 실제로 쓴 규칙을 02 루트
+    NORM_RULE_FILE 에 기록한다(규칙 계보 — 05 조립 · 학습이 이 기록을 옮긴다).
+    PEAK_NORMALIZE=False 면 정규화를 안 했으므로 null 을 기록한다(서버 peak 모드에서 기동 실패).
     """
+    normalize = audio_io.PEAK_RULES[rule]  # 모르는 규칙 = 쓰기 전에 KeyError
     if clean:
         removed = config.clean_stage_class_dirs(paths.preprocessed, config.DIR_PREPROCESSED)
         if removed:
@@ -56,7 +61,7 @@ def preprocess(paths: Paths, clean: bool = True) -> dict[str, dict]:
 
             y = audio_io.load_mono(src)
             if config.PEAK_NORMALIZE:
-                y = audio_io.peak_normalize(y)
+                y = normalize(y)
             if config.FIXED_DURATION_SEC is not None:
                 y = audio_io.fix_duration(y, config.FIXED_DURATION_SEC)
 
@@ -65,4 +70,29 @@ def preprocess(paths: Paths, clean: bool = True) -> dict[str, dict]:
 
         stats[cls] = {"ok": ok, "skipped": skipped}
         log.info("preprocess %-11s ok=%d skipped=%d", cls, ok, len(skipped))
+
+    record = write_norm_rule(paths.preprocessed, rule if config.PEAK_NORMALIZE else None)
+    log.info("02 정규화 규칙 기록 → %s (%s)", record, rule if config.PEAK_NORMALIZE else None)
     return stats
+
+
+def write_norm_rule(stage_dir: Path, rule: str | None) -> Path:
+    """stage_dir/NORM_RULE_FILE = {"peak_rule": rule}. 스테이지 auto-clean 은 클래스 폴더만 지우므로 매 실행 덮어쓴다."""
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    path = stage_dir / config.NORM_RULE_FILE
+    path.write_text(json.dumps({"peak_rule": rule}, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def read_norm_rule(stage_dir: Path) -> str | None:
+    """stage_dir/NORM_RULE_FILE 의 peak_rule. 파일 · 키가 없으면 실패(규칙을 모르는 데이터셋 — run_all 재실행)."""
+    path = stage_dir / config.NORM_RULE_FILE
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"정규화 규칙 기록 없음: {path}\n"
+            "  → 이 데이터셋을 만든 규칙을 알 수 없다. run_all 로 02~05 를 다시 만들 것(기록이 생긴다)."
+        )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if "peak_rule" not in data:
+        raise ValueError(f"정규화 규칙 기록에 peak_rule 키 없음: {path}")
+    return data["peak_rule"]

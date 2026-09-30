@@ -138,7 +138,7 @@ def detect():
         infer_started = time.monotonic()
         # 정규화본은 predict 에만 — waveform(로그 · 등록 계측 입력)은 원본 유지(serving_level 주석).
         model_input = (
-            serving_level.peak_normalize(waveform)
+            serving_level.RULES[current_app.config["SERVING_LEVEL_RULE"]](waveform)
             if current_app.config["SERVING_LEVEL_MODE"] == serving_level.LEVEL_PEAK
             else waveform
         )

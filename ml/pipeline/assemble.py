@@ -13,7 +13,7 @@ import logging
 import shutil
 from pathlib import Path
 
-from . import audio_io, config
+from . import audio_io, config, preprocess
 from .augment import AUG_SEP, base_stem
 from .config import Paths
 from .split import load_split_manifest
@@ -107,6 +107,9 @@ def assemble(paths: Paths) -> dict[str, dict[str, int]]:
         writer.writeheader()
         writer.writerows(rows)
     log.info("final manifest → %s (%d rows)", out, len(rows))
+
+    # 규칙 계보: 02 가 기록한 정규화 규칙을 05 로 옮긴다(학습은 05 만 읽는다). 02 기록이 없으면 실패.
+    preprocess.write_norm_rule(paths.final, preprocess.read_norm_rule(paths.preprocessed))
     return counts
 
 

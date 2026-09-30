@@ -35,6 +35,22 @@ PEAK_NORMALIZE: bool = True
 TARGET_PEAK: float = 0.95  # linear (≈ -0.45 dBFS)
 FIXED_DURATION_SEC: float | None = None  # None = 원본 길이 유지
 
+# 피크 정규화 규칙 이름(규칙 계보 — 사용자 결정 B, 2026-09-30). 02 전처리가 쓴 규칙을
+#   02_preprocessed/NORM_RULE_FILE 에 기록 → 05 조립이 05_final_dataset 로 옮김 → 학습이
+#   train_config.json "peak_rule" 로 옮김 → 서버가 모델 run 폴더에서 읽어 같은 규칙으로 정규화.
+#   peak_plain_v1       = audio_io.peak_normalize(창 전체 최대 |x|). #10 부터 이 PR 전까지의 유일한 규칙.
+#   peak_clampmask32_v1 = audio_io.peak_normalize_clampmask(결정 A — 클램프 ±CLAMP_GUARD_SAMPLES 제외).
+#   ★ 3차 재학습 후보 초안의 기본값 = peak_clampmask32_v1. onset 마스크(slice_direct ·
+#     slice_boardbg 의 mask_glitch_clamps = 고립 1샘플만, 33.21(d))와는 별개 규칙이다.
+PEAK_RULE_PLAIN = "peak_plain_v1"
+PEAK_RULE_CLAMPMASK32 = "peak_clampmask32_v1"
+PEAK_RULE: str = PEAK_RULE_CLAMPMASK32
+NORM_RULE_FILE = "norm_rule.json"
+# 클램프 = int16 끝값(+32767 · −32768) — float [-1,1] 로 읽으면 |x| ≥ 32767/32768.
+CLAMP_LEVEL: float = 32767 / 32768
+# 클램프 앞뒤로 피크 계산에서 뺄 샘플 수(결정 A: 2샘플 글리치 · 글리치 뒤 +17샘플 두 번째 튐을 함께 덮는다).
+CLAMP_GUARD_SAMPLES: int = 32
+
 # 최소 유효 길이 가드 (매직넘버 금지 — 상수화).
 #   근거: 01_clips 원본 중 길이 0.0초 빈 wav 6개(AI Hub S_103, fire_alarm)가
 #   preprocess를 무검증 통과 → augment 의 pink-noise FFT(np.fft.rfft, 길이 0)에서

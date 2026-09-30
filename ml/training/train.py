@@ -11,6 +11,8 @@ best val_loss 체크포인트 + fit history(json) 저장. 실데이터는 학부
 `--classes` 와 산출 폴더(`--out-dir` 또는 `DDINGDONG_MODEL_DIR`)도 필수 — 기본값 없음.
 산출 폴더에 체크포인트 · labels.json · inference_savedmodel · train_config.json 중 하나라도 있으면 거부(덮어쓰기 0).
 `--early-stop-patience` 기본값 = config.EARLY_STOP_PATIENCE. 사용값은 train_config.json 에 fit 전 기록.
+train_config.json "peak_rule" = 05_final_dataset/norm_rule.json(02 전처리가 쓴 규칙 → 05 조립이 옮김)을 그대로 옮긴다.
+학습 시점 config 값이 아니다 — 기록이 없는 05 는 쓰기 전에 실패(run_all 재실행). 서버가 이 값으로 정규화한다.
 """
 
 from __future__ import annotations
@@ -22,6 +24,8 @@ import sys
 from pathlib import Path
 
 import numpy as np
+
+from ml.pipeline import preprocess as pipe_preprocess
 
 from . import config, data, model
 
@@ -93,6 +97,7 @@ def train(
         raise ValueError(f"early_stop_patience 는 1 이상이어야 한다: {early_stop_patience}")
     classes = config.resolve_classes(classes, allowed)
     config.refuse_existing(out_dir, config.TRAIN_ARTIFACTS + (TRAIN_CONFIG_NAME,))  # 쓰기 전에 검사
+    peak_rule = pipe_preprocess.read_norm_rule(final_dir)  # 규칙 계보 — 기록 없으면 쓰기 전에 실패
 
     # 1) 인덱싱 + class_weight(실측 자동 산출) — 빈 클래스면 여기서 실패(아직 쓴 파일 0)
     train_ex = data.list_examples(final_dir, "train", classes)
@@ -109,7 +114,8 @@ def train(
     labels_path = config.write_labels(out_dir, classes)       # 체크포인트보다 먼저 = 짝 보장
     (out_dir / TRAIN_CONFIG_NAME).write_text(
         json.dumps({"epochs": epochs, "batch_size": batch_size,
-                    "early_stop_patience": early_stop_patience, "classes": list(classes)},
+                    "early_stop_patience": early_stop_patience, "classes": list(classes),
+                    "peak_rule": peak_rule},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
