@@ -34,6 +34,22 @@ def create_app(config_class=Config):
     app.register_blueprint(registration_bp)
     register_error_handlers(app)
 
+    # /detect 추론 입력 레벨(raw / peak) — 모델 계약(other 유무) + env override, 불일치면 기동 실패.
+    # 모델 로드(수 초) 앞에서 검사해 설정 오류를 먼저 낸다.
+    # WARNING 인 이유 = INFO 는 기본 로그 레벨에서 안 보인다(6.3(m)).
+    from . import constants, serving_level
+
+    app.config["SERVING_LEVEL_MODE"] = serving_level.resolve_mode(
+        constants.PREDICTED_CLASSES, app.config.get("SERVING_LEVEL")
+    )
+    app.logger.warning(
+        "serving_level: /detect 추론 입력 = %s (classes=%s, %s=%r)",
+        app.config["SERVING_LEVEL_MODE"],
+        constants.PREDICTED_CLASSES,
+        serving_level.LEVEL_ENV,
+        app.config.get("SERVING_LEVEL"),
+    )
+
     # 실추론 모델 싱글턴 로드 + warmup (카테고리 6.2, env 게이트 DDINGDONG_MODEL_PATH)
     from .model_serving import init_app as init_model_serving
 

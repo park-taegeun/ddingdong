@@ -20,6 +20,11 @@ class Config:
     # 카테고리 6.2: 실추론 env 게이트. 미설정 = mock 유지, 설정 = ModelRunner 싱글턴 로드.
     MODEL_PATH = os.environ.get("DDINGDONG_MODEL_PATH", "")
 
+    # /detect 추론 입력 레벨 override(raw / peak) — ④런타임 raw ↔ peak 대조용 스위치.
+    # 기본값 없음: 미설정 = None = 모델 계약으로 결정(serving_level.resolve_mode). 빈 문자열 ·
+    # 공백을 미설정으로 읽지 않도록 "" 기본값을 두지 않는다 — 그런 값은 기동 실패다.
+    SERVING_LEVEL = os.environ.get("DDINGDONG_SERVING_LEVEL")
+
     # 카테고리 7: 카카오 나에게 보내기(memo) 1차 알림.
     # REST_API_KEY + CLIENT_SECRET = 토큰 갱신 요청의 고정 파라미터(카카오는 REST 키
     # 발급 시 client secret 을 기본 활성화하므로 갱신에 필수).
