@@ -1,7 +1,7 @@
 // 알림 클래스 3종 메타데이터 — 초인종/노크/화재경보 분기 DRY 단일 출처.
 // NotificationCard / ClassDistributionCard / 차트 등에서 공통 참조.
 
-import { Bell, Flame, Hand } from "lucide-react"
+import { AudioLines, Bell, Flame, Hand } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { PredictedClass } from "@/types/notification"
 
@@ -39,6 +39,16 @@ export const CLASS_META: Record<PredictedClass, ClassMeta> = {
     dotColor: "bg-danger",
     chartVar: "var(--color-chart-3)",
   },
+  // 알림 대상이 아닌 소리(33.13(a)) — 경보 톤을 피해 기존 중립 토큰(foreground-secondary
+  // = chart-5)만 쓴다. 아이콘은 기존 lucide 세트의 일반 "소리" 기호.
+  other: {
+    label: "기타 소리",
+    icon: AudioLines,
+    iconColor: "text-foreground-secondary",
+    bgColor: "bg-foreground-secondary/10",
+    dotColor: "bg-foreground-secondary",
+    chartVar: "var(--color-chart-5)",
+  },
 }
 
 export const PREDICTED_CLASS_ORDER: PredictedClass[] = [
@@ -46,6 +56,10 @@ export const PREDICTED_CLASS_ORDER: PredictedClass[] = [
   "knock",
   "fire_alarm",
 ]
+
+// 통계(클래스 분포) 표시 순서 = 알림 대상 3종 + other. PREDICTED_CLASS_ORDER 는 도움말·
+// 온보딩의 "감지하는 소리 3가지" 카피가 쓰므로 other 를 넣지 않는다.
+export const STATS_CLASS_ORDER: PredictedClass[] = [...PREDICTED_CLASS_ORDER, "other"]
 
 // 화재경보 청각장애인 대응 수칙 — decisions.md 카테고리 7.1 확정 4단계 (2026-06-30 PoC-(20)).
 // 도움말 카드 + 카카오 알림(11~14주차) 공용 SSoT. 임의 윤문 금지(확정 카피 ① 그대로).
@@ -77,6 +91,7 @@ export const FIRE_ALARM_SOURCE =
 
 // skip_reason 한국어 라벨
 export const SKIP_REASON_LABEL: Record<string, string> = {
+  not_target: "알림 대상이 아닌 소리",
   low_confidence: "신뢰도 부족",
   tof_rejected: "사람 감지 실패",
   kakao_api_error: "카카오 전송 오류",

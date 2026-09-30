@@ -9,9 +9,12 @@ from __future__ import annotations
 # 카테고리 4/33.2: raw waveform 16kHz mono (YAMNet 입력 SSoT)
 SAMPLE_RATE: int = 16000
 
-# 카테고리 33.2: 서빙 출력 (1, 3) — 라벨 순서 = CLASSES 상속 (doorbell=0/knock=1/fire_alarm=2)
-NUM_CLASSES: int = 3
-CLASSES: tuple[str, str, str] = ("doorbell", "knock", "fire_alarm")
+# 카테고리 33.2: 서빙 출력 (1, 4) — 라벨 순서 = CLASSES 상속 (doorbell=0/knock=1/fire_alarm=2/other=3)
+# 33.13(d) 프로즌 예외 허가(이 파일 한정, 두 값 + 이 주석): other 를 **끝에** 추가해 0·1·2 불변.
+# ★ 재학습 4클래스 모델 산출 후에만 머지(33.13(c)) — 3클래스 모델은 model_runner 의
+#   출력 shape 검사 (1, NUM_CLASSES) 에서 예열 시 즉시 실패한다(fail-fast).
+NUM_CLASSES: int = 4
+CLASSES: tuple[str, str, str, str] = ("doorbell", "knock", "fire_alarm", "other")
 
 # 오디오 계약(가정, audio_decode.py 참조): PCM int16 little-endian
 BYTES_PER_SAMPLE: int = 2          # int16 = 2 bytes
