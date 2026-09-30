@@ -112,12 +112,15 @@ class SliceBoardbgTest(unittest.TestCase):
         _, clip = read(self.root / "out_iso" / "other" / "boardbg_bg1_01_0000000.wav")
         self.assertEqual(list(clip), x[:sb.CLIP_SAMPLES])     # 글리치 샘플 수정 0
 
-    def test_run_of_two_rejected(self) -> None:           # (b)
-        x = samples(POST_N)
-        x[SAMPLE_RATE] = x[SAMPLE_RATE + 1] = 32767
-        r = self.one("run2", x)
-        self.assertEqual((r["status"], r["clamp_count"], r["clamp_max_run"]),
-                         ("rejected_clamp", "2", "2"))
+    def test_run_boundary(self) -> None:                  # (b) 결정 2026-09-30 ② — 옛 기대 런 2 = rejected_clamp 에서 갱신
+        for k, want in ((2, "written"), (3, "rejected_clamp")):
+            x = samples(POST_N)
+            x[SAMPLE_RATE:SAMPLE_RATE + k] = [32767] * k
+            r = self.one(f"run{k}", x)
+            self.assertEqual((r["status"], r["clamp_count"], r["clamp_max_run"]), (want, str(k), str(k)), k)
+
+    def test_reject_follows_mask_boundary(self) -> None:  # 가리지도 거부하지도 않는 런이 없게
+        self.assertEqual(sb.CLAMP_REJECT_MIN_RUN, sb.GLITCH_MAX_RUN + 1)
 
     def test_loud_single_clamp_caught_by_sound(self) -> None:   # (c) 안전장치 — 5.3(d) 11번 모양
         x = samples(POST_N)
@@ -153,7 +156,8 @@ class SliceBoardbgTest(unittest.TestCase):
     def test_sign_boundary(self) -> None:                 # (d) −32768 · +32767 모두 클램프
         for name, at, vals, want in (("neg", SAMPLE_RATE, [-32768], ("written", "1")),
                                      ("pos", SAMPLE_RATE, [32767], ("written", "1")),
-                                     ("pn", SAMPLE_RATE, [32767, -32768], ("rejected_clamp", "2"))):
+                                     ("pn", SAMPLE_RATE, [32767, -32768], ("written", "2")),
+                                     ("pnp", SAMPLE_RATE, [32767, -32768, 32767], ("rejected_clamp", "3"))):
             x = samples(POST_N)
             x[at:at + len(vals)] = vals
             r = self.one(name, x)
