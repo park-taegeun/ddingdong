@@ -263,6 +263,29 @@ class SliceDirectTest(unittest.TestCase):
         self.assertEqual(pcm, array("h", x[start:start + sd.CLIP_SAMPLES]).tobytes())
         self.assertEqual(row["clip_clamp_count"], 2)
 
+    def test_run2_glitch_masked(self) -> None:           # (l) 결정 2026-09-30 ② — 2샘플 런도 글리치
+        x = samples(POST_N, onset=1.5)
+        x[SAMPLE_RATE:SAMPLE_RATE + 2] = [32767, -32768]
+        x[SAMPLE_RATE + 1 + 17] = 2000                       # 런 끝 +17 두 번째 튐
+        a = [abs(v) for v in x]
+        m = sd.mask_glitch_clamps(a)
+        lo, hi = SAMPLE_RATE - sd.CLAMP_MASK_HALF_WIDTH, SAMPLE_RATE + 2 + sd.CLAMP_MASK_HALF_WIDTH
+        self.assertEqual(m[lo:hi], [sd.CLAMP] * (hi - lo))   # 런 전체 + 앞 32 + 뒤 32
+        self.assertEqual((m[lo - 1], m[hi]), (a[lo - 1], a[hi]))
+        row, pcm = self.judge_one("run2", x)
+        self.assertEqual(row["onset_ms"], 1500)                # 튐(1001ms)이 아니라 버스트
+        start = row["start_ms"] * sd.MS
+        self.assertEqual(pcm, array("h", x[start:start + sd.CLIP_SAMPLES]).tobytes())
+
+    def test_run3_not_masked(self) -> None:              # (m) 3샘플 이상 = 진짜 잘림 — 가리지 않는다
+        x = samples(POST_N, onset=1.5)
+        x[SAMPLE_RATE:SAMPLE_RATE + 3] = [32767] * 3
+        x[SAMPLE_RATE + 2 + 17] = 2000
+        a = [abs(v) for v in x]
+        self.assertEqual(sd.mask_glitch_clamps(a), a)
+        row, _ = self.judge_one("run3", x)
+        self.assertEqual(row["onset_ms"], 1001)                # 런 옆 튐이 그대로 onset
+
     def test_required_args(self) -> None:
         full = ["--recording-dir", str(self.rec), "--out-dir", str(self.root / "y"), *PARAMS]
         for i in range(0, len(full), 2):
