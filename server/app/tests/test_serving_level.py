@@ -184,11 +184,16 @@ class DetectWiringTest(_NoNetworkTestCase):
         """real 모드 대역으로 /detect 1회 → (predict 입력, observe 의 waveform 인자)."""
         from inference.audio_decode import decode_pcm16
 
+        from .. import model_serving
+
         seen = {}
 
         def _predict(x):
             seen["predict"] = x.copy()
-            return np.array([[0.5, 0.3, 0.2]], dtype=np.float32)  # 저신뢰 → 발송 없음
+            # 점수 개수 = scores_to_prediction 이 읽는 model_serving.PREDICTED_CLASSES(import 시점
+            # 바인딩) — _make_app 이 패치하는 constants 값이 아니다. 하드코딩 3개면 4클래스(#83)에서 IndexError.
+            n = len(model_serving.PREDICTED_CLASSES)
+            return np.full((1, n), 0.1, dtype=np.float32)  # 저신뢰 → 발송 없음
 
         with app.app_context(), mock.patch(
             "app.routes.model_serving.is_real_mode", return_value=True
