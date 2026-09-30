@@ -13,7 +13,16 @@ import numpy as np
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import select
 
-from . import image_store, kakao, model_serving, rate_limit, registration_observe, stt, tof_meta
+from . import (
+    image_store,
+    kakao,
+    model_serving,
+    rate_limit,
+    registration_observe,
+    serving_level,
+    stt,
+    tof_meta,
+)
 from .auth import dashboard_auth, device_auth
 from .constants import (
     AUDIO_FILE_FIELD,
@@ -127,7 +136,13 @@ def detect():
     # 헬퍼(_apply_prediction_policy)를 거쳐 동일 dict 구조로 수렴한다.
     if model_serving.is_real_mode():
         infer_started = time.monotonic()
-        scores = model_serving.predict(waveform)
+        # 정규화본은 predict 에만 — waveform(로그 · 등록 계측 입력)은 원본 유지(serving_level 주석).
+        model_input = (
+            serving_level.peak_normalize(waveform)
+            if current_app.config["SERVING_LEVEL_MODE"] == serving_level.LEVEL_PEAK
+            else waveform
+        )
+        scores = model_serving.predict(model_input)
         infer_ms = (time.monotonic() - infer_started) * 1000
         predicted_class, confidence, all_scores = model_serving.scores_to_prediction(scores)
         pred = _apply_prediction_policy(predicted_class, confidence, all_scores, tof)
