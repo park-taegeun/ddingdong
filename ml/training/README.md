@@ -2,7 +2,7 @@
 
 `05_final_dataset`(파이프라인 출력) → **YAMNet 임베딩 위 분류 head 학습**.
 학습할 클래스는 실행마다 `--classes` 로 준다(기본값 없음). 허용 집합 = `ml.pipeline.config.CLASSES`
-= 초인종(doorbell) / 노크(knock) / 화재경보(fire_alarm). (decisions.md 카테고리 4·5 SSoT)
+= 초인종(doorbell) / 노크(knock) / 화재경보(fire_alarm) / 기타(other, 33.13(a) D4). (decisions.md 카테고리 4·5 SSoT)
 
 - **backbone = YAMNet (16kHz mono waveform → 1024-d embedding), frozen.** 원본 2,798개는
   backbone 재학습에 부족 → transfer learning 정석(Hershey 2017 / Piczak 2015). **head 만 학습.**
@@ -53,7 +53,7 @@ repo 루트에서. 필수 입력 3가지 — 없으면 기본값 fallback 없이
 
 - `--classes` 는 `ml.pipeline.config.CLASSES` 의 부분집합. 모르는 이름 · 중복 · 빈 집합은 거부.
 - **run 폴더는 학습 1회당 새 폴더.** `train` 은 거기에 `best.keras` · `labels.json` ·
-  `inference_savedmodel` 중 하나라도 있으면 거부한다(덮어쓰기 0 — 서빙 중인
+  `inference_savedmodel` · `train_config.json` 중 하나라도 있으면 거부한다(덮어쓰기 0 — 서빙 중인
   `ml/models/yamnet/` 보호. repo 기본 경로 fallback 은 없다).
 - `evaluate` · `export` 의 `--out-dir` 은 **학습이 끝난 run 폴더**(labels.json · best.keras 필수).
   `eval_report.json` · `confusion_matrix.csv` · `inference_savedmodel` 이 이미 있으면 거부.
@@ -71,12 +71,13 @@ DDINGDONG_DATA_ROOT="$DATA" python -m ml.pipeline.run_all
 
 # 1) 학습 (best val 체크포인트 + history + labels.json + inference_savedmodel)
 python -m ml.training.train    --data-root "$DATA" --classes doorbell,knock,fire_alarm --out-dir "$RUN"
+#    EarlyStopping patience 비교 = --early-stop-patience 15 (기본 = config.EARLY_STOP_PATIENCE, 1 이상 · run 폴더 train_config.json 에 기록)
 
 # 2) 평가 (test accuracy + per-class P/R/F1 + confusion matrix)
 python -m ml.training.evaluate --data-root "$DATA" --classes doorbell,knock,fire_alarm --out-dir "$RUN"
 ```
 
-- run 폴더 산출물: `best.keras`(head 가중치) · `history.json` · `labels.json`(이 run 의 클래스 ·
+- run 폴더 산출물: `best.keras`(head 가중치) · `history.json` · `train_config.json`(학습 인자) · `labels.json`(이 run 의 클래스 ·
   인덱스) · `eval_report.json` · `confusion_matrix.csv` · `inference_savedmodel/`(waveform→확률 배포용).
 - `train` 은 hub YAMNet 으로 `inference_savedmodel/` 까지 만든다. head 만 있을 때 따로 만들려면
   `python -m ml.training.export --classes … --out-dir "$RUN"`.
@@ -101,7 +102,7 @@ python -m ml.training.evaluate --data-root "$DATA" --classes doorbell,knock,fire
 python -m ml.training.train    --data-root "$DATA" --classes doorbell,knock,fire_alarm --out-dir ~/ddingdong_runs/cmp_3cls
 python -m ml.training.evaluate --data-root "$DATA" --classes doorbell,knock,fire_alarm --out-dir ~/ddingdong_runs/cmp_3cls
 
-# 4클래스 — ml.pipeline.config.CLASSES 에 other 가 들어온 뒤(다음 PR). other 인덱스 = 3.
+# 4클래스 — other 인덱스 = 3.
 python -m ml.training.train    --data-root "$DATA" --classes doorbell,knock,fire_alarm,other --out-dir ~/ddingdong_runs/cmp_4cls
 python -m ml.training.evaluate --data-root "$DATA" --classes doorbell,knock,fire_alarm,other --out-dir ~/ddingdong_runs/cmp_4cls
 ```
