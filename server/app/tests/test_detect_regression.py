@@ -135,7 +135,7 @@ def _pcm16_sine(num_samples: int, freq_hz: int = 440, rate: int = 16000) -> byte
 
 
 def _f32_top_scores(top):
-    """(1, 3) float32 확률 행 — doorbell 이 top. 33.2 서빙 출력 계약과 동일 자료형.
+    """(1, 4) float32 확률 행 — doorbell 이 top. 33.2 서빙 출력 계약과 동일 자료형.
 
     입력 도메인을 f32 로 맞추는 것이 핵심이다. f64 로만 값을 만들면 실제 서빙이
     내놓을 수 없는 확률 위에 경계 테스트를 세우게 된다(2026-09-15 실측: f32 로 표현한
@@ -145,8 +145,9 @@ def _f32_top_scores(top):
     """
     import numpy as np
 
-    rest = (np.float32(1.0) - np.float32(top)) / np.float32(2.0)
-    return np.array([[np.float32(top), rest, rest]], dtype=np.float32)
+    # 33.13(d) other 편입으로 (1, 3) → (1, 4). 나머지 확률을 3칸에 균등 분배.
+    rest = (np.float32(1.0) - np.float32(top)) / np.float32(3.0)
+    return np.array([[np.float32(top), rest, rest, rest]], dtype=np.float32)
 
 
 def _f32_gate_boundaries():
@@ -587,6 +588,153 @@ class DetectRegressionTest(_NoNetworkTestCase):
         # 저신뢰 24건에 fire_alarm 8건이 전부 포함된다 = 신뢰도 게이트가 클래스 무관
         low_rows = rows[(False, "skipped", "low_confidence")]
         self.assertEqual(sum(1 for c, _, _ in low_rows if c == "fire_alarm"), 8)
+
+    # ── other 4번째 클래스 (33.13(a)(c)(d) · 33.17(f), PoC-(59)) ──────────
+    #
+    # 이 절이 고정하는 불변식:
+    #   O1. other 분기는 게이트 **맨 앞**이다 — 신뢰도·ToF 와 무관하게 not_target.
+    #       (저신뢰 other 가 low_confidence 로 떨어지면 순서가 뒤집힌 것이다.)
+    #   O2. other 는 DB 에 기록되고 알림만 막힌다 — 1차 발송 호출 0, 2차 없음.
+    #   O3. 인덱스 0·1·2 불변, other = 3. app/inference 두 리터럴이 같다.
+    #   O4. mock 은 PREDICTED_CLASSES 단일 출처에서 other 를 뽑는다(예외 목록 금지).
+    # ★ O1 은 **저신뢰** other 로 단언해야 한다 — 고신뢰 other 만 보면 other 분기를
+    #   신뢰도 게이트 뒤로 옮긴 변형도 통과한다(둘 다 미발송이라서).
+
+    def test_predicted_classes_match_inference_classes(self) -> None:
+        """O3. app 리터럴 == inference 리터럴, 길이 == NUM_CLASSES, other = 인덱스 3."""
+        from inference.constants import CLASSES, NUM_CLASSES
+
+        from .. import model_serving
+        from ..constants import PREDICTED_CLASSES
+
+        self.assertEqual(PREDICTED_CLASSES, CLASSES)
+        self.assertEqual(len(PREDICTED_CLASSES), NUM_CLASSES)
+        self.assertEqual(PREDICTED_CLASSES[:3], ("doorbell", "knock", "fire_alarm"))
+        self.assertEqual(PREDICTED_CLASSES.index("other"), 3)
+        # 서빙 매핑이 인덱스 3 을 other 로 읽는다(argmax → 이름)
+        import numpy as np
+
+        row = np.array([[0.1, 0.1, 0.1, 0.7]], dtype=np.float32)
+        predicted, _, all_scores = model_serving.scores_to_prediction(row)
+        self.assertEqual(predicted, "other")
+        self.assertEqual(list(all_scores), list(PREDICTED_CLASSES))
+
+    def test_other_low_confidence_is_not_target_not_low_confidence(self) -> None:
+        """O1. other 0.5 → not_target(게이트 순서). low_confidence 가 아니다."""
+        r = self._policy_with_tof("other", 0.5)
+        self.assertFalse(r["primary_sent"])
+        self.assertEqual(r["skip_reason"], "not_target")
+        self.assertEqual(r["enrich_status"], "skipped")
+
+    def test_other_decision_table_collapses_to_not_target(self) -> None:
+        """O1. other × 신뢰도 4 × ToF 4상태 = 16조합이 전부 한 결정행으로 붕괴한다."""
+        forms = (
+            None,
+            {"tof_presence": "true", "tof_near_count": "13",
+             "tof_center_mm": "1015", "tof_motion_ndet": "1"},
+            self._TOF_META_REJECT,
+            {"tof_presence": "maybe", "tof_near_count": "13",
+             "tof_center_mm": "1015", "tof_motion_ndet": "1"},
+        )
+        rows = set()
+        for conf in (0.45, 0.69, 0.70, 0.95):
+            for form in forms:
+                r = self._policy_with_tof("other", conf, form)
+                rows.add((r["primary_sent"], r["enrich_status"], r["skip_reason"]))
+        self.assertEqual(rows, {(False, "skipped", "not_target")})
+
+    def test_other_high_confidence_with_presence_is_not_sent(self) -> None:
+        """O2. other 0.95 + presence=true → 미발송 · not_target · 카카오 호출 0 · 2차 없음.
+
+        발송 함수를 return_value 스텁이 아니라 wraps(실함수)로 감싼다 — 분기가 사라지면
+        호출 기록이 남고, 실함수는 PRIMARY_MESSAGES 에 other 가 없어 KeyError 로 터진다
+        (조용히 삼켜지는 경로 없음). 네트워크 시도는 소켓 가드가 따로 실패로 올린다.
+        """
+        from .. import kakao
+        from ..utils import _apply_prediction_policy
+
+        tof_pass = {"tof_presence": "true", "tof_near_count": "13",
+                    "tof_center_mm": "1015", "tof_motion_ndet": "1"}
+        scores = {"doorbell": 0.02, "knock": 0.01, "fire_alarm": 0.02, "other": 0.95}
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction",
+            side_effect=lambda tof: _apply_prediction_policy("other", 0.95, scores, tof),
+        ), mock.patch(
+            "app.kakao.send_primary_text", wraps=kakao.send_primary_text
+        ) as send:
+            r = self._detect("regr-other-hi", "dev-other-hi", tof=tof_pass)
+            self.assertEqual(r.status_code, 201, r.get_data(as_text=True))
+            send.assert_not_called()
+            body = r.get_json()
+            self.assertEqual(body["predicted_class"], "other")
+            self.assertTrue(body["tof_check"]["passed"])  # presence=true 였다는 기록
+            self.assertFalse(body["notification_status"]["primary_sent"])
+            self.assertEqual(body["notification_status"]["skip_reason"], "not_target")
+            self.assertEqual(body["notification_status"]["enrich_status"], "skipped")
+
+        with self.app.app_context(), mock.patch("app.kakao.send_secondary") as send2:
+            self.assertEqual(self._enrich("regr-other-hi").status_code, 409)
+            send2.assert_not_called()
+
+    def test_other_row_is_listed_and_counted_in_stats(self) -> None:
+        """33.17(f)①② other 행이 목록 API 에 보이고 /stats 에 other · not_target 칸이 선다."""
+        headers = {"Authorization": f"Bearer {_DASHBOARD_TOKEN}"}
+
+        def stats():
+            return self.client.get("/api/v1/stats?period=today", headers=headers).get_json()
+
+        before = stats()
+        self.assertIn("other", before["class_distribution"])
+        self.assertIn("not_target", before["skip_reasons"])
+
+        other = self._policy("other", 0.95)
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction", return_value=other
+        ), mock.patch("app.kakao.send_primary_text") as send:
+            self.assertEqual(self._detect("regr-other-list", "dev-other-list").status_code, 201)
+            send.assert_not_called()
+
+        listed = self.client.get("/api/v1/notifications?limit=100", headers=headers).get_json()
+        row = next(
+            n for n in listed["notifications"] if n["client_request_id"] == "regr-other-list"
+        )
+        self.assertEqual(row["predicted_class"], "other")
+        self.assertEqual(row["notification_status"]["skip_reason"], "not_target")
+
+        after = stats()
+        self.assertEqual(
+            after["skip_reasons"]["not_target"], before["skip_reasons"]["not_target"] + 1
+        )
+        self.assertEqual(
+            after["class_distribution"]["other"]["count"],
+            before["class_distribution"]["other"]["count"] + 1,
+        )
+        self.assertEqual(
+            after["class_distribution"]["other"]["notifications_sent"],
+            before["class_distribution"]["other"]["notifications_sent"],
+        )
+
+    def test_mock_prediction_draws_other_from_predicted_classes(self) -> None:
+        """O4. mock 이 뽑는 모집단 == PREDICTED_CLASSES, other 를 낼 수 있고 all_scores 가 닫힌다."""
+        from ..constants import PREDICTED_CLASSES
+        from ..utils import mock_prediction
+
+        for forced in PREDICTED_CLASSES:
+            seen = []
+
+            def _choice(seq, forced=forced, seen=seen):
+                seen.append(tuple(seq))
+                return forced
+
+            with self.subTest(cls=forced), mock.patch("app.utils.random.choice", _choice):
+                r = mock_prediction()
+                self.assertEqual(seen, [PREDICTED_CLASSES])
+                self.assertEqual(r["predicted_class"], forced)
+                self.assertEqual(list(r["all_scores"]), list(PREDICTED_CLASSES))
+                self.assertTrue(all(v >= 0 for v in r["all_scores"].values()))
+                self.assertAlmostEqual(sum(r["all_scores"].values()), 1.0, places=6)
+                if forced == "other":
+                    self.assertEqual(r["skip_reason"], "not_target")
 
     # ── G14: primary_sent_at 분리 ────────────────────────────────────────
     def test_primary_sent_at_is_not_detected_at(self) -> None:
