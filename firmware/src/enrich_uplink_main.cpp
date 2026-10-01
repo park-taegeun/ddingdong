@@ -1,14 +1,20 @@
 // 띵동 firmware - 보드 2차 체인 배관: /detect → enrich_status 게이트 → 캡처 + 5초 녹음 → /enrich
 //                 (2026-09-18, env:enrich_uplink, PR-B / decisions.md 6.5(d))
+//                 + M5-c ⓑ 자동 트리거 (2026-10-01 PoC-(66), env:enrich_autotrig = -DENRICH_AUTO_TRIGGER)
 //
-// ★ PR 성격 = **배관(plumbing)**. 새 판정 기준·임계값·상태 어휘 **0개**다.
+// ★ PR-B 성격 = **배관(plumbing)**. 이 파일 자체엔 새 판정 기준·임계값·상태 어휘 **0개**다.
+//   자동 트리거의 임계값·규칙은 전부 auto_trig.h 에 있고, 여기선 #ifdef ENRICH_AUTO_TRIGGER 블록이 배선만 한다.
 //   판정은 이미 서버에서 끝나 있다 — `/detect` 응답의 `enrich_status`(`pending` / `skipped`)를
 //   **읽어서 분기만** 한다(6.5(b) 파생 사실 ②). 보드가 다시 판정하는 것은 하나도 없다.
 //     송신 끝 = M5-d `/detect` 1차 업로드(PR #52·#53, 무변경)
 //     수신 끝 = `/enrich` 서버 구현(PR #27, 2026-07-31 완성)
 //   그 사이 2차 클라이언트가 **0줄**이었다. 본 env 가 그 0줄을 채운다.
 //
-// ★ 트리거 = **시리얼 키 's' 수동 입력**. 임계값 비교 0줄(RMS 자동 트리거는 M5-c 소관).
+// ★ 트리거 (env 로 가른다 — 같은 소스, 빌드 플래그 1개)
+//   env:enrich_uplink   = **시리얼 키 's' 수동 입력만**. 직접녹음 수신기(「s → 소리」 순서)·runtime5 교대 측정이
+//                         그대로 쓰는 env 라 동작이 바뀌면 안 된다 → 전처리 출력이 이 PR 전후 동일(I9).
+//   env:enrich_autotrig = 마이크 태스크가 V1 > T 버퍼 k 를 발화 → loop 가 수락하면 창 [k−8, k+24) 스냅샷.
+//                         수동 's' 도 그대로 쓸 수 있다(경로 무변경).
 //
 // ★ 순서 (§2-1 ① S1 직렬 / ② pre 0)
 //   's' → **2차 녹음 먼저 시작** → 1차 스냅샷 POST → 응답 파싱 → 게이트 → 녹음 완료 대기
@@ -38,6 +44,9 @@
 #include "secrets.h"
 #include "tof_common.h"
 #include "uplink_common.h"
+#ifdef ENRICH_AUTO_TRIGGER
+#include "auto_trig.h"
+#endif
 
 extern SparkFun_VL53L5CX tofImager;  // tof_common.cpp 소유 (mic_uplink_main.cpp 와 동형)
 
@@ -70,6 +79,36 @@ static volatile uint32_t g_snapBytes = 0;
 static volatile uint32_t g_taskStackFree = 0;
 static volatile uint32_t g_ringGaps      = 0;
 
+#ifdef ENRICH_AUTO_TRIGGER
+// ── 자동 트리거 핸드셰이크 (enrich_autotrig 전용) ───────────────────────────
+// ★ 마이크 태스크는 g_recReq · g_snapReq 를 올리지 않는다(I3). 「요청」만 올리고 수락은 loop 가 한다
+//   → 위 2차 녹음 논증(set 주체 유일)이 그대로 산다. 새 플래그도 같은 규율:
+//     IDLE ──task: 발화 && !trigReq → trigK·trigV1 기록, sync, trigReq=true──▶ PENDING
+//     PENDING ──task: 또 발화 → trigDrops++ (trigK 덮어쓰기 없음)──▶ PENDING
+//     PENDING ──loop: trigK 읽고 수락(snapAt, sync, recReq·snapReq) 또는 무시(사유 계수) 후 trigReq=false──▶ IDLE
+//   g_slotSeq · g_trigK · g_trigV1 · g_trigDrops · g_snapSeq = task 만 쓴다.
+//   g_snapAt = loop 만 쓴다(snapReq 를 올리기 **전**에 — task 는 snapReq 를 본 뒤에 snapAt 을 읽는다).
+//   수동 's' 는 g_snapAt 을 건드리지 않는다: 그 시점 g_snapAt ≤ g_slotSeq(지난 값 또는 0)이라 즉시 찍힌다 = I2.
+static volatile uint32_t g_slotSeq   = 0;  // 적재된 슬롯 수. 슬롯 순번 s 는 링 인덱스 s % 32 에 있다
+static volatile bool     g_trigReq   = false;
+static volatile uint32_t g_trigK     = 0;
+static volatile int32_t  g_trigV1    = 0;
+static volatile uint32_t g_trigDrops = 0;  // PENDING 중 발화(= loop 가 runEvent 로 막혀 있던 동안)
+static volatile uint32_t g_snapAt    = 0;  // 자동 건 스냅샷 순번 = k + 24
+static volatile uint32_t g_snapSeq   = 0;  // 실제로 스냅샷을 찍은 순번(창 = [snapSeq−32, snapSeq))
+
+// loop 전용
+static uint32_t g_idleSince = 0;           // 직전 이벤트 처리가 끝난 때의 g_slotSeq
+static bool     g_evAuto    = false;       // 지금 처리 중인 이벤트가 자동 건인가(id 접두 · 창 로그)
+static uint32_t g_evK       = 0;
+static uint32_t g_ignN[AUTO_TRIG_VERDICT_N] = {0};  // 사유별 누적(OK 칸 = 수락 수, 나머지 = 무시 수)
+
+static_assert(AUTO_TRIG_BUF_SAMPLES == MIC_DMA_BUF_LEN, "V1 버퍼 = 링 슬롯 1개");
+static_assert(AUTO_TRIG_BUF_MS * MIC_SAMPLE_RATE_HZ == (uint32_t)MIC_DMA_BUF_LEN * 1000u,
+              "버퍼 1개 = 64ms 정확히(불응기 버퍼 수 산술의 전제)");
+static_assert(AUTO_TRIG_WIN_BUFS == MIC_RING_SLOTS, "1차 창 = 링 32슬롯 = 65,536 B wire 계약");
+#endif
+
 // ── ToF 최신 판정 공유 (tofTask → loop) — mic_uplink_main.cpp 와 동형 ──────
 static portMUX_TYPE   g_tofMux       = portMUX_INITIALIZER_UNLOCKED;
 static TofFrameResult g_tofLatest    = {};
@@ -90,8 +129,47 @@ static char     g_idNonce[9] = {0};
 static uint32_t g_idSeq      = 0;
 
 static void makeClientRequestId(char* out, size_t cap) {
+#ifdef ENRICH_AUTO_TRIGGER
+  // 자동 건은 접두로 가른다(서버는 형식을 보지 않는다 — routes.py 필수 여부만). 순번은 수동과 공유.
+  if (g_evAuto) {
+    snprintf(out, cap, "e2a-%s-%u", g_idNonce, (unsigned)(++g_idSeq));
+    return;
+  }
+#endif
   snprintf(out, cap, "e2-%s-%u", g_idNonce, (unsigned)(++g_idSeq));
 }
+
+#ifdef ENRICH_AUTO_TRIGGER
+// 마이크 태스크 안: 적재 순번 seq 의 슬롯이 막 들어온 직후, 버퍼 k = seq − 2 를 판정한다(한 버퍼 늦게).
+// 링을 그대로 읽는다(슬롯 k−1 · k · k+1 — 32슬롯 링에서 아직 덮이지 않음). Serial 0줄(I6).
+static void autoTrigOnSlot(int16_t* ring_base, uint32_t seq, AutoTrigState* st) {
+  if (seq < AUTO_TRIG_FIRE_LAG) {
+    return;
+  }
+  const uint32_t k    = seq - AUTO_TRIG_FIRE_LAG;
+  const int16_t* prev = (k >= 1) ? micRingSlot(ring_base, k - 1) : nullptr;
+  const int32_t  v1   = autoTrigV1(prev, micRingSlot(ring_base, k), micRingSlot(ring_base, k + 1),
+                                   (size_t)MIC_DMA_BUF_LEN);
+  if (!autoTrigStep(st, k, v1)) {
+    return;
+  }
+  if (g_trigReq) {
+    g_trigDrops++;
+    return;
+  }
+  g_trigK  = k;
+  g_trigV1 = v1;
+  __sync_synchronize();
+  g_trigReq = true;
+}
+
+// 스냅샷을 지금 찍어도 되는가 — g_snapReq 를 읽은 **뒤에** 부른다(&& 왼쪽부터). loop 는 snapAt → sync → snapReq
+// 순으로 쓰므로 snapReq 가 보였으면 snapAt 도 새 값이다.
+static inline bool autoSnapDue(uint32_t seq) {
+  __sync_synchronize();
+  return seq >= g_snapAt;
+}
+#endif
 
 // ── 마이크 태스크: 적재 + 1차 스냅샷 + 2차 녹음 ────────────────────────────
 static void micEnrichTask(void* parameter) {
@@ -109,6 +187,10 @@ static void micEnrichTask(void* parameter) {
   if (ring_base == nullptr) {
     Serial.println("[mic][e2] ring alloc 실패 — 스냅샷 불가, 적재만 계속");
   }
+#ifdef ENRICH_AUTO_TRIGGER
+  uint32_t      seq  = 0;
+  AutoTrigState trig = {};
+#endif
 
   for (;;) {
     const esp_err_t err = i2s_read(MIC_I2S_PORT, audio_buffer.raw, sizeof(audio_buffer.raw),
@@ -153,8 +235,18 @@ static void micEnrichTask(void* parameter) {
       }
     }
 
+#ifdef ENRICH_AUTO_TRIGGER
+    g_slotSeq = ++seq;
+    autoTrigOnSlot(ring_base, seq, &trig);
+#endif
+
     // ── 1차 스냅샷 (mic_uplink_main.cpp 와 동일 지점·동일 논증: 여기서만 torn read 불가) ──
+#ifdef ENRICH_AUTO_TRIGGER
+    // 자동 건은 순번 k+24(슬롯 k+23 적재 직후)까지 기다린다 → 아래 복사 = 슬롯 [k−8, k+24) (I1).
+    if (g_snapReq && ring.slots_filled >= MIC_RING_SLOTS && g_snap != nullptr && autoSnapDue(seq)) {
+#else
     if (g_snapReq && ring.slots_filled >= MIC_RING_SLOTS && g_snap != nullptr) {
+#endif
       size_t copied = 0;
       for (uint32_t i = 0; i < MIC_RING_SLOTS; ++i) {
         const int16_t* const src = micRingSlot(ring_base, ring.write_idx + i);
@@ -183,6 +275,9 @@ static void micEnrichTask(void* parameter) {
       g_snapRms       = (ns > 0) ? (int32_t)sqrt((double)acc / (double)ns) : 0;
       g_taskStackFree = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
       g_ringGaps      = ring.gaps;
+#ifdef ENRICH_AUTO_TRIGGER
+      g_snapSeq = seq;
+#endif
 
       g_snapReq = false;
       __sync_synchronize();
@@ -347,6 +442,15 @@ static void runEvent() {
   Serial.printf("[e2] id=%s rms=%d peak=%d\n", id, (int)g_snapRms, (int)g_snapPeak);
   Serial.printf("[e2] stk=%u psram=%u gaps=%u tof_stk=%u\n", (unsigned)g_taskStackFree,
                 (unsigned)ESP.getFreePsram(), (unsigned)g_ringGaps, (unsigned)g_tofStackFree);
+#ifdef ENRICH_AUTO_TRIGGER
+  if (g_evAuto) {
+    // ④런타임 I1 대조 줄: got == want 여야 한다(다르면 스냅샷이 밀렸다).
+    // "[e2a] k=4294967295 win=[4294967295,4294967295) want=4294967295" = 63B
+    Serial.printf("[e2a] k=%u win=[%u,%u) want=%u\n", (unsigned)g_evK,
+                  (unsigned)(g_snapSeq - AUTO_TRIG_WIN_BUFS), (unsigned)g_snapSeq,
+                  (unsigned)(g_evK - AUTO_TRIG_PRE_BUFS));
+  }
+#endif
 
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[e2] WiFi 끊김 — 1차 생략(재시도 없음)");
@@ -405,10 +509,55 @@ static void runEvent() {
   discardRecording();
 }
 
+#ifdef ENRICH_AUTO_TRIGGER
+// loop: 태스크의 발화 요청 1건을 수락하거나 무시한다. 수락 = 수동 's' 와 같은 순서(ToF → filled=0 → 플래그).
+static void autoTrigAccept() {
+  __sync_synchronize();  // trigReq 를 본 뒤 trigK · trigV1 을 읽는다
+  const uint32_t k  = g_trigK;
+  const int32_t  v1 = g_trigV1;
+  const bool bufOk  = g_snap != nullptr && g_body != nullptr && g_rec != nullptr && g_ebody != nullptr;
+  const bool busy   = g_snapReq || g_snapReady || g_recReq || g_recReady;
+  const AutoTrigVerdict vd = autoTrigDecide(bufOk, busy, k, g_idleSince, g_slotSeq);
+  g_ignN[vd]++;
+
+  if (vd == AUTO_TRIG_OK) {
+    captureTofAtTrigger();  // 트리거 시점 한 벌 (D1)
+    g_evAuto = true;
+    g_evK    = k;
+    g_recFilled = 0;
+    g_snapAt    = autoTrigSnapSeq(k);
+    __sync_synchronize();
+    g_recReq  = true;
+    g_snapReq = true;
+    // "[e2a] k=4294967295 v1=32767 ok snap_at=4294967295 n=4294967295" = 63B
+    Serial.printf("[e2a] k=%u v1=%d ok snap_at=%u n=%u\n", (unsigned)k, (int)v1, (unsigned)g_snapAt,
+                  (unsigned)g_ignN[vd]);
+  } else {
+    // "[e2a] k=4294967295 v1=32767 ign=psram n=4294967295" = 51B
+    Serial.printf("[e2a] k=%u v1=%d ign=%s n=%u\n", (unsigned)k, (int)v1, autoTrigVerdictName(vd),
+                  (unsigned)g_ignN[vd]);
+  }
+  g_trigReq = false;  // trigK · trigV1 을 다 읽은 뒤 내린다
+  // 7.7(l) 트리거 (1) 관측값 = busy + drop(둘 다 「처리 중 발화」). ring · late 는 다른 원인.
+  // "[e2a] busy=4294967295 drop=4294967295 ring=4294967295 late=4294967295" = 70B
+  Serial.printf("[e2a] busy=%u drop=%u ring=%u late=%u\n", (unsigned)g_ignN[AUTO_TRIG_IGN_BUSY],
+                (unsigned)g_trigDrops, (unsigned)g_ignN[AUTO_TRIG_IGN_RING],
+                (unsigned)g_ignN[AUTO_TRIG_IGN_LATE]);
+}
+#endif
+
 void setup() {
   Serial.begin(115200);
   delay(MIC_SERIAL_BOOT_DELAY_MS);
+#ifdef ENRICH_AUTO_TRIGGER
+  Serial.println("\n[BOOT] ddingdong enrich autotrig (M5-c ⓑ 자동 + 수동 's')");
+  // 상수만 싣는다 → 길이 고정: "[BOOT] autotrig T=450 pre=8 refr=79buf mask=32/2" = 49B
+  Serial.printf("[BOOT] autotrig T=%d pre=%u refr=%ubuf mask=%d/%d\n", (int)AUTO_TRIG_T,
+                (unsigned)AUTO_TRIG_PRE_BUFS, (unsigned)AUTO_TRIG_REFRACTORY_BUFS,
+                (int)AUTO_TRIG_MASK_HALF, (int)AUTO_TRIG_MAX_RUN);
+#else
   Serial.println("\n[BOOT] ddingdong enrich uplink (PR-B, 수동 's' 트리거)");
+#endif
 
   // ★ 버퍼를 먼저 잡는다 — WiFi/I2S/카메라가 PSRAM 을 갉기 전에 실패를 드러내기 위함.
   g_snap  = uplinkAllocPsram(UPLINK_AUDIO_BYTES, "snapshot");
@@ -469,9 +618,19 @@ void loop() {
     }
   }
 
+#ifdef ENRICH_AUTO_TRIGGER
+  if (g_trigReq) {
+    autoTrigAccept();
+  }
+#endif
+
   if (g_snapReady) {
     runEvent();
     g_snapReady = false;  // ★ 전송이 끝난 뒤에 내린다 — 그래야 g_snap 재기록이 막힌다
+#ifdef ENRICH_AUTO_TRIGGER
+    g_evAuto    = false;
+    g_idleSince = g_slotSeq;  // 이 순번 이하에서 발화한 요청 = 처리 중 발화 → busy
+#endif
   }
 
   delay(10);
