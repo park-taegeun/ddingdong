@@ -51,7 +51,12 @@ _EXISTING_COLUMNS = {
         "refresh_expires_at", "updated_at",
     ),
 }
-_NEW_TABLES = ("registration_state", "registration_templates", "registration_matches")
+_NEW_TABLES = (
+    "registration_state",
+    "registration_templates",
+    "registration_matches",
+    "registration_failures",
+)
 
 
 def setUpModule() -> None:
@@ -495,30 +500,37 @@ def _tone(freq_hz: float, n_samples: int = 8000) -> bytes:
     return (np.sin(2 * np.pi * freq_hz * t) * 8000).astype("<i2").tobytes()
 
 
-def _fixed_pred(confidence: float):
-    """utils 실물 판정 함수로 만든 고정 예측 dict. 0.7 미만이면 primary_sent=False."""
+def _fixed_pred(confidence: float, cls: str = "doorbell", tof_presence: str | None = None):
+    """utils 실물 판정 함수로 만든 고정 예측 dict. 0.7 미만이면 primary_sent=False.
+
+    tof_presence = "true" | "false" 면 ToF 메타를 실물 파서로 만들어 게이트에 넣는다.
+    """
+    from ..constants import PREDICTED_CLASSES
+    from ..tof_meta import parse_tof_meta
     from ..utils import _apply_prediction_policy
 
-    rest = round((1.0 - confidence) / 2, 2)
-    scores = {"doorbell": confidence, "knock": rest, "fire_alarm": rest}
-    return _apply_prediction_policy("doorbell", confidence, scores, None)
+    rest = round((1.0 - confidence) / (len(PREDICTED_CLASSES) - 1), 2)
+    scores = {c: (confidence if c == cls else rest) for c in PREDICTED_CLASSES}
+    tof = parse_tof_meta({} if tof_presence is None else {"tof_presence": tof_presence})
+    return _apply_prediction_policy(cls, confidence, scores, tof)
 
 
 # 요청마다 달라지는 값 — 응답 · 저장 비교에서 뺀다
 _VOLATILE = ("client_request_id", "request_id", "detected_at", "device_id")
 
 
-class DetectObserveTest(_AppCase):
-    """/detect 등록 계측 훅 — 템플릿 저장 · 거리 기록 · 발송 · 응답 영향 0."""
+class _DetectCase(_AppCase):
+    """/detect 등록 경로 공통 헬퍼. 테스트마다 측정 · 실패 행도 비운다."""
 
     def setUp(self) -> None:
         super().setUp()
         self.db.session.execute(text("DELETE FROM registration_matches"))
+        self.db.session.execute(text("DELETE FROM registration_failures"))
         self.db.session.commit()
         self._seq = 0
 
     # ── 헬퍼 ──
-    def _detect(self, pcm, crid=None, confidence=0.5):
+    def _detect(self, pcm, crid=None, confidence=0.5, cls="doorbell", tof_presence=None):
         import io
 
         self._seq += 1
@@ -529,7 +541,8 @@ class DetectObserveTest(_AppCase):
             "device_id": f"dev-{self._testMethodName}-{self._seq}",
             "audio": (io.BytesIO(pcm), "a.pcm"),
         }
-        with mock.patch("app.routes.mock_prediction", return_value=_fixed_pred(confidence)):
+        pred = _fixed_pred(confidence, cls, tof_presence)
+        with mock.patch("app.routes.mock_prediction", return_value=pred):
             return self.client.post(
                 "/api/v1/detect",
                 headers=self._auth(_DEVICE_TOKEN),
@@ -566,6 +579,10 @@ class DetectObserveTest(_AppCase):
         self.db.session.expire_all()  # 요청이 쓴 값을 DB 에서 다시 읽는다
         return self.db.session.query(Notification).filter_by(client_request_id=crid).one().to_dict()
 
+
+class DetectObserveTest(_DetectCase):
+    """/detect 등록 계측 — 템플릿 저장 · 거리 기록 · 저신뢰(미발송) 건 응답 영향 0."""
+
     # ── 상태별 ──
     def test_none_writes_nothing(self):
         resp = self._detect(_tone(440))
@@ -587,7 +604,7 @@ class DetectObserveTest(_AppCase):
         pcms = [_tone(440), _tone(660)]
         crids = []
         for p in pcms:
-            resp = self._detect(p)
+            resp = self._detect(p, confidence=0.9)  # 수락 조건 = doorbell + 신뢰도 통과
             self.assertEqual(resp.status_code, 201)
             crids.append(resp.get_json()["client_request_id"])
         self.db.session.expire_all()
@@ -631,8 +648,8 @@ class DetectObserveTest(_AppCase):
 
         with self.subTest("collecting"):
             self._start_direct(3, seconds=600, now=utc_now())
-            self.assertEqual(self._detect(_tone(440), crid="replay-c").status_code, 201)
-            resp = self._detect(_tone(440), crid="replay-c")
+            self.assertEqual(self._detect(_tone(440), crid="replay-c", confidence=0.9).status_code, 201)
+            resp = self._detect(_tone(440), crid="replay-c", confidence=0.9)
             self.assertEqual(resp.status_code, 200)
             self.assertEqual(resp.headers.get("Idempotent-Replay"), "true")
             self.assertEqual(self._count("registration_templates"), 1)
@@ -684,10 +701,54 @@ class DetectObserveTest(_AppCase):
         self.assertEqual(self._stored_notification(crid)["client_request_id"], crid)
         self.assertEqual(self._count("registration_matches"), 0)
 
-    def test_template_saved_after_kakao_send_in_same_commit(self):
-        # 훅이 카카오 발송 앞에서 템플릿을 add 하면 진짜 가드가 RuntimeError 를 내 500 이 된다.
+
+class JudgeUnitTest(_NoNetworkTestCase):
+    """등록 판정 · 수락 조건 순수 함수 (DB 없음)."""
+
+    def test_judge_table(self):
+        from ..registration_observe import judge
+
+        c, r, mm = "registration_collecting", None, "registration_mismatch"
+        cases = [
+            # (state, class, policy_sends, min_distance) → 기대
+            (("collecting", "doorbell", True, None), c),
+            (("collecting", "fire_alarm", True, None), r),
+            (("collecting", "knock", True, None), r),
+            (("collecting", "doorbell", False, None), r),  # 정책 미발송 = 정책 사유 그대로
+            (("registered", "doorbell", True, 0.10), r),
+            (("registered", "doorbell", True, 0.20), r),  # 경계 = 일치(strict >)
+            (("registered", "doorbell", True, 0.2000001), mm),
+            (("registered", "doorbell", True, None), r),  # 계산 실패 = 막지 않음(fail-open)
+            (("registered", "knock", True, 0.9), r),
+            (("registered", "doorbell", False, 0.9), r),
+            (("none", "doorbell", True, None), r),
+            (("expired", "doorbell", True, None), r),
+            ((None, "doorbell", True, None), r),  # 상태 조회 실패
+        ]
+        for args, want in cases:
+            with self.subTest(args=args):
+                self.assertEqual(judge(*args), want)
+
+    def test_accepts_template(self):
+        from ..registration_observe import accepts_template
+
+        self.assertTrue(accepts_template("doorbell", 0.70))
+        self.assertTrue(accepts_template("doorbell", 0.99))
+        self.assertFalse(accepts_template("doorbell", 0.69))
+        for cls in ("knock", "fire_alarm", "other"):
+            self.assertFalse(accepts_template(cls, 0.99), cls)
+
+
+class DetectJudgmentTest(_DetectCase):
+    """/detect 등록 판정 — 수집 중 억제 · 소리 불일치 차단 · 실패 = 발송 + 기록.
+
+    카카오 1차 발송은 대역이 **진짜** kakao._assert_commit_is_safe() 를 부른 뒤 성공을
+    돌려준다 — 카카오 앞에 add 가 생기면 어느 테스트에서든 500 으로 드러난다.
+    """
+
+    def _send(self, *a, **kw):
+        """(resp, send mock). 카카오 대역 아래에서 /detect 1회."""
         from .. import kakao
-        from ..utils import utc_now
 
         real_guard = kakao._assert_commit_is_safe
 
@@ -695,13 +756,248 @@ class DetectObserveTest(_AppCase):
             real_guard()
             return None
 
-        self._start_direct(2, seconds=600, now=utc_now())
         with mock.patch("app.kakao.send_primary_text", side_effect=fake_send) as send:
-            resp = self._detect(_tone(440), confidence=0.9)
+            resp = self._detect(*a, **kw)
         self.assertEqual(resp.status_code, 201, resp.get_data(as_text=True))
-        send.assert_called_once_with("doorbell")
-        self.assertTrue(resp.get_json()["notification_status"]["primary_sent"])
+        return resp, send
+
+    def _status(self, resp):
+        return resp.get_json()["notification_status"]
+
+    def _collecting(self, target=3):
+        from ..utils import utc_now
+
+        self._start_direct(target, seconds=600, now=utc_now())
+
+    def _register3(self):
+        self._register([_tone(440), _tone(660), _tone(880)])
+
+    def _distances(self, values):
+        """판정 · 측정에 쓰이는 거리 함수를 고정값 순서열로 바꾼다(템플릿 생성 순)."""
+        it = iter(values)
+        return mock.patch(
+            "app.registration_observe.dtw_cosine_distance", side_effect=lambda a, b: next(it)
+        )
+
+    def _failures(self):
+        return self.db.session.execute(text(
+            "SELECT client_request_id, registration_id, predicted_class, judged, error "
+            "FROM registration_failures ORDER BY id"
+        )).all()
+
+    def _assert_blocked(self, resp, send, reason):
+        st = self._status(resp)
+        self.assertFalse(st["primary_sent"])
+        self.assertIsNone(st["primary_sent_at"])
+        self.assertEqual(st["skip_reason"], reason)
+        self.assertEqual(st["enrich_status"], "skipped")
+        send.assert_not_called()
+
+    def _assert_sent(self, resp, send, cls="doorbell"):
+        st = self._status(resp)
+        self.assertTrue(st["primary_sent"])
+        self.assertNotIn("skip_reason", st)
+        send.assert_called_once_with(cls)
+
+    # ── 수집 중 ──
+    def test_collecting_doorbell_is_suppressed_and_saved(self):
+        self._collecting()
+        resp, send = self._send(_tone(440), confidence=0.9)
+        self._assert_blocked(resp, send, "registration_collecting")
         self.assertEqual(self._count("registration_templates"), 1)
+        # 응답 본문 == 저장 행(억제가 저장 뒤에 행을 바꾸지 않았다)
+        self.assertEqual(resp.get_json(), self._stored_notification(resp.get_json()["client_request_id"]))
+
+    def test_collecting_fire_alarm_and_knock_are_sent_not_saved(self):
+        for cls in ("fire_alarm", "knock"):
+            with self.subTest(cls=cls):
+                self.reg.clear()
+                self.db.session.commit()
+                self._collecting()
+                resp, send = self._send(_tone(440), confidence=0.9, cls=cls)
+                self._assert_sent(resp, send, cls)
+                self.assertEqual(self._count("registration_templates"), 0)
+
+    def test_collecting_rejects_low_confidence_doorbell_and_other(self):
+        self._collecting()
+        resp, send = self._send(_tone(440), confidence=0.5)
+        self._assert_blocked(resp, send, "low_confidence")  # 게이트 순서: 신뢰도가 먼저
+        resp, send = self._send(_tone(440), confidence=0.9, cls="other")
+        self._assert_blocked(resp, send, "not_target")
+        self.assertEqual(self._count("registration_templates"), 0)
+
+    def test_collecting_accepts_doorbell_regardless_of_tof(self):
+        self._collecting()
+        resp, send = self._send(_tone(440), confidence=0.9, tof_presence="false")
+        self._assert_blocked(resp, send, "tof_rejected")  # ToF 가 먼저 걸린다
+        self.assertEqual(self._count("registration_templates"), 1)  # 수락은 ToF 무관
+
+    # ── 등록됨 ──
+    def test_registered_matching_doorbell_is_sent(self):
+        self._register3()
+        resp, send = self._send(_tone(440), confidence=0.9)  # 템플릿 1번과 같은 소리
+        self._assert_sent(resp, send)
+        (m,) = self._matches()
+        self.assertLessEqual(m.min_distance, 0.20)
+
+    def test_registered_mismatch_is_blocked(self):
+        self._register3()
+        with self._distances([0.5, 0.6, 0.7]):
+            resp, send = self._send(_tone(440), confidence=0.9)
+        self._assert_blocked(resp, send, "registration_mismatch")
+        (m,) = self._matches()
+        self.assertEqual(m.distances, [0.5, 0.6, 0.7])
+        self.assertEqual(resp.get_json(), self._stored_notification(resp.get_json()["client_request_id"]))
+
+    def test_boundary_exactly_threshold_is_sent(self):
+        self._register3()
+        with self._distances([0.9, 0.20, 0.9]):
+            resp, send = self._send(_tone(440), confidence=0.9)
+        self._assert_sent(resp, send)
+
+    def test_min_aggregation_one_close_template_is_enough(self):
+        # 평균이면 0.35 > 0.20 으로 차단될 입력 — 하나만 가깝고 둘은 멀다.
+        self._register3()
+        with self._distances([0.5, 0.05, 0.5]):
+            resp, send = self._send(_tone(440), confidence=0.9)
+        self._assert_sent(resp, send)
+
+    def test_registered_knock_far_is_sent_and_measured(self):
+        self._register3()
+        with self._distances([0.9, 0.9, 0.9]):
+            resp, send = self._send(_tone(440), confidence=0.9, cls="knock")
+        self._assert_sent(resp, send, "knock")
+        self.assertEqual([m.predicted_class for m in self._matches()], ["knock"])
+
+    def test_gate_order_tof_rejected_before_registration(self):
+        self._register3()
+        with self._distances([0.9, 0.9, 0.9]):
+            resp, send = self._send(_tone(440), confidence=0.9, tof_presence="false")
+        self._assert_blocked(resp, send, "tof_rejected")
+        self.assertEqual(len(self._matches()), 1)  # 측정은 계속
+
+    def test_measurement_rows_for_every_class(self):
+        self._register3()
+        for cls, conf in (("knock", 0.9), ("fire_alarm", 0.9), ("other", 0.9), ("doorbell", 0.5)):
+            with self._distances([0.9, 0.9, 0.9]):
+                self._send(_tone(440), confidence=conf, cls=cls)
+        self.assertEqual(
+            [m.predicted_class for m in self._matches()], ["knock", "fire_alarm", "other", "doorbell"]
+        )
+
+    def test_distances_computed_once_and_shared(self):
+        from .. import registration_observe
+
+        self._register3()
+        returned = []
+
+        def spy(a, b):
+            d = real(a, b)
+            returned.append(d)
+            return d
+
+        real = registration_observe.dtw_cosine_distance
+        with mock.patch("app.registration_observe.dtw_cosine_distance", side_effect=spy):
+            self._send(_tone(500), confidence=0.9)  # 판정 경로
+            self._send(_tone(500), confidence=0.9, cls="knock")  # 측정 전용 경로
+        self.assertEqual(len(returned), 6)  # 요청당 템플릿 수(3)만큼 — 재계산 0
+        m1, m2 = self._matches()
+        self.assertEqual(m1.distances, returned[:3])
+        self.assertEqual(m2.distances, returned[3:])
+
+    # ── 실패 = 막지 않음 ──
+    def test_compute_error_sends_and_records_failure(self):
+        self._register3()
+        with mock.patch(
+            "app.registration_observe.dtw_cosine_distance", side_effect=RuntimeError("boom")
+        ), self.assertLogs(self.app.logger, "ERROR") as logs:
+            resp, send = self._send(_tone(440), confidence=0.9)
+        self._assert_sent(resp, send)
+        crid = resp.get_json()["client_request_id"]
+        self.assertIn("fail-open", "\n".join(logs.output))
+        (f,) = self._failures()
+        self.assertEqual((f.client_request_id, f.predicted_class, bool(f.judged)), (crid, "doorbell", True))
+        self.assertEqual(f.error, "RuntimeError: boom")
+        self.assertIsNotNone(f.registration_id)
+        self.assertEqual(self._matches(), [])
+
+    def test_no_templates_sends_and_records_failure(self):
+        self._register3()
+        self.db.session.execute(text("DELETE FROM registration_templates"))
+        self.db.session.commit()
+        resp, send = self._send(_tone(440), confidence=0.9)
+        self._assert_sent(resp, send)
+        (f,) = self._failures()
+        self.assertEqual(f.error, "LookupError: no_templates")
+        self.assertTrue(f.judged)
+
+    def test_measurement_only_failure_is_not_judged(self):
+        self._register3()
+        with mock.patch(
+            "app.registration_observe.dtw_cosine_distance", side_effect=RuntimeError("boom")
+        ), self.assertLogs(self.app.logger, "ERROR"):
+            self._send(_tone(440), confidence=0.9, cls="knock")
+        (f,) = self._failures()
+        self.assertFalse(f.judged)
+
+    def test_none_and_expired_keep_current_behavior(self):
+        from ..utils import utc_now
+
+        resp, send = self._send(_tone(440), confidence=0.9)
+        self._assert_sent(resp, send)
+        self._start_direct(3, seconds=1, now=utc_now() - timedelta(seconds=10))
+        resp, send = self._send(_tone(440), confidence=0.9)
+        self._assert_sent(resp, send)
+        counts = [self._count(t) for t in ("registration_templates", "registration_matches", "registration_failures")]
+        self.assertEqual(counts, [0, 0, 0])
+
+    # ── 커밋 가드(진짜 가드를 발송 대역 안에서 호출하는 원 패턴) ──
+    def test_registration_writes_after_kakao_send_in_same_commit(self):
+        with self.subTest("registered doorbell match → 발송 + 측정 행"):
+            self._register3()
+            resp, send = self._send(_tone(440), confidence=0.9)
+            self._assert_sent(resp, send)
+            self.assertEqual(len(self._matches()), 1)
+        with self.subTest("collecting fire_alarm → 발송 + 템플릿 0"):
+            self.reg.clear()
+            self.db.session.commit()
+            self._collecting()
+            resp, send = self._send(_tone(440), confidence=0.9, cls="fire_alarm")
+            self._assert_sent(resp, send, "fire_alarm")
+            self.assertEqual(self._count("registration_templates"), 0)
+        with self.subTest("registered doorbell 계산 실패 → 발송 + 실패 행"):
+            self.reg.clear()
+            self.db.session.commit()
+            self._register3()
+            with mock.patch(
+                "app.registration_observe.dtw_cosine_distance", side_effect=RuntimeError("boom")
+            ), self.assertLogs(self.app.logger, "ERROR"):
+                resp, send = self._send(_tone(440), confidence=0.9)
+            self._assert_sent(resp, send)
+            self.assertEqual(len(self._failures()), 1)
+
+    # ── /stats ──
+    def test_stats_counts_new_skip_reasons(self):
+        def stats():
+            r = self.client.get("/api/v1/stats?period=today", headers=self._auth())
+            self.assertEqual(r.status_code, 200)
+            return r.get_json()["skip_reasons"]
+
+        before = stats()
+        self.assertEqual(
+            sorted(before),
+            sorted([
+                "not_target", "low_confidence", "tof_rejected", "kakao_api_error",
+                "token_expired", "registration_collecting", "registration_mismatch",
+            ]),
+        )
+        self._collecting(target=1)
+        self._send(_tone(440), confidence=0.9)  # 억제 + 템플릿 1 → 등록됨
+        with self._distances([0.9]):
+            self._send(_tone(440), confidence=0.9)  # 불일치 차단
+        after = stats()
+        self.assertEqual(after["registration_collecting"], before["registration_collecting"] + 1)
+        self.assertEqual(after["registration_mismatch"], before["registration_mismatch"] + 1)
 
 
 if __name__ == "__main__":

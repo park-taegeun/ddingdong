@@ -35,6 +35,8 @@ from .constants import (
     KST,
     MAX_PAGE_LIMIT,
     PREDICTED_CLASSES,
+    SKIP_REASON_REGISTRATION_COLLECTING,
+    SKIP_REASON_REGISTRATION_MISMATCH,
     STATS_PERIOD,
 )
 from .errors import ApiError
@@ -176,6 +178,16 @@ def detect():
     #   실행 시점에 강제한다(위반 시 RuntimeError).
     primary_sent = pred["primary_sent"]
     skip_reason = pred["skip_reason"]
+    enrich_status = pred["enrich_status"]
+    # 4-1) 초인종 등록 판정 — 정책 뒤 · 카카오 앞(억제 · 차단은 발송 전에 정해져야 한다).
+    # 여기서는 읽기만 한다. 측정 · 템플릿 · 실패 행 add 는 아래 record() = 카카오 뒤 ·
+    # commit 앞이어야 한다(위 ★ 와 같은 kakao._assert_commit_is_safe() 계약).
+    # 판정 대상 = doorbell + 정책 발송 건만. 차단 · 억제 = 1 · 2차 모두 없음.
+    reg = registration_observe.before_send(waveform, client_request_id, pred, now)
+    if reg.skip_reason is not None:
+        primary_sent = False
+        skip_reason = reg.skip_reason
+        enrich_status = "skipped"
     if primary_sent:
         send_skip_reason = kakao.send_primary_text(pred["predicted_class"])
         if send_skip_reason is not None:
@@ -205,7 +217,7 @@ def detect():
         tof_reason=pred["tof"]["reason"],
         primary_sent=primary_sent,
         primary_sent_at=primary_sent_at,
-        enrich_status=pred["enrich_status"],
+        enrich_status=enrich_status,
         secondary_sent=False,
         secondary_sent_at=None,
         skip_reason=skip_reason,
@@ -230,11 +242,10 @@ def detect():
             created_at=now,
         )
     )
-    # 등록 계측(관측 전용 — 발송 · 응답 영향 0). 카카오 발송 뒤 · commit 앞이어야 한다:
-    # 발송 앞에서 템플릿을 add 하면 kakao._assert_commit_is_safe() 가 RuntimeError 를 낸다.
-    registration_observe.observe(
-        audio_bytes, waveform, client_request_id, pred["predicted_class"], now
-    )
+    # 등록 기록(템플릿 · 측정 · 실패 행). 카카오 발송 뒤 · commit 앞이어야 한다:
+    # 발송 앞에서 add 하면 kakao._assert_commit_is_safe() 가 RuntimeError 를 낸다.
+    # 응답 body 는 이미 위에서 떴으므로 여기 쓰기는 응답에 영향이 없다.
+    registration_observe.record(audio_bytes, waveform, reg, client_request_id, pred, now)
     db.session.commit()
     return jsonify(body), 201
 
@@ -584,13 +595,15 @@ def _build_stats(rows, start_kst, end_kst):
             "notifications_sent": sum(1 for n in group if n.primary_sent),
         }
 
-    # skip 사유별 집계 (SkipReasonCounts 5종 키 고정)
+    # skip 사유별 집계 (SkipReasonCounts 7종 키 고정)
     skip_reasons = {
         "not_target": 0,
         "low_confidence": 0,
         "tof_rejected": 0,
         "kakao_api_error": 0,
         "token_expired": 0,
+        SKIP_REASON_REGISTRATION_COLLECTING: 0,
+        SKIP_REASON_REGISTRATION_MISMATCH: 0,
     }
     for n in skipped:
         if n.skip_reason in skip_reasons:

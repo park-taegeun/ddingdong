@@ -302,3 +302,24 @@ REGISTRATION_TARGET_COUNT_MAX = 10
 #   소리를 템플릿으로 빨아들이지 않게 하는 것.
 # 재판정 트리거: 목표 개수 상한이 바뀔 때 / 벨 녹음 뒤 실제 등록 동선을 잴 때.
 REGISTRATION_EXPIRES_MAX_SECONDS = 600
+
+# ── 초인종 등록 판정 (registration_observe.py — /detect 카카오 앞 판정) ─────────
+# 판정은 예측 doorbell + 정책(_apply_prediction_policy) 결과 「발송」일 때만 돈다.
+# 게이트 순서 = other → 신뢰도 → fire_alarm → ToF → 등록. 먼저 걸린 사유가 skip_reason.
+#   수집 중이면 억제(registration_collecting), 등록됨이고 거리 최솟값 > 기준값이면
+#   차단(registration_mismatch). 둘 다 1 · 2차 모두 없음(enrich_status = skipped).
+# 계산 실패(예외 · 저장 템플릿 0개)는 막지 않는다 — 명시 정책(결정 8, fail-open):
+#   현행대로 발송 + ERROR 로그 + registration_failures 행.
+SKIP_REASON_REGISTRATION_COLLECTING = "registration_collecting"
+SKIP_REASON_REGISTRATION_MISMATCH = "registration_mismatch"
+
+# 같은 소리 기준값 0.20 — ★ 잠정. 일치 = 템플릿별 거리의 최솟값 ≤ 0.20,
+# 불일치 = 최솟값 > 0.20(strict). 집계 = 최솟값(잠정) · 목표 개수 N = 3(대시보드 요청값).
+# 근거(오프라인, repo 밖 ~/ddingdong-측정결과/2026-10-02/reg_feasibility/report.md):
+#   spisafe 등록 · N 3 · 최솟값 집계에서 같은 벨 최대 0.0974(변화 테이크) ·
+#   다른 소리 최소 0.2981 · 겹침 0 → 0.20 은 그 틈 안에 둔 값이다.
+# 한계: 그룹마다 녹음 날짜 · 자리 · 재생 경로가 달라(세션 · 장소 교란) 다른 소리
+#   거리가 같은 방 · 같은 날 조건보다 커 보일 수 있다. 보드 ④런타임 실측 0.
+# 재판정 트리거: 같은 방 녹음 세션(spisafe · 폰 재생 각 10회) / 부스 리허설 /
+#   보드 · 마이크 교체.
+REGISTRATION_MATCH_MAX_DISTANCE = 0.20

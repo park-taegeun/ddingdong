@@ -280,10 +280,13 @@ class DetectWiringTest(_NoNetworkTestCase):
             return create_app(_TestConfig)
 
     def _detect_capture(self, app, pcm=None):
-        """real 모드 대역으로 /detect 1회 → (predict 입력, observe 의 waveform 인자)."""
+        """real 모드 대역으로 /detect 1회 → (predict 입력, 등록 record 의 waveform 인자).
+
+        등록 판정(before_send)도 같은 원본 waveform 객체를 받는지 함께 단언한다.
+        """
         from inference.audio_decode import decode_pcm16
 
-        from .. import model_serving
+        from .. import model_serving, registration_observe
 
         pcm = self.pcm if pcm is None else pcm
         seen = {}
@@ -298,8 +301,11 @@ class DetectWiringTest(_NoNetworkTestCase):
         with app.app_context(), mock.patch(
             "app.routes.model_serving.is_real_mode", return_value=True
         ), mock.patch("app.routes.model_serving.predict", side_effect=_predict), mock.patch(
-            "app.routes.registration_observe.observe"
-        ) as observe:
+            "app.routes.registration_observe.record"
+        ) as observe, mock.patch(
+            "app.routes.registration_observe.before_send",
+            wraps=registration_observe.before_send,
+        ) as before_send:
             r = app.test_client().post(
                 "/api/v1/detect",
                 headers={"Authorization": f"Bearer {_DEVICE_TOKEN}"},
@@ -314,6 +320,8 @@ class DetectWiringTest(_NoNetworkTestCase):
         observe.assert_called_once()
         pcm_arg, wf_arg = observe.call_args.args[:2]
         self.assertEqual(pcm_arg, pcm)
+        before_send.assert_called_once()
+        self.assertIs(before_send.call_args.args[0], wf_arg)
         return seen["predict"], wf_arg, decode_pcm16(pcm)
 
     def test_t4_four_class_peak_goes_to_predict_only(self) -> None:
