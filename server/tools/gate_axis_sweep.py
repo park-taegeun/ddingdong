@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""게이트 축 전수 스윕 하네스 — held-out test 424건 재현 (계측 계층, 제품 동작 불변).
+"""게이트 축 전수 스윕 하네스 — held-out test 424건 재현(이력) · 현재 기준 J × 725건 (계측 계층, 제품 동작 불변).
 
 **성격 = 방법론 자산**(8.4(f) SSR NC 하네스 · 6.3(o) `env:mic_noiseprobe` 계열).
 33.6(b)(d)가 일회성 스크립트로 측정하고 repo에 남기지 않은 축
@@ -21,6 +21,10 @@
 아니다.** 본 하네스는 두 기준을 **동시에** 산출하고 일치 여부를 스스로 단언한다. 불일치는
 실패가 아니라 **결과**이며 종료 코드로 구분된다(EXIT_GATE_DIVERGENCE).
 
+**기준값 현재**(2026-10-02 갱신, 33.28 결정 3): 서빙 J(`2026-09-29_2nd_4cls_p6`) × 데이터셋 3차 상태
+test 725건(4클래스, 정답 629). exit 0 조건 = 이 모델 · 이 split으로 돌려 전 칸이 상수 주석의 실측과
+같을 것. 위의 「424건」 서술은 신설 시점(3클래스) 이력이다.
+
 --------------------------------------------------------------------------------
 ④런타임 절차서 (학부생 몫 — MCP 미수행)
 --------------------------------------------------------------------------------
@@ -38,12 +42,14 @@
      DDINGDONG_DATA_ROOT="$HOME/ML 학습 데이터/ddingdong_dataset" \
      venv_real/bin/python3 tools/gate_axis_sweep.py --dry-run
 
-3) 전수 스윕(424건, 수 초. `.env` 무변경 — **셸 앞 변수만** 쓴다. 33.6(c) 관용구):
+3) 전수 스윕(현재 725건 · 이력 424건, 수 초. `.env` 무변경 — **셸 앞 변수만** 쓴다. 33.6(c) 관용구):
 
      DDINGDONG_DATA_ROOT="$HOME/ML 학습 데이터/ddingdong_dataset" \
-     DDINGDONG_MODEL_PATH="<repo>/ml/models/yamnet/inference_savedmodel" \
-     DDINGDONG_MODEL_DIR="<repo>/ml/models/yamnet" \
+     DDINGDONG_MODEL_PATH="$HOME/ddingdong_runs/2026-09-29_2nd_4cls_p6/inference_savedmodel" \
+     DDINGDONG_MODEL_DIR="$HOME/ddingdong_runs/2026-09-29_2nd_4cls_p6" \
      venv_real/bin/python3 tools/gate_axis_sweep.py
+
+   옛 3클래스 경로(`<repo>/ml/models/yamnet`)는 #83 뒤 labels.json 순서 대조에서 exit 4로 끝난다.
 
 4) 로그 저장(repo 밖 — 카테고리 실측 로그 규약. repo 안은 `.gitignore` 차단분):
 
@@ -56,7 +62,7 @@
 5) 결과 읽는 법:
    - `[실모델 확증]` 3줄 = RSS(KB) / TF 라이브러리 매핑 수 / 동일 입력 2회 출력 일치.
      ★ 이 3축이 mock 반증이다 — 셋 다 보이지 않으면 실모델이 아니다.
-   - `[재현 대조]` 줄 = 33.6(b)(d) 기준값과 전건 일치 여부.
+   - `[재현 대조]` 줄 = 기준값(출처 = 상수 주석)과 전건 일치 여부.
    - `[raw vs rounded]` 줄 = 두 게이트 기준의 분류 일치 여부(33.6(e)).
    - ⓐ `not_target` 축 = 예측이 `other`인 행(신뢰도와 무관, 신뢰도 게이트보다 **앞** —
      33.13(a) E1·E2). 3클래스 모델(33.6(b)(d) 기준값) 입력에서는 원리상 전 칸 0이다.
@@ -101,25 +107,27 @@ AXIS_NOT_TARGET = "not_target"  # predicted == "other" → 1차·2차 skip, 신�
 AXES = (AXIS_OK, AXIS_NG, AXIS_BLOCKED, AXIS_NOT_TARGET)
 
 # ── 재현 대조 기준값 ────────────────────────────────────────────────────────
-# 출처 = docs/decisions.md 33.6(d) 「대조군 재현 (3회차)」 표 (33.6(b) 표와 전건 일치).
-# 계수 단위 = **클립 수(파일 수)**. 매직 넘버가 아니라 SSoT 인용값이다.
+# 출처 = 실측 2026-10-02 · main c0dc156 코드 · J(`2026-09-29_2nd_4cls_p6`) · 데이터셋 3차 상태
+#   (norm_rule peak_clampmask32_v1) · test 725 · repo 밖 원본 = ~/ddingdong-측정결과/2026-10-02/baseline_j/
+#   · SSoT 등재 = 다음 Set 1 대기. 계수 단위 = **클립 수(파일 수)**, 게이트 축 = raw 열.
+# 이력: 이전 기준값 = 3클래스 424건(376 정답) — 33.6(b)(d), 사용자 결정 33.28 결정 3에 따라 1회 갱신.
 BASELINE_AXIS: dict[str, dict[str, int]] = {
-    "doorbell":   {"n": 62,  AXIS_OK: 44,  AXIS_NG: 9,  AXIS_BLOCKED: 9},
-    "knock":      {"n": 108, AXIS_OK: 92,  AXIS_NG: 5,  AXIS_BLOCKED: 11},
-    "fire_alarm": {"n": 254, AXIS_OK: 231, AXIS_NG: 13, AXIS_BLOCKED: 10},
+    "doorbell":   {"n": 58,  AXIS_OK: 39,  AXIS_NG: 1,  AXIS_BLOCKED: 8,  AXIS_NOT_TARGET: 10},
+    "knock":      {"n": 93,  AXIS_OK: 62,  AXIS_NG: 1,  AXIS_BLOCKED: 13, AXIS_NOT_TARGET: 17},
+    "fire_alarm": {"n": 178, AXIS_OK: 160, AXIS_NG: 2,  AXIS_BLOCKED: 7,  AXIS_NOT_TARGET: 9},
+    "other":      {"n": 396, AXIS_OK: 0,   AXIS_NG: 26, AXIS_BLOCKED: 21, AXIS_NOT_TARGET: 349},
 }
-# 출처 = 33.6(d) 「`pass_NG` 27건의 오분류 대상 내역」 표. (true, predicted) → 클립 수.
-# ⚠️ 「`fire_alarm`이 흡인 클래스」는 33.6(d)가 **논증**으로 못박은 해석이며 support 254
-#   최다와의 인과는 미실증이다 — 본 상수는 계수일 뿐 그 해석을 확정하지 않는다.
+# 출처 = 위와 같은 실측(2026-10-02). `pass_NG` 30건의 (true, predicted) → 클립 수.
+# 이력: 이전 기준값 = 33.6(d) 「`pass_NG` 27건의 오분류 대상 내역」(3클래스) — 33.28 결정 3에 따라 1회 갱신.
 BASELINE_NG_CONFUSION: dict[tuple[str, str], int] = {
-    ("doorbell", "knock"): 3,      ("doorbell", "fire_alarm"): 6,
-    ("knock", "doorbell"): 1,      ("knock", "fire_alarm"): 4,
-    ("fire_alarm", "doorbell"): 9, ("fire_alarm", "knock"): 4,
+    ("doorbell", "knock"): 1,      ("knock", "doorbell"): 1,
+    ("fire_alarm", "doorbell"): 2,
+    ("other", "doorbell"): 13,     ("other", "knock"): 9,      ("other", "fire_alarm"): 4,
 }
-# 출처 = 33.6(b) overall accuracy 0.8868 = 376/424 (`eval_report.json`
-# 0.8867924528301887 과 일치). 게이트와 무관한 순수 예측 정확도다.
-BASELINE_CORRECT = 376
-BASELINE_TOTAL = 424
+# 출처 = 위와 같은 실측(2026-10-02). 629/725, 게이트와 무관한 순수 예측 정확도다.
+# 이력: 이전 기준값 = 33.6(b) 376/424(3클래스) — 33.28 결정 3에 따라 1회 갱신.
+BASELINE_CORRECT = 629
+BASELINE_TOTAL = 725
 
 # 실모델 확증 3축 ① RSS. 33.6(a) 475,920KB / 33.6(d) 461,280KB — **자릿수(6자리)만** 본다.
 # 기기·TF 빌드마다 다르므로 정확 일치를 요구하면 그 자체가 거짓 실패가 된다.
@@ -156,8 +164,8 @@ def axis_of(predicted: str, confidence: float, true_class: str,
     (카테고리 3 `CONFIDENCE_THRESHOLD=0.7`). 경계값 0.7 자체는 **통과**다.
     `predicted == "other"` 는 신뢰도 판정보다 **앞**에서 걸린다 — #83
     `_apply_prediction_policy` 와 같은 순서(33.13(a) E1·E2): other 는 신뢰도와 무관하게
-    `skip_reason="not_target"`. main(3클래스)에선 `PREDICTED_CLASSES`에 "other"가 없어
-    이 분기에 도달할 수 없다.
+    `skip_reason="not_target"`. #83(bd61dff) 전 3클래스 main에선 `PREDICTED_CLASSES`에 "other"가
+    없어 이 분기에 도달할 수 없었다(이력). 지금 main은 4클래스라 도달한다.
     ★ ToF 게이트(G12 `fire_alarm` 우회)는 본 축에 들어오지 않는다 — 33.6(b)의 축 정의가
       신뢰도 게이트 단독이고, 본 하네스는 ToF telemetry 를 입력으로 받지 않는다.
       `pass_NG` 중 「위험 방향」(타클래스 → `fire_alarm`)이 presence 무관 발송이 되는 이유가
@@ -223,12 +231,12 @@ def compare_baseline(axis_counts, ng_counts, correct, total,
                      baseline_ng=BASELINE_NG_CONFUSION,
                      baseline_correct=BASELINE_CORRECT,
                      baseline_total=BASELINE_TOTAL) -> list[str]:
-    """33.6(b)(d) 기준값과 **전 칸 정확 일치** 대조. 반환 = 불일치 설명 목록(빈 목록 = 일치).
+    """기준값(출처 = 상수 주석)과 **전 칸 정확 일치** 대조. 반환 = 불일치 설명 목록(빈 목록 = 일치).
 
     ★ 느슨한 비교(부분 일치·근사)를 쓰면 NC-2 가 통과해 버린다 — 전 칸 `!=` 비교를 유지할 것.
-    ★ `not_target` 축은 `BASELINE_AXIS`(바이트 동일 유지)에 키 자체가 없다 — 기대값은
-      **0** 으로 보고 정확 비교한다(근사가 아니라 `expect.get(key, 0)` 기본값 비교, NC-7).
-      3클래스 모델(33.6(b)(d))에서 `other` 예측은 원리상 0건이라 이 기본값이 항상 맞는다.
+    ★ 기준값 표에 `not_target` 키가 없으면 기대값은 **0** 으로 보고 정확 비교한다(근사가 아니라
+      `expect.get(key, 0)` 기본값 비교, NC-7). 이력: 옛 3클래스 기준값(33.6(b)(d))이 이 꼴이었다.
+      현재 `BASELINE_AXIS` 는 4클래스 실측이라 `not_target` 키를 명시한다.
     """
     diffs: list[str] = []
     for cls, expect in baseline_axis.items():
@@ -484,12 +492,12 @@ def sweep(data_root: Path, model_path: Path, rows_out) -> int:
 
     diffs = compare_baseline(axis_counts, ngc, correct, len(results))
     if diffs:
-        print("\n[재현 대조] 🔴 33.6(b)(d) 기준값과 불일치 "
+        print("\n[재현 대조] 🔴 기준값(출처 = 상수 주석)과 불일치 "
               f"{len(diffs)}건 — 하네스 결함인지 데이터·모델 변화인지 가를 것:")
         for d in diffs:
             print(f"  - {d}")
         return EXIT_BASELINE_MISMATCH
-    print("\n[재현 대조] ✅ 33.6(b)(d) 기준값과 전건 일치 (값 갱신이 아니라 재현)")
+    print("\n[재현 대조] ✅ 기준값(출처 = 상수 주석)과 전건 일치 (값 갱신이 아니라 재현)")
     return EXIT_GATE_DIVERGENCE if diverged else EXIT_OK
 
 
@@ -621,13 +629,13 @@ def self_test() -> int:
     ok &= _check("NC-2 기준값 한 칸 변조", bool(dirty), f"불일치={dirty}")
 
     # --- NC-7 기준값에 없는 not_target 축도 정확 비교되는가 -----------------
-    # 불변식: `BASELINE_AXIS` 처럼 기준값 표에 `not_target` 키가 아예 없어도 기대값 0 으로
+    # 불변식: 기준값 표에 `not_target` 키가 아예 없어도(옛 3클래스 기준값과 같은 꼴) 기대값 0 으로
     #   **정확 비교**된다(compare_baseline 의 `expect.get(key, 0)`).
     # 결함 조건: not_target 을 비교에서 빼먹으면(예: `for key in ("n", *AXES[:3])`) 4클래스
     #   자료가 새는데도(other 예측 유출) 재현 대조가 조용히 통과해버린다.
     # 함정: not_target=0 대 0 대조군만 두면 "비교 자체를 안 하는" 결함을 못 잡는다 —
     #   반드시 not_target 을 1 로 변조해 실지점을 때린다.
-    baseline_like_real = {  # 실제 BASELINE_AXIS 처럼 not_target 키가 아예 없는 기준값 표
+    baseline_like_real = {  # 키가 없는 기준값 표(옛 3클래스 기준값과 같은 꼴)
         cls: {k: v for k, v in cell.items() if k != AXIS_NOT_TARGET}
         for cls, cell in full.items()
     }
@@ -766,7 +774,7 @@ def _check(name: str, passed: bool, detail: str) -> bool:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
-        description="게이트 축 전수 스윕 (33.6(b)(d) 재현 · 제품 동작 불변)",
+        description="게이트 축 전수 스윕 (기준값 재현 — 출처 = 상수 주석 · 제품 동작 불변)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
