@@ -164,8 +164,8 @@ def axis_of(predicted: str, confidence: float, true_class: str,
     (카테고리 3 `CONFIDENCE_THRESHOLD=0.7`). 경계값 0.7 자체는 **통과**다.
     `predicted == "other"` 는 신뢰도 판정보다 **앞**에서 걸린다 — #83
     `_apply_prediction_policy` 와 같은 순서(33.13(a) E1·E2): other 는 신뢰도와 무관하게
-    `skip_reason="not_target"`. main(3클래스)에선 `PREDICTED_CLASSES`에 "other"가 없어
-    이 분기에 도달할 수 없다.
+    `skip_reason="not_target"`. #83(bd61dff) 전 3클래스 main에선 `PREDICTED_CLASSES`에 "other"가
+    없어 이 분기에 도달할 수 없었다(이력). 지금 main은 4클래스라 도달한다.
     ★ ToF 게이트(G12 `fire_alarm` 우회)는 본 축에 들어오지 않는다 — 33.6(b)의 축 정의가
       신뢰도 게이트 단독이고, 본 하네스는 ToF telemetry 를 입력으로 받지 않는다.
       `pass_NG` 중 「위험 방향」(타클래스 → `fire_alarm`)이 presence 무관 발송이 되는 이유가
@@ -774,7 +774,7 @@ def _check(name: str, passed: bool, detail: str) -> bool:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
-        description="게이트 축 전수 스윕 (33.6(b)(d) 재현 · 제품 동작 불변)",
+        description="게이트 축 전수 스윕 (기준값 재현 — 출처 = 상수 주석 · 제품 동작 불변)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
