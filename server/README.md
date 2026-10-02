@@ -62,11 +62,12 @@ server/
     auth.py           # Device / Dashboard Bearer Token 데코레이터
     rate_limit.py     # device_id 5초당 1회 (in-memory)
     models.py         # Notification / IdempotencyKey / KakaoToken /
-                      #   RegistrationState / RegistrationTemplate / RegistrationMatch
+                      #   RegistrationState / RegistrationTemplate / RegistrationMatch /
+                      #   RegistrationFailure
     routes.py         # /api/v1 Blueprint — detect · enrich · notifications · stats (4종)
     registration_api.py     # /api/v1/registration Blueprint (상태 · 시작 · 해제)
     registration.py         # 초인종 등록 저장 층 (commit 없음)
-    registration_observe.py # /detect 등록 계측 훅 (관측 전용)
+    registration_observe.py # /detect 등록 판정(카카오 앞) + 템플릿 · 측정 · 실패 기록(카카오 뒤)
     sound_match.py    # 등록용 소리 비교 (numpy 멜 + DTW-cosine)
     captures.py       # /captures/<id> public 캡처 이미지 서빙 (비인증)
     image_store.py    # 로컬 이미지 스토어

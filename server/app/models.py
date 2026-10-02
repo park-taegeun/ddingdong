@@ -186,3 +186,22 @@ class RegistrationMatch(db.Model):
     mean_distance: Mapped[float]
     compare_ms: Mapped[float]  # 저장 템플릿 디코드 · 특징 + 질의 특징 + DTW 전체
     created_at: Mapped[datetime]  # naive UTC
+
+
+class RegistrationFailure(db.Model):
+    """등록됨 상태의 거리 계산 실패 기록 (결정 8 — 막지 않고 발송, 실패는 남긴다).
+
+    judged = 이 요청이 판정 경로(doorbell + 정책 발송)였는가 = fail-open 이 실제로 적용됐는가.
+    False 면 측정 행 기록만 실패한 것이다. error = 예외 타입 + 메시지 앞부분(PCM · 경로 · 토큰 없음).
+    ★ 새 테이블로만 추가한다(RegistrationState 주석과 같은 이유). add 는 카카오 발송 뒤에만.
+    """
+
+    __tablename__ = "registration_failures"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    client_request_id: Mapped[str] = mapped_column(index=True)
+    registration_id: Mapped[str | None]  # 상태 조회부터 실패하면 None
+    predicted_class: Mapped[str]
+    judged: Mapped[bool]
+    error: Mapped[str]
+    created_at: Mapped[datetime]  # naive UTC
