@@ -217,6 +217,8 @@ export const MOCK_STATS: StatsResponse = {
     tof_rejected: 1,
     kakao_api_error: 0,
     token_expired: 0,
+    registration_collecting: 0,
+    registration_mismatch: 0,
   },
   system_health: {
     device_last_seen_at: "2026-05-28T16:04:50+09:00",

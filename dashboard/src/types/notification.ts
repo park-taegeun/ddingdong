@@ -17,6 +17,9 @@ export type SkipReason =
   | "tof_rejected"
   | "kakao_api_error"
   | "token_expired"
+  // 초인종 등록 판정(서버 registration_observe) — 예측 doorbell + 발송 판정 건에만 붙는다.
+  | "registration_collecting"
+  | "registration_mismatch"
 
 export interface AllScores {
   doorbell: number

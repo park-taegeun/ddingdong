@@ -40,6 +40,8 @@ export interface SkipReasonCounts {
   tof_rejected: number
   kakao_api_error: number
   token_expired: number
+  registration_collecting: number
+  registration_mismatch: number
 }
 
 export interface SystemHealth {

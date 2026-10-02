@@ -96,4 +96,7 @@ export const SKIP_REASON_LABEL: Record<string, string> = {
   tof_rejected: "사람 감지 실패",
   kakao_api_error: "카카오 전송 오류",
   token_expired: "토큰 만료",
+  // 카드 문장 = 「{라벨} 때문에 알림을 보내지 않았어요.」 — 저장 · 출처를 단정하지 않는다.
+  registration_collecting: "초인종 등록 중에 들어온 소리",
+  registration_mismatch: "등록한 초인종과 다른 소리",
 }
