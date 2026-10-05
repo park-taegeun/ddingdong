@@ -235,6 +235,24 @@ int main() {
     CHECK(strcmp(autoTrigVerdictName(AUTO_TRIG_OK), "ok") == 0);
   }
 
+  // T12 2차 녹음 연장(2026-10-05 PoC-(67)) — 값 고정 + 파생 산술 + 서버 상한. 펌웨어 static_assert 와 같은 축을
+  //   호스트에서도 고정한다(호스트만 돌리면 펌웨어 static_assert 는 안 탄다 — 그 축은 자동 빌드 컴파일이 본다).
+  {
+    CHECK(AUTO_TRIG_REC_EXTRA_BUFS == 16);
+    CHECK(AUTO_TRIG_REC_BUFS == ENRICH_AUDIO_BUFFERS + AUTO_TRIG_REC_EXTRA_BUFS);
+    CHECK(AUTO_TRIG_REC_BUFS == 96);
+    CHECK(AUTO_TRIG_REC_SAMPLES == 98304);
+    CHECK(AUTO_TRIG_REC_BYTES == 196608);
+    CHECK(AUTO_TRIG_REC_MS == 6144);
+    CHECK(AUTO_TRIG_REC_BYTES == ENRICH_AUDIO_BYTES + AUTO_TRIG_REC_EXTRA_BUFS * N * 2);
+    CHECK(AUTO_TRIG_REC_MS == ENRICH_AUDIO_MS + AUTO_TRIG_REC_EXTRA_BUFS * AUTO_TRIG_BUF_MS);
+    CHECK(AUTO_TRIG_REC_MS >= 5000 + AUTO_TRIG_REC_EXTRA_BUFS * AUTO_TRIG_BUF_MS);   // I-A(연장)
+    CHECK(AUTO_TRIG_REC_BYTES <= ENRICH_SERVER_AUDIO_MAX_BYTES);                     // I-B(연장)
+    CHECK(AUTO_TRIG_REC_BYTES * 1000 / ENRICH_SERVER_AUDIO_MAX_BYTES == 614);        // 61.4%
+    // 결정 규칙(Lp − d ≤ 16 → 16) 입력: Lp = 18(spisafe p90) · d = FIRE_LAG = 2
+    CHECK(18 - AUTO_TRIG_FIRE_LAG <= AUTO_TRIG_REC_EXTRA_BUFS);
+  }
+
   printf("auto_trig_test: %d checks OK\n", checks);
   return 0;
 }

@@ -31,6 +31,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "enrich_wire.h"   // 2차 녹음 연장의 기준 계약(80버퍼 · 서버 상한) — 순수 헤더라 호스트 컴파일 그대로
 #include "noise_stats.h"   // noiseIsClip · noiseIsqrt64 재사용(복제 0, I10)
 
 // ── 버퍼 단위(보드 값과의 일치는 호출부 static_assert) ──────────────────────
@@ -83,6 +84,31 @@ static_assert(AUTO_TRIG_REFRACTORY_BUFS * AUTO_TRIG_BUF_MS > AUTO_TRIG_REFRACTOR
 
 // 버퍼 k 는 슬롯 k+1 이 적재된 직후(적재 순번 = k + 2) 판정된다.
 constexpr uint32_t AUTO_TRIG_FIRE_LAG = 2;
+
+// ── 2차 녹음 연장 = 16버퍼(1.024초, 잠정 — 사용자 결정 2026-10-05 PoC-(67) 「전문가 권고대로」) ──
+// 이 빌드의 2차 녹음은 **모든** 건(자동 · 수동 's')이 ENRICH_AUDIO_BUFFERS + 16 = 96버퍼(6.144초)다(단일 길이).
+// 수동 빌드(env:enrich_uplink)는 enrich_wire.h 계약 80버퍼(5.120초) 그대로다.
+// 왜: 자동 건 녹음은 수락 다음 슬롯 k+2 부터 담긴다(녹음 적재가 같은 반복의 판정보다 먼저 돈다 → 발화 슬롯
+//   k+1 은 못 담는다, d = 2). 그래서 트리거 소리 꼬리가 녹음 앞을 차지해 방문자 말 시간이 준다
+//   (2026-10-05 실측 n=3 뒤 잘림 2/3 · 앞 잘림 0/3).
+// 근거(~/ddingdong-측정결과/2026-10-05/reclen/reclen_out.txt): 소리 길이 L = V1 > 450 첫 버퍼부터
+//   3초 안 마지막 > 450 버퍼까지. p90 = spisafe 17테이크 18버퍼(1,152ms) · 노크 6유닛 98테이크 13버퍼(832ms)
+//   → Lp = 18, 녹음에 들어가는 소리 ≈ Lp − d = 16 → 규칙 「≤ 16 → 16 / ≤ 24 → 24 / 초과 → 정지」의 16.
+// 산술: 96 × 1,024 × 2 = 196,608 B = 서버 AUDIO_MAX_BYTES 의 61.4% · 2차 체인 +1.024초.
+// 재판정 트리거: ① 실보드 ④런타임에서 긴 대사 자막 잘림 지속 또는 2차 15초 예산 초과 관측 ② 부스 리허설
+//   ③ 보드 · 마이크 · 초인종 교체.
+constexpr uint32_t AUTO_TRIG_REC_EXTRA_BUFS = 16;
+constexpr uint32_t AUTO_TRIG_REC_BUFS       = ENRICH_AUDIO_BUFFERS + AUTO_TRIG_REC_EXTRA_BUFS;
+constexpr size_t   AUTO_TRIG_REC_SAMPLES    = (size_t)AUTO_TRIG_REC_BUFS * ENRICH_AUDIO_DMA_BUF_LEN;
+constexpr size_t   AUTO_TRIG_REC_BYTES      = AUTO_TRIG_REC_SAMPLES * sizeof(int16_t);
+constexpr uint32_t AUTO_TRIG_REC_MS =
+    (uint32_t)(AUTO_TRIG_REC_SAMPLES * 1000u / ENRICH_AUDIO_SAMPLE_RATE);
+static_assert(ENRICH_AUDIO_DMA_BUF_LEN == (uint32_t)AUTO_TRIG_BUF_SAMPLES, "녹음 버퍼 = V1 버퍼 = 64ms");
+// enrich_wire.h I-A · I-B 의 연장판: 연장분만큼 길어야 하고, 서버 상한은 그대로 넘을 수 없다.
+static_assert(AUTO_TRIG_REC_MS >= 5000 + AUTO_TRIG_REC_EXTRA_BUFS * AUTO_TRIG_BUF_MS,
+              "I-A(연장): 자동 빌드 2차 녹음 ≥ 5.000초 + 연장분");
+static_assert(AUTO_TRIG_REC_BYTES <= ENRICH_SERVER_AUDIO_MAX_BYTES,
+              "I-B(연장): 자동 빌드 2차 오디오는 서버 AUDIO_MAX_BYTES 를 넘을 수 없다");
 
 // ── V1 ─────────────────────────────────────────────────────────────────────
 // cur = 버퍼 k(1024샘플). prev = 버퍼 k−1(1024샘플, 스트림 첫 버퍼면 nullptr).

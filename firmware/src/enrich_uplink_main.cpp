@@ -15,6 +15,7 @@
 //                         그대로 쓰는 env 라 동작이 바뀌면 안 된다 → 전처리 출력이 이 PR 전후 동일(I9).
 //   env:enrich_autotrig = 마이크 태스크가 V1 > T 버퍼 k 를 발화 → loop 가 수락하면 창 [k−8, k+24) 스냅샷.
 //                         수동 's' 도 그대로 쓸 수 있다(경로 무변경).
+//                         2차 녹음은 이 빌드만 96버퍼 6.144초(자동 · 수동 공통 — 트리거 소리 꼬리분 연장, auto_trig.h).
 //
 // ★ 순서 (§2-1 ① S1 직렬 / ② pre 0)
 //   's' → **2차 녹음 먼저 시작** → 1차 스냅샷 POST → 응답 파싱 → 게이트 → 녹음 완료 대기
@@ -48,14 +49,28 @@
 #include "auto_trig.h"
 #endif
 
+// ── 2차 녹음 길이 · multipart 버퍼 = 빌드별 (2026-10-05 PoC-(67)) ─────────────
+// enrich_autotrig = 96버퍼 6.144초(auto_trig.h AUTO_TRIG_REC_* — 자동 · 수동 's' 공통 단일 길이).
+// enrich_uplink   = 80버퍼 5.120초(enrich_wire.h 계약 그대로).
+// ★ 매크로인 이유 = I9: #else 쪽이 원래 토큰(ENRICH_AUDIO_BYTES …)으로 전개돼 enrich_uplink 전처리 출력이 그대로다.
+#ifdef ENRICH_AUTO_TRIGGER
+#define E2_REC_BYTES   AUTO_TRIG_REC_BYTES
+#define E2_REC_MS      AUTO_TRIG_REC_MS
+#define E2_EBODY_BYTES AUTO_TRIG_EBODY_BYTES
+#else
+#define E2_REC_BYTES   ENRICH_AUDIO_BYTES
+#define E2_REC_MS      ENRICH_AUDIO_MS
+#define E2_EBODY_BYTES UPLINK_ENRICH_BODY_BYTES
+#endif
+
 extern SparkFun_VL53L5CX tofImager;  // tof_common.cpp 소유 (mic_uplink_main.cpp 와 동형)
 
 // ── PSRAM 버퍼 (setup 에서 1회 할당, 이후 불변) ─────────────────────────────
 // 링버퍼 본체(64KB)는 micTask 지역변수 = mic_common.h 컨벤션 그대로.
 static uint8_t* g_snap  = nullptr;  // 65,536B  1차 스냅샷 (task 가 쓰고 loop 가 읽는다)
 static uint8_t* g_body  = nullptr;  // 66,560B  1차 multipart
-static uint8_t* g_rec   = nullptr;  // 163,840B 2차 녹음(별도 버퍼 — 링버퍼 확장은 기각, 6.5(c))
-static uint8_t* g_ebody = nullptr;  // 676,864B 2차 multipart
+static uint8_t* g_rec   = nullptr;  // E2_REC_BYTES 2차 녹음(별도 버퍼 — 링버퍼 확장은 기각, 6.5(c))
+static uint8_t* g_ebody = nullptr;  // E2_EBODY_BYTES 2차 multipart(수동 676,864B · 자동 709,632B)
 
 // ── 태스크 ↔ loop 핸드셰이크 ───────────────────────────────────────────────
 // ★ 락 없음의 근거는 mic_uplink_main.cpp 와 같다 — 각 플래그의 set 주체가 유일하고 상태가
@@ -107,6 +122,10 @@ static_assert(AUTO_TRIG_BUF_SAMPLES == MIC_DMA_BUF_LEN, "V1 버퍼 = 링 슬롯 
 static_assert(AUTO_TRIG_BUF_MS * MIC_SAMPLE_RATE_HZ == (uint32_t)MIC_DMA_BUF_LEN * 1000u,
               "버퍼 1개 = 64ms 정확히(불응기 버퍼 수 산술의 전제)");
 static_assert(AUTO_TRIG_WIN_BUFS == MIC_RING_SLOTS, "1차 창 = 링 32슬롯 = 65,536 B wire 계약");
+
+// 2차 multipart 버퍼 = uplink_common.h UPLINK_ENRICH_BODY_BYTES 와 같은 산식, 오디오만 연장 길이(파생값).
+constexpr size_t AUTO_TRIG_EBODY_BYTES =
+    AUTO_TRIG_REC_BYTES + ENRICH_SERVER_IMAGE_MAX_BYTES + UPLINK_MULTIPART_OVERHEAD_BYTES;
 #endif
 
 // ── ToF 최신 판정 공유 (tofTask → loop) — mic_uplink_main.cpp 와 동형 ──────
@@ -221,14 +240,14 @@ static void micEnrichTask(void* parameter) {
     // ★ 링버퍼를 다시 읽지 않고 **방금 변환한 슬롯**을 그대로 흘려 담는다. 링버퍼 길이(2.048초)와
     //   무관하므로 MIC_RING_SLOTS 확장이 필요 없다(6.5(c) 기각 후보 회피 = 1차 wire 계약 무접촉).
     // ★ take 클램프: n 이 MIC_DMA_BUF_LEN 보다 작은 반환이 와도 버퍼 너머를 쓰지 않는다.
-    //   샘플 수로 세므로 **실제 길이 = 정확히 ENRICH_AUDIO_SAMPLES** 이고 시간축이 짧아지지 않는다.
+    //   샘플 수로 세므로 **실제 길이 = 정확히 E2_REC_BYTES / 2 샘플** 이고 시간축이 짧아지지 않는다.
     if (g_recReq && g_rec != nullptr) {
       const size_t want = n * sizeof(int16_t);
-      const size_t room = ENRICH_AUDIO_BYTES - (size_t)g_recFilled;
+      const size_t room = E2_REC_BYTES - (size_t)g_recFilled;
       const size_t take = (want < room) ? want : room;
       memcpy(g_rec + g_recFilled, slot, take);
       g_recFilled += (uint32_t)take;
-      if ((size_t)g_recFilled >= ENRICH_AUDIO_BYTES) {
+      if ((size_t)g_recFilled >= E2_REC_BYTES) {
         g_recReq = false;
         __sync_synchronize();  // 위 memcpy 가 loop 에 보인 뒤에야 ready 가 보여야 한다
         g_recReady = true;
@@ -338,17 +357,18 @@ static void captureTofAtTrigger() {
 }
 
 // ── 2차 녹음 완료 대기 (loop 태스크 — 블로킹) ──────────────────────────────
-// 녹음은 트리거 시점에 이미 시작됐고 5.120초 뒤에 끝난다. 1차 왕복(p95 ≈ 1~2초)이 그 안에
-// 끝나므로 여기서 남은 시간만 기다린다. 상한은 **넉넉한 실패 탈출구**일 뿐 판정 기준이 아니다
+// 녹음은 트리거 시점에 이미 시작됐고 E2_REC_MS 뒤에 끝난다(수동 빌드 5.120초 · 자동 빌드 6.144초).
+// 1차 왕복(p95 ≈ 1~2초)이 그 안에 끝나므로 여기서 남은 시간만 기다린다.
+// 상한은 **넉넉한 실패 탈출구**일 뿐 판정 기준이 아니다
 // (i2s_read 가 죽으면 영영 차지 않는다 → 그 경우를 로그로 드러낸다).
 static bool waitRecording() {
-  const uint32_t deadline = millis() + ENRICH_AUDIO_MS * 3;
+  const uint32_t deadline = millis() + E2_REC_MS * 3;
   while (!g_recReady && (int32_t)(millis() - deadline) < 0) {
     delay(10);
   }
   if (!g_recReady) {
     Serial.printf("[e2] rec 미완 filled=%u/%u — 2차 미발송\n", (unsigned)g_recFilled,
-                  (unsigned)ENRICH_AUDIO_BYTES);
+                  (unsigned)E2_REC_BYTES);
     return false;
   }
   return true;
@@ -386,8 +406,8 @@ static bool sendEnrich(const char* id) {
     jpgLen = (uint32_t)fb->len;
     if (soi) {
       // ★ fb 를 쥔 구간을 memcpy 로만 채운다 — POST(수 초)는 fb 반환 뒤에 돈다(fb_count=2).
-      bodyLen = enrichBuildMultipart(g_ebody, UPLINK_ENRICH_BODY_BYTES, id, fb->buf, fb->len,
-                                     g_rec, ENRICH_AUDIO_BYTES);
+      bodyLen = enrichBuildMultipart(g_ebody, E2_EBODY_BYTES, id, fb->buf, fb->len,
+                                     g_rec, E2_REC_BYTES);
     }
     esp_camera_fb_return(fb);
   }
@@ -562,14 +582,14 @@ void setup() {
   // ★ 버퍼를 먼저 잡는다 — WiFi/I2S/카메라가 PSRAM 을 갉기 전에 실패를 드러내기 위함.
   g_snap  = uplinkAllocPsram(UPLINK_AUDIO_BYTES, "snapshot");
   g_body  = uplinkAllocPsram(UPLINK_AUDIO_BYTES + UPLINK_MULTIPART_OVERHEAD_BYTES, "multipart");
-  g_rec   = uplinkAllocPsram(ENRICH_AUDIO_BYTES, "enrich-rec");
-  g_ebody = uplinkAllocPsram(UPLINK_ENRICH_BODY_BYTES, "enrich-body");
+  g_rec   = uplinkAllocPsram(E2_REC_BYTES, "enrich-rec");
+  g_ebody = uplinkAllocPsram(E2_EBODY_BYTES, "enrich-body");
   if (g_snap == nullptr || g_body == nullptr || g_rec == nullptr || g_ebody == nullptr) {
     Serial.println("[BOOT] PSRAM 버퍼 실패 — 전송 비활성(적재만 수행)");
   }
-  // "[BOOT] rec=163840B 5120ms ebody=676864B" = 40B
-  Serial.printf("[BOOT] rec=%uB %ums ebody=%uB\n", (unsigned)ENRICH_AUDIO_BYTES,
-                (unsigned)ENRICH_AUDIO_MS, (unsigned)UPLINK_ENRICH_BODY_BYTES);
+  // "[BOOT] rec=163840B 5120ms ebody=676864B" = 40B (자동 빌드 = "rec=196608B 6144ms ebody=709632B", 같은 40B)
+  Serial.printf("[BOOT] rec=%uB %ums ebody=%uB\n", (unsigned)E2_REC_BYTES,
+                (unsigned)E2_REC_MS, (unsigned)E2_EBODY_BYTES);
 
   if (!uplinkConnectWifi()) {
     Serial.println("[BOOT] WiFi 실패 — 전송은 매번 생략된다(적재는 계속)");
