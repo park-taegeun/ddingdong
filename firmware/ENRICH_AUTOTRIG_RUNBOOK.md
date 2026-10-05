@@ -51,10 +51,14 @@ script -a -F ~/ddingdong-측정결과/$(date +%F)/enrich_autotrig/autotrig_runti
 ```
 [BOOT] ddingdong enrich autotrig (M5-c ⓑ 자동 + 수동 's')
 [BOOT] autotrig T=450 pre=8 refr=79buf mask=32/2
+[uplink] PSRAM alloc OK tag=enrich-rec bytes=196608
+[uplink] PSRAM alloc OK tag=enrich-body bytes=709632
+[BOOT] rec=196608B 6144ms ebody=709632B
 [BOOT] client_request_id nonce=xxxxxxxx
 [BOOT] micEnrichTask started (Core 0) — POST 는 loop 태스크
 ```
 `T=450 pre=8 refr=79buf mask=32/2`가 아니면 빌드가 잘못된 것이다. 정지하고 보고한다.
+`rec=196608B 6144ms ebody=709632B`가 아니면(예: `163840B 5120ms`) 2차 녹음 연장(12절)이 빌드에 안 들어간 것이다. 역시 정지하고 보고한다. `PSRAM alloc FAILED`가 나와도 정지한다(연장분 PSRAM +65,536 B는 빌드로 증명되지 않는다).
 
 ---
 
@@ -144,6 +148,7 @@ DEVICE_TOKEN=<TOKEN> DASHBOARD_TOKEN=<TOKEN> ./run_server.sh J 21_autosilence_J
 - 방법: 벨(또는 노크) 직후 바로 한 문장을 말한다(예: 「택배 문 앞에 두고 갑니다」). 자동 5회, 수동 5회(소리 끝 → `s` → 말).
 - 기록: 회차마다 자막 원문(개인정보가 없는 문장만)과 「문장 앞부분이 잘렸는가 Y/N」.
 - **녹음 시작 시점 · 길이 변경은 이 PR 범위 밖이다**(별도 결정, 이 PR의 코드 변경 0).
+- [2026-10-05 실측 n=3 · PoC-(67)] 노크 직후 「택배 왔습니다, 문 앞에 두고 갈게요」 → 앞 잘림 0/3 · **뒤 잘림 2/3**. 논증대로 소리가 녹음 앞을 차지했고, 잘린 쪽은 끝이었다. → 녹음 시작 시점은 그대로 두고 **길이만 연장**했다(12절). 연장 뒤 확인 절차 = 12-4.
 
 ---
 
@@ -151,7 +156,8 @@ DEVICE_TOKEN=<TOKEN> DASHBOARD_TOKEN=<TOKEN> ./run_server.sh J 21_autosilence_J
 
 - `i2s_read`가 실패하면 그 버퍼는 링에 적재되지 않고 순번도 늘지 않는다. 그러면 「인접 슬롯 = 시간상 인접」 가정이 깨진다(`gaps` 로그로 보임). 오프라인 파일엔 이런 틈이 없다.
 - 짧은 반환(n < 1024)이 오면 슬롯 꼬리에 이전 데이터가 남는다(기존 동작과 같음). V1이 그 꼬리를 포함한다.
-- 2차 녹음은 트리거 버퍼보다 약 128ms 늦게 시작한다(7절).
+- 2차 녹음은 트리거 버퍼보다 약 128ms 늦게 시작한다(7절). 길이는 이 빌드만 6.144초다(12절).
+- 연장분 1.024초만큼 녹음 중(= busy) 구간이 길어진다. 그 사이 큰 말소리 · 소음이 V1 > 450이면 `busy`로 계수된다(6절).
 - 처리 직후 최대 5초 동안 놓칠 수 있다(6절, 불응기 발화 기준).
 
 ---
@@ -161,7 +167,7 @@ DEVICE_TOKEN=<TOKEN> DASHBOARD_TOKEN=<TOKEN> ./run_server.sh J 21_autosilence_J
 ```
 c++ -std=c++17 -Wall -I firmware/include -o /tmp/att firmware/tools/auto_trig_test.cpp && /tmp/att
 ```
-기대 = `auto_trig_test: 12876 checks OK`. 이 중 12,070은 T6(스트림 전체 마스크 기준 구현 vs 이웃 3버퍼 V1 무작위 대조)이다.
+기대 = `auto_trig_test: 12888 checks OK`(2026-10-05 T12 +12, 이전 12,876). 이 중 12,070은 T6(스트림 전체 마스크 기준 구현 vs 이웃 3버퍼 V1 무작위 대조)이다.
 
 | NC | 변이 | 깨는 불변식 | 검출 |
 |---|---|---|---|
@@ -191,5 +197,61 @@ c++ -std=c++17 -Wall -I firmware/include -o /tmp/att firmware/tools/auto_trig_te
 
 - `env:enrich_uplink`의 컴파일 입력(전처리 출력 전후 동일, I9). 수동 `s` 경로 · 가드 · 로그(I2).
 - wire 계약: 1차 65,536 B · 2차 163,840 B · `/detect` · `/enrich` 필드 · 응답 파싱(I7).
+  - [2026-10-05 PoC-(67) 갱신] 2차 오디오는 **이 빌드만 196,608 B(6.144초)** 다(12절). `env:enrich_uplink`은 163,840 B 그대로. 1차 65,536 B는 두 빌드 모두 무변경.
 - mic_common · uplink_common · enrich_wire.h · noise_stats.h · tof_common · camera_common · trig_line.h.
 - T · 앞 버퍼 수 · 세션 상한 12 값. 2차 녹음 시작 시점 · 길이.
+
+---
+
+## 12. 2차 녹음 연장 — 96버퍼 6.144초 (2026-10-05 PoC-(67), 이 빌드 한정)
+
+> 사용자 결정 2026-10-05: 부스 기본 = 자동 + `s` 백업 + 짧은 대사. 개선 = **자동 빌드의 2차 녹음만 트리거 소리 길이만큼 연장**. 수동 빌드(`env:enrich_uplink`)는 5.120초 그대로. 서버 수정 0.
+
+### 12-1. 무엇이 바뀌나
+
+| 항목 | `env:enrich_uplink` | `env:enrich_autotrig` |
+|---|---|---|
+| 2차 녹음 | 80버퍼 · 163,840 B · 5.120초 | **96버퍼 · 196,608 B · 6.144초**(자동 · 수동 `s` 공통 단일 길이) |
+| 2차 multipart 버퍼 | 676,864 B | 709,632 B (같은 산식, 오디오만 연장) |
+| `waitRecording` 상한 | 15,360ms | 18,432ms (녹음 길이 × 3 — 실패 탈출구) |
+| 서버 상한 대비 | 51.2% | 61.4% (`AUDIO_MAX_BYTES` 320,000 B) |
+
+단일 출처 = `auto_trig.h` `AUTO_TRIG_REC_EXTRA_BUFS`(16). 바이트 · ms · multipart 크기는 전부 그 값과 기존 계약 상수에서 파생된다. 녹음 시작 시점(수락 다음 슬롯 k+2, pre 0)은 그대로다.
+
+### 12-2. 왜 16인가 (근거유형 = 실측 + 코드 읽기)
+
+- 소리 길이 L = V1 > 450인 첫 버퍼부터, 그 뒤 3초 안에서 V1 > 450인 마지막 버퍼까지의 버퍼 수. 입력 = 2026-09-29 spisafe post 17 · 노크 6유닛 post 98(형식 불일치 0 · 미검출 1 = labdesk). 원본 = `~/ddingdong-측정결과/2026-10-05/reclen/reclen_out.txt`.
+- p90(정렬 후 ceil(0.9n)번째) = spisafe 18버퍼(1,152ms) · 노크 전체 13버퍼(832ms) → Lp = 18.
+- 녹음은 k+2부터라(d = 2) 녹음에 들어가는 소리 ≈ Lp − d = 16버퍼 → 규칙 「≤ 16 → 16 · ≤ 24 → 24 · 초과 → 정지」의 16. **경계값에 정확히 걸렸다**: 다시 측정해 Lp가 19 이상이면 24로 바뀌어야 하므로 재판정 대상이다.
+- 한계: 녹음 거리 · 음량은 세션마다 다르다(크게 녹음될수록 L이 길다). 부스 · 집 차임 거리(1.4m 이내)와 같다는 보장은 없다.
+
+### 12-3. 예산 영향 (근거유형 = 논증)
+
+| 기준 | 지금 | +1.024초 | 15초 대비 |
+|---|---|---|---|
+| 7.7(g) `detected_at → secondary_sent_at` 9,269ms | 61.8% | 10,293ms | 68.6% |
+| 〃 8,280ms | 55.2% | 9,304ms | 62.0% |
+| 〃 13,049ms | 87.0% | 14,073ms | **93.8%** |
+
+보드 기준 「트리거 수락 줄 → `e http=` 줄」(2026-10-05 실측, 위와 정의가 다르다) = 10.43 / 10.41 / 11.04초 → 11.45 / 11.44 / 12.06초.
+연장분은 녹음 대기로만 늘어난다(1차 POST는 녹음 중에 끝난다). 13,049ms 건은 15초 예산까지 여유가 0.93초뿐이다 → 재판정 트리거 ①(예산 초과 관측)을 본다.
+
+### 12-4. ④런타임 확인 절차 (학부생 몫 — 이 PR 머지 전)
+
+1. 이 브랜치로 `env:enrich_autotrig` 플래시 → 부팅 줄 `[BOOT] rec=196608B 6144ms ebody=709632B` 확인(2절).
+2. 서버 = `ENRICH_UPLINK_RUNBOOK.md` 1절(실 STT · 실카카오 — 3절 run_server.sh는 자막이 안 나온다).
+3. 노크 직후 · 초인종 직후 각각 3회, 긴 대사 「택배 왔습니다, 문 앞에 두고 갈게요」.
+4. 기록: 회차마다 카톡 자막이 문장 끝까지 다 나왔는가(Y/N) · `[e2a] k=… ok` 줄 시각 · `[e2] e http=… rtt=` 줄 시각. 「e 줄 시각 − rtt − 수락 줄 시각」이 약 6.66초(= 6.144 + 약 0.52)면 녹음 길이가 실제로 늘어난 것이다(연장 전 실측 5.64초).
+5. `[e2] rec 미완`이 한 번이라도 나오면 정지하고 보고한다.
+
+### 12-5. 녹음 수신기는 `env:enrich_uplink` 전용이다
+
+`server/tools/record_receiver.py`는 2차 오디오가 163,840 B가 **아니면** 저장을 거부한다(`/enrich 거부: … ≠ 163840 B`). 이 빌드(196,608 B)로 직접녹음하면 post가 전부 거부된다. 직접녹음은 `env:enrich_uplink`으로 한다(수신기 무변경).
+
+### 12-6. 검증 (③까지 — 이 PR 세션)
+
+| NC | 변이 | 깨는 불변식 | 검출 |
+|---|---|---|---|
+| NC1 | `AUTO_TRIG_REC_EXTRA_BUFS` 16 → 77(321,536 B) | I-B(연장) 서버 상한 | 자동 빌드 컴파일 실패(static_assert) + 호스트 컴파일 실패(같은 순수 헤더) |
+| NC2 | 연장분을 `#else`(수동 빌드) 별칭으로 새게 | I9 | enrich_uplink 증분 빌드는 SUCCESS · 전처리 md5가 갈림 |
+| NC3 | 자동 빌드 `waitRecording`이 수동 ms(`ENRICH_AUDIO_MS`) 사용 | 실제 길이 사용 | **도달 불가** — 빌드 · 호스트 · I9 전부 통과. 상한(×3)은 정상 경로에서 닿지 않아 ④런타임에서도 i2s 정지 때만 차이가 난다. 대역물 = 부팅 `rec=` 줄 · `rec 미완` 부재 · 리뷰 grep(`ENRICH_AUDIO_BYTES` · `ENRICH_AUDIO_MS` · `UPLINK_ENRICH_BODY_BYTES`가 `enrich_uplink_main.cpp`의 주석 아닌 줄 중 `#else` 별칭 정의 3줄 밖에 0건) |
