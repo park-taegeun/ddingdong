@@ -89,6 +89,7 @@ DEVICE_TOKEN=<TOKEN> DASHBOARD_TOKEN=<TOKEN> ./run_server.sh J 21_autosilence_J
 
 - 수락된 자동 건의 이후 흐름(`[tof][e2]` · `[e2] id=e2a-…` · `d http=` · `gate=` · `cam` · `e http=`)은 수동과 같은 줄이다.
 - **불응기에 막힌 버퍼는 로그를 남기지 않는다**(발화 자체가 없다). 「친 횟수 대비 `[e2a] k=` 줄 수」로만 보인다(6절).
+- 기기 heartbeat `[hb]` 줄(별도 태스크 — loop 가 내지 않는다)과 그 ④런타임 절차는 `ENRICH_UPLINK_RUNBOOK.md` 10절.
 
 ---
 
