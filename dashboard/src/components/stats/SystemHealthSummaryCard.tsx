@@ -18,6 +18,7 @@ interface HeaderState {
 }
 
 // device_status → 헤더 톤(정상/경고/중립). 색 + 아이콘 + 문구 동시 전달.
+// description 안의 \n은 아래 설명 <p>의 whitespace-pre-line과 짝 — 둘 중 하나만 지우면 줄바꿈이 사라진다.
 const HEADER_STATE: Record<DeviceStatus, HeaderState> = {
   online: {
     icon: ShieldCheck,
@@ -29,7 +30,7 @@ const HEADER_STATE: Record<DeviceStatus, HeaderState> = {
   offline: {
     icon: TriangleAlert,
     title: "기기 연결을 확인해 주세요",
-    description: "현관 기기가 응답하지 않아요. 전원과 네트워크를 확인해 주세요.",
+    description: "현관 기기가 응답하지 않아요.\n전원과 네트워크를 확인해 주세요.",
     iconClass: "text-warning",
     iconBgClass: "bg-warning/10",
   },
@@ -114,7 +115,7 @@ export function SystemHealthSummaryCard({ health }: { health: SystemHealth }) {
         </span>
         <div className="space-y-1">
           <p className="text-h3 font-semibold">{header.title}</p>
-          <p className="max-w-sm text-body text-foreground-secondary">
+          <p className="max-w-sm whitespace-pre-line text-body text-foreground-secondary">
             {header.description}
           </p>
         </div>
