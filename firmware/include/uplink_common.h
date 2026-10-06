@@ -157,3 +157,16 @@ constexpr size_t UPLINK_ENRICH_BODY_BYTES =
 // ★ device_id 를 싣지 않는다 — /enrich 계약상 불요다(6.5(b)).
 UplinkResult uplinkPostEnrichBody(const char* host, uint16_t port,
                                   const uint8_t* body, size_t bodyLen);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 기기 heartbeat(`/heartbeat`) — **형제 함수 additive**
+// ★ 위 1차 · 2차 구간(상수·시그니처·본문)은 **1바이트도 바꾸지 않았다**. 아래는 순수 추가분이다.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#include "heartbeat_wire.h"   // 주기 · 타임아웃 · 본문 조립 · 보고 여부 판정(순수 계층, 호스트 검산 대상)
+
+// POST /api/v1/heartbeat. **조립이 끝난** JSON 본문(hbBuildJson)을 그대로 보낸다.
+// ★ 재시도하지 않는다 — 다음 주기 보고가 곧 다음 시도다. 상태 코드를 그대로 돌려준다(204 판정은 호출부 로그로).
+// ★ device_id 는 본문 안에 있다(호출부가 UPLINK_DEVICE_ID 를 싣는다 — 서버 heartbeat 는 rate limit 을 부르지 않으므로
+//   /detect 와 같은 키여도 429 를 만들지 않는다).
+UplinkResult uplinkPostHeartbeat(const char* host, uint16_t port, const char* json, size_t len);

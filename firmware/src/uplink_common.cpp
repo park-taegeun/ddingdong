@@ -226,3 +226,41 @@ UplinkResult uplinkPostEnrichBody(const char* host, uint16_t port,
   http.end();
   return result;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 기기 heartbeat(`/heartbeat`) — 형제 함수 additive
+// ★ 위 1차 · 2차 함수 6개는 **1바이트도 바꾸지 않았다**. 아래는 순수 추가분이다.
+//   본문 조립은 heartbeat_wire.h 의 순수 함수(호스트 검산 대상)에 있고, 여기는 전송만 한다.
+// ═══════════════════════════════════════════════════════════════════════════
+
+UplinkResult uplinkPostHeartbeat(const char* host, uint16_t port, const char* json, size_t len) {
+  UplinkResult result{-1, 0};
+  if (json == nullptr || len == 0) {
+    return result;  // 조립 실패분은 호출부가 이미 로그를 남겼다
+  }
+
+  WiFiClient client;
+  HTTPClient http;
+  http.setConnectTimeout(static_cast<int32_t>(HB_CONNECT_TIMEOUT_MS));
+  http.setTimeout(static_cast<uint16_t>(HB_HTTP_TIMEOUT_MS));
+  const String url = String("http://") + host + ":" + String(port) + "/api/v1/heartbeat";
+  if (!http.begin(client, url)) {
+    Serial.println("[uplink] heartbeat HTTPClient begin() failed");
+    return result;
+  }
+  http.addHeader("Content-Type", "application/json");
+  // 카테고리 6.1 Device Bearer Token — /detect 와 같은 토큰(@device_auth 동일 데코레이터).
+  http.addHeader("Authorization", String("Bearer ") + SPIKE_DEVICE_TOKEN);
+
+  const int64_t t0 = esp_timer_get_time();
+  const int status = http.POST(reinterpret_cast<uint8_t*>(const_cast<char*>(json)), len);
+  const int64_t tEnd = esp_timer_get_time();
+
+  result.httpStatus  = status;
+  result.roundTripMs = static_cast<uint32_t>((tEnd - t0) / 1000);
+
+  // 본문을 읽지 않는다: 성공 204 엔 본문이 없고 Content-Length 도 없을 수 있다 — 그때 getString() 은
+  // 길이 −1 로 보고 연결이 닫히거나 무응답 타임아웃이 날 때까지 읽는다(2.0.17 실물). 소켓은 client 소멸 때 닫힌다.
+  http.end();
+  return result;
+}
