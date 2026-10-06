@@ -48,6 +48,20 @@ CAPTURE_OPAQUE_BYTES = 16
 # ★ 11주차 교체 지점: 실 호스팅 이관 시 만료 정책 재확정.
 CAPTURE_TTL = timedelta(hours=72)
 
+# ── 기기 heartbeat (POST /heartbeat → /stats system_health) ────────────────
+# 보드 보고 주기 30초는 펌웨어 상수다(서버엔 없다). 아래 두 값은 그 주기와의 관계로 잡았다.
+# 판정은 timedelta 원값으로 한다 — 화면의 「방금 전 / N초 전」 해상도가 판정에 끼지 않는다.
+
+# 꺼짐 판정 = 마지막 heartbeat 뒤 경과가 90초를 넘으면 offline(정확히 90초는 online). ★ 잠정.
+# 산술: 보드 보고 30초 × 3회 — 연속 2회 유실까지는 켜짐을 유지한다.
+# 재판정 트리거: 부스 리허설에서 헛 「꺼짐」 관측 / 보드 보고 주기 변경.
+DEVICE_OFFLINE_AFTER = timedelta(seconds=90)
+
+# 신호 「강함」 하한 −70 dBm(이상 = strong, 미만 = weak, 꺼짐이면 none). ★ 잠정.
+# 근거: 일반적인 Wi-Fi 경계 근사(−70 dBm 부근부터 연결이 불안정해진다는 통상 기준). 보드 실측 0.
+# 재판정 트리거: 부스 리허설에서 신호 표시와 실제 연결 상태의 어긋남 관측 / 보드 · 안테나 교체.
+DEVICE_SIGNAL_STRONG_MIN_RSSI = -70
+
 # 한국 표준시 (KST, UTC+9). DB 는 naive UTC 저장, 응답 직렬화 시 KST 변환.
 KST = timezone(timedelta(hours=9))
 

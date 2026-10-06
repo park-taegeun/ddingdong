@@ -45,7 +45,8 @@ export interface SkipReasonCounts {
 }
 
 export interface SystemHealth {
-  device_last_seen_at: string
+  // 마지막 heartbeat 시각. null = heartbeat 기록 없음(서버는 이때 offline · none 을 낸다).
+  device_last_seen_at: string | null
   device_status: DeviceStatus
   signal_strength: SignalStrength
   kakao_token_status: TokenStatus

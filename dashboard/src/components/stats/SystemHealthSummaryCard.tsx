@@ -22,7 +22,7 @@ const HEADER_STATE: Record<DeviceStatus, HeaderState> = {
   online: {
     icon: ShieldCheck,
     title: "시스템이 정상 작동 중이에요",
-    description: "현관에서 소리가 감지되면 바로 알려드릴게요.",
+    description: "현관 기기가 소리를 듣고 있어요.",
     iconClass: "text-success",
     iconBgClass: "bg-success/10",
   },
@@ -86,8 +86,12 @@ export function SystemHealthSummaryCard({ health }: { health: SystemHealth }) {
     },
     {
       icon: Clock,
-      label: "마지막 감지",
-      value: formatRelativeTime(health.device_last_seen_at),
+      label: "마지막 연결",
+      // null = heartbeat 기록 없음. format.ts 는 string 계약 그대로 두고 여기서 가른다.
+      value:
+        health.device_last_seen_at === null
+          ? "기록 없음"
+          : formatRelativeTime(health.device_last_seen_at),
     },
     {
       icon: Wifi,

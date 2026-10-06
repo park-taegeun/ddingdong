@@ -205,3 +205,20 @@ class RegistrationFailure(db.Model):
     judged: Mapped[bool]
     error: Mapped[str]
     created_at: Mapped[datetime]  # naive UTC
+
+
+class DeviceHeartbeat(db.Model):
+    """기기 heartbeat (기기당 1행 — 새 보고가 그 행을 덮어쓴다. KakaoToken 단일 행과 같은 결).
+
+    보고마다 행을 쌓지 않는다. /stats 의 기기 상태 · 신호 · 마지막 연결은 이 표만 본다
+    (감지 행 무관). ★ 새 테이블로만 추가한다(RegistrationState 주석과 같은 이유).
+    """
+
+    __tablename__ = "device_heartbeats"
+
+    device_id: Mapped[str] = mapped_column(primary_key=True)
+    last_seen_at: Mapped[datetime]  # naive UTC, 서버 수신 시각(보드 시계를 믿지 않는다)
+    rssi: Mapped[int]  # dBm
+    uptime_s: Mapped[int]
+    fw: Mapped[str]
+    enrich_sent: Mapped[int]
