@@ -1,11 +1,13 @@
-"""API v1 엔드포인트 4종 (카테고리 6.1).
+"""API v1 엔드포인트 5종 (카테고리 6.1).
 
   POST /api/v1/detect         ESP32 1차: multipart 오디오 수신+디코딩 + mock 추론 + notification 저장 (Device Token)
   POST /api/v1/enrich         ESP32 2차: 사진 실저장 + STT(CSR, env 게이트) + 카카오 2차 발송 (Device Token)
+  POST /api/v1/heartbeat      ESP32 생존 보고: 기기당 1행 덮어쓰기, rate limit 미적용 (Device Token)
   GET  /api/v1/notifications  대시보드 폴링: cursor pagination (Dashboard Token)
   GET  /api/v1/stats          대시보드 폴링: period=today 집계 (Dashboard Token)
 """
 
+import re
 import time
 from datetime import timedelta, timezone
 
@@ -28,7 +30,9 @@ from .constants import (
     AUDIO_FILE_FIELD,
     AUDIO_MAX_BYTES,
     DEFAULT_PAGE_LIMIT,
+    DEVICE_OFFLINE_AFTER,
     DEVICE_RATE_LIMIT_SECONDS,
+    DEVICE_SIGNAL_STRONG_MIN_RSSI,
     IMAGE_FILE_FIELD,
     IMAGE_MAX_BYTES,
     KAKAO_REFRESH_MARGIN,
@@ -41,7 +45,7 @@ from .constants import (
 )
 from .errors import ApiError
 from .extensions import db
-from .models import IdempotencyKey, KakaoToken, Notification
+from .models import DeviceHeartbeat, IdempotencyKey, KakaoToken, Notification
 from .utils import (
     _apply_prediction_policy,
     kst_now_iso,
@@ -478,6 +482,54 @@ def _validate_image_part(image_file):
     return image_bytes
 
 
+# ── POST /api/v1/heartbeat ───────────────────────────────────────────────
+# fw = 영숫자 · 밑줄 1 ~ 32자. \w 는 유니코드 글자까지 받으므로 클래스를 명시한다.
+_FW_PATTERN = re.compile(r"[A-Za-z0-9_]{1,32}")
+
+
+@bp.post("/heartbeat")
+@device_auth
+def heartbeat():
+    # rate limit 을 부르지 않는다 — /detect 와 같은 device_id 키를 공유하면 heartbeat
+    # 직후 5초 안의 초인종이 429 로 막힌다.
+    # 필드 5개 전부 필수 · 기본값으로 채우지 않는다(빠지면 400).
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise ApiError(400, "bad_request", "JSON 객체 본문이 필요합니다.")
+
+    device_id = body.get("device_id")
+    # /detect 와 같은 규칙(필수 · 빈 문자열 금지). JSON 이라 문자열 여부를 함께 본다.
+    if not isinstance(device_id, str) or not device_id:
+        raise ApiError(400, "bad_request", "device_id 는 필수입니다.")
+    rssi = _heartbeat_int(body, "rssi", -127, 0)
+    uptime_s = _heartbeat_int(body, "uptime_s", 0)
+    enrich_sent = _heartbeat_int(body, "enrich_sent", 0)
+    fw = body.get("fw")
+    if not isinstance(fw, str) or not _FW_PATTERN.fullmatch(fw):
+        raise ApiError(400, "bad_request", "fw 는 영숫자와 밑줄 1 ~ 32자여야 합니다.")
+
+    row = db.session.get(DeviceHeartbeat, device_id)
+    if row is None:
+        row = DeviceHeartbeat(device_id=device_id)
+        db.session.add(row)
+    row.last_seen_at = utc_now()
+    row.rssi = rssi
+    row.uptime_s = uptime_s
+    row.fw = fw
+    row.enrich_sent = enrich_sent
+    db.session.commit()
+    return "", 204
+
+
+def _heartbeat_int(body, key, low, high=None):
+    """정수 필드 엄격 검증. JSON bool 은 파이썬에서 int 하위형이라 type 으로 직접 거른다."""
+    value = body.get(key)
+    if type(value) is not int or value < low or (high is not None and value > high):
+        bound = f"{low} ~ {high}" if high is not None else f"{low} 이상"
+        raise ApiError(400, "bad_request", f"{key} 는 정수({bound})여야 합니다.")
+    return value
+
+
 # ── GET /api/v1/notifications ────────────────────────────────────────────
 @bp.get("/notifications")
 @dashboard_auth
@@ -574,6 +626,22 @@ def _kakao_token_health(row, now_utc):
     return "valid", minutes
 
 
+def _device_health(row, now_utc):
+    """가장 최근 heartbeat 행 → (device_status, signal_strength, device_last_seen_at).
+
+    행이 없으면 모르는 것이므로 정상으로 위장하지 않는다 → offline · none · null.
+    경과 판정은 timedelta 원값(DEVICE_OFFLINE_AFTER 이하 = online). 꺼짐이면 마지막 rssi 가
+    아무리 좋아도 신호는 none 이다 — 지금 신호가 아니라 지난 값이기 때문이다.
+    """
+    if row is None:
+        return "offline", "none", None
+    last_seen = to_kst_iso(row.last_seen_at)
+    if now_utc - row.last_seen_at > DEVICE_OFFLINE_AFTER:
+        return "offline", "none", last_seen
+    signal = "strong" if row.rssi >= DEVICE_SIGNAL_STRONG_MIN_RSSI else "weak"
+    return "online", signal, last_seen
+
+
 def _build_stats(rows, start_kst, end_kst):
     """오늘 알림 목록 → StatsResponse(stats.ts). 단일 쿼리 결과로 파이썬 집계(N+1 없음)."""
     total = len(rows)
@@ -616,11 +684,17 @@ def _build_stats(rows, start_kst, end_kst):
         buckets[hour] += 1
     hourly_distribution = [{"hour": h, "count": c} for h, c in buckets.items()]
 
-    last_seen = max((n.detected_at for n in rows), default=None)
-
     # 카카오 토큰 상태 = DB 단일 행(SSoT) 실조회. 읽기 전용(get 만, add/commit 없음).
     kakao_status, kakao_minutes = _kakao_token_health(
         db.session.get(KakaoToken, KakaoToken.SINGLETON_ID), utc_now()
+    )
+
+    # 기기 상태 = heartbeat 표만 본다(감지 행 무관). 읽기 전용(조회만, add/commit 없음).
+    device_status, signal_strength, device_last_seen_at = _device_health(
+        db.session.scalars(
+            select(DeviceHeartbeat).order_by(DeviceHeartbeat.last_seen_at.desc()).limit(1)
+        ).first(),
+        utc_now(),
     )
 
     # 알림 지연 계측 (ms) — detected_at → 발송까지. 목표: 1차 5초 / 2차 15초 이내.
@@ -674,17 +748,13 @@ def _build_stats(rows, start_kst, end_kst):
         # 발송 타임스탬프(detected_at↔primary/secondary_sent_at)에서 실계측 (위 집계)
         "timing_metrics": timing_metrics,
         "skip_reasons": skip_reasons,
-        # system_health: device_last_seen + kakao_token_* + clova_api_status 만 실데이터.
-        # 나머지(device_status/signal_strength/db_status)는 아직 mock.
-        # device_status/signal_strength = 기기 liveness·신호(센서 heartbeat) → 실연동 11주차.
-        # 감지 0건(조용한 하루)에도 기기는 살아있으므로 detection 유무와 분리해 online mock 고정
-        # (빈 상태 "시스템 정상" 안심 카드 전제). 11주차에 실제 heartbeat 로 대체.
+        # system_health: db_status 만 아직 고정값이고 나머지는 실데이터.
+        # device_* · signal_strength = heartbeat 표(_device_health), kakao_token_* = 토큰 행,
+        # clova_api_status = env 게이트. device_last_seen_at = 마지막 heartbeat(없으면 null).
         "system_health": {
-            "device_last_seen_at": kst_now_iso()
-            if last_seen is None
-            else to_kst_iso(last_seen),
-            "device_status": "online",
-            "signal_strength": "strong",
+            "device_last_seen_at": device_last_seen_at,
+            "device_status": device_status,
+            "signal_strength": signal_strength,
             "kakao_token_status": kakao_status,
             "kakao_token_expires_in_minutes": kakao_minutes,
             # env 게이트(stt.is_real_mode)만 본다 — 실 CSR 핑 금지(30.9 미규명 301건
