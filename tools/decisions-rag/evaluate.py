@@ -418,6 +418,7 @@ def score(verdicts, key):
             "over_refusal": sum(k["type"] != NO_ANSWER and k["refused"] for k in ks),
             "evidence_valid": [sum(ev), len(ev)],
             "reversal_trap_auto": sum(bool(k["trap_in_answer"]) for k in ks),
+            # reversal 문항의 「오답」 판정 수(거절 · 다른 틀린 값 포함) — PREREG 「번복 오답」(폐기안 채택 수)과 다르다
             "reversal_wrong": sum(k["type"] == "reversal" and k["verdict"] == "오답" for k in ks),
             "retrieval_sec_mean": sum(k["retrieval_sec"] for k in ks) / len(ks),
             "answer_sec_mean": sum(k["answer_sec"] for k in ks) / len(ks),
@@ -449,10 +450,10 @@ def score_table(results):
     for s in results:
         for scope, c in s["verdicts"].items():
             lines.append(f"| {s['condition']} | {scope} | {c.get('정답', 0)} | {c.get('부분', 0)} | {c.get('오답', 0)} |")
-    lines += ["", "| 조건 | 환각 | 과잉 거절 | 근거 유효 | 번복 오답(자동 · 채점) | 호출 실패 | 형식 오류 | 검색 초(평균 · 중앙값)"
-              " | 답변 초(평균 · 중앙값) | 토큰(입력 · 출력, 추정) | 달러(추정) |", "|---|---|---|---|---|---|---|---|---|---|---|"]
+    lines += ["", "| 조건 | 환각 | 과잉 거절 | 근거 유효 | 번복 앵커(자동) | reversal 오답(채점) | 호출 실패 | 형식 오류 | 검색 초(평균 · 중앙값)"
+              " | 답변 초(평균 · 중앙값) | 토큰(입력 · 출력, 추정) | 달러(추정) |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     lines += [f"| {s['condition']} | {s['hallucination']} | {s['over_refusal']} | {s['evidence_valid'][0]} / {s['evidence_valid'][1]}"
-              f" | {s['reversal_trap_auto']} · {s['reversal_wrong']} | {s['call_failed']} | {s['format_error']}"
+              f" | {s['reversal_trap_auto']} | {s['reversal_wrong']} | {s['call_failed']} | {s['format_error']}"
               f" | {s['retrieval_sec_mean']:.3f} · {s['retrieval_sec_median']:.3f} | {s['answer_sec_mean']:.3f} · {s['answer_sec_median']:.3f}"
               f" | {s['prompt_tokens']} · {s['completion_tokens']} | {s['cost_usd_est']:.4f} |" for s in results]
     return "\n".join(lines)
