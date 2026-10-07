@@ -17,7 +17,15 @@
   # 채점 일관성 — 같은 문항 · 같은 답(앞뒤 공백 제거) · 같은 거절 · 같은 호출 실패 여부인 행끼리 판정이 같은지
   python -B evaluate.py consistency --sheets <a.csv,b.csv> --keys <a/key.jsonl,b/key.jsonl> --out-dir <repo 밖 빈 폴더>
 
-조건 = bm25 · random · dense · hybrid · gold_removed:<bm25|dense|hybrid>. dense · hybrid는 --persist-dir 인덱스가 필요하다.
+  # v2 채택 판정(eval/PREREG_v2.md) — 1단계 = v1 검색 후보들 · 2단계 검색 = H1 검색 후보 1개
+  python -B evaluate.py adopt-v2 --stage <1|2> --base-retrieval <json> --base-cond dense \
+      --cands <E3,E4,E5> --cand-retrievals <json,...> --cand-conds <hyde,rewrite,dense> --out-dir <repo 밖 빈 폴더>
+  # v2 2단계 답변 조건 — score summary.json 한 파일에서 실행 3개(후보 v1 · 후보 H1 · 기준선 H1)
+  python -B evaluate.py adopt-v2-answers --score <json> --cand-v1-run <이름> --cand-h1-run <이름> --base-h1-run <이름> --out-dir <…>
+
+조건 = bm25 · random · dense · hybrid · hyde · rewrite · gold_removed:<bm25|dense|hybrid|hyde|rewrite>.
+dense · hybrid · hyde · rewrite는 --persist-dir 인덱스가 필요하다. hyde · rewrite 생성문은 retrieval이 만들어
+<out-dir>/generated.jsonl에 남기고(--max-usd 필요), answer는 --gen-cache로 그 파일만 읽는다(다시 생성 0).
 """
 import argparse
 import csv
@@ -42,8 +50,9 @@ EVAL_KEYS = ("name", "eval_set", "eval_set_sha256", "hit_k", "mrr_cutoff", "answ
 TOKENIZER = "word_ascii+hangul_bigram_v1"
 TYPES = ("fact", "identifier", "reversal", "not_in_doc", "false_premise")
 NO_ANSWER = "not_in_doc"                       # 검색 지표에서 뺀다
-CONDITIONS = ("bm25", "random", "dense", "hybrid", "gold_removed:bm25", "gold_removed:dense", "gold_removed:hybrid")
-NEEDS_INDEX = ("dense", "hybrid")
+CONDITIONS = ("bm25", "random", "dense", "hybrid", "hyde", "rewrite", "gold_removed:bm25", "gold_removed:dense",
+              "gold_removed:hybrid", "gold_removed:hyde", "gold_removed:rewrite")
+NEEDS_INDEX = ("dense", "hybrid", "hyde", "rewrite")
 VERDICTS = ("정답", "부분", "오답")
 SHEET_COLS = ("시트 번호", "질문", "기대 답", "모델 답", "거절 여부", "판정", "메모")
 
@@ -142,18 +151,31 @@ def random_retriever(chunks, ecfg):
     return search
 
 
-def dense_retriever(chunks, cfg, commit, persist_dir, allow_mock):
+def open_dense_index(cfg, commit, persist_dir, allow_mock):
     persist = common.check_outside_repo(persist_dir)
     manifest = query.load_manifest(persist, cfg)
     if common.resolve_commit(manifest["commit"]) != commit:
         raise ValueError(f"dense 인덱스 커밋 {manifest['commit'][:7]} ≠ 평가 커밋 {commit[:7]}")
     if manifest["embedder"] == "mock" and not allow_mock:
         raise ValueError("가짜 임베딩 인덱스로 답하지 않는다")
-    index, _ = query.open_index(persist, manifest)
+    return query.open_index(persist, manifest)[0]
+
+
+def dense_retriever(chunks, cfg, commit, persist_dir, allow_mock):
+    return dense_search(open_dense_index(cfg, commit, persist_dir, allow_mock), chunks)
+
+
+def dense_search(index, chunks, expand=None):
+    """expand(row) = 생성문 → 검색 벡터 = 원 질문 임베딩과 생성문 임베딩의 평균.
+    custom_embedding_strs가 둘이면 llama-index 리트리버가 get_agg_embedding_from_queries → mean_agg
+    (np.array(...).mean(axis=0) — 가중치 없는 산술 평균, 재정규화 없음)로 합친다(설치 0.14.25 소스 확인)."""
+    from llama_index.core.schema import QueryBundle
 
     def search(row, k, exclude=frozenset()):
+        q = row["question"]
+        bundle = QueryBundle(q, custom_embedding_strs=[q, expand(row)] if expand else None)
         # 벡터 유사도는 다른 문서와 무관 → 넉넉히 받아 뺀 청크를 거르면 「뺀 인덱스」 검색과 같다.
-        hits = index.as_retriever(similarity_top_k=k + len(exclude)).retrieve(row["question"])
+        hits = index.as_retriever(similarity_top_k=k + len(exclude)).retrieve(bundle)
         out = []
         for h in hits:
             i = int(h.node.node_id[1:6])                                # build_nodes의 id = c{순번:05d}-{해시}
@@ -186,7 +208,100 @@ def hybrid_retriever(dense, bm25, ecfg):
     return search
 
 
-def prepare(a, need_dense_mock_ok):
+# ---------- 질의 확장(hyde · rewrite) — eval/PREREG_v2.md 「실험」 · 「프롬프트」 절 ----------
+
+# 원문 고정 — PREREG_v2 코드 블록과 문자 단위로 같아야 한다(테스트가 대조).
+GEN_PROMPTS = {
+    "hyde": (
+        "너는 현관에 붙이는 소리 분류 알림 기기(ESP32 보드 · Flask 서버 · 카카오톡 알림) 프로젝트의 결정 기록 문서 decisions.md를 쓰는 사람이다.\n"
+        "아래 질문의 답이 들어 있을 법한 문서 문단을 한국어 2~4문장으로 써라. 실제 값을 모르면 이 문서에 나올 법한 용어와 형식으로 쓴다. 문단만 출력한다.\n"
+        "\n"
+        "질문: {question}"),
+    "rewrite": (
+        "아래는 decisions.md의 절 · 소절 제목 목록이다.\n"
+        "사용자의 질문을 이 문서가 쓰는 용어로 바꾼 검색 질의 한 줄로 써라. 관련 있어 보이는 제목의 용어 · 식별자를 넣는다. 질의만 출력한다.\n"
+        "\n"
+        "제목 목록:\n"
+        "{headings}\n"
+        "\n"
+        "질문: {question}"),
+}
+HEADING_CUT = 80
+GEN_FILE = "generated.jsonl"
+
+
+def heading_list(raw):
+    """`##` · `###` 제목 줄 + 소절 제목(`**(x) …**`)을 문서 순서대로, 각 80자에서 자른 것.
+    판정은 청커 정규식 · 코드 블록 규칙과 같다 — 코드 블록 안의 `## …`(템플릿 예시)는 제목이 아니다."""
+    out, in_fence = [], False
+    for line in raw.split("\n"):
+        if chunker.FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        m = chunker.HEADING_RE.match(line)
+        if not in_fence and ((m and len(m.group(1)) in (2, 3)) or chunker.SUBSECTION_RE.match(line)):
+            out.append(line[:HEADING_CUT])
+    return out
+
+
+def gen_prompts(rows, kinds, headings):
+    """→ [(종류, 문항, 프롬프트)]. 문항마다 한 번 — gold_removed 변형도 같은 생성문을 쓴다."""
+    text = "\n".join(headings)
+    return [(kind, r, GEN_PROMPTS[kind].format(question=r["question"], headings=text)) for kind in kinds for r in rows]
+
+
+def sha(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def generate(plans, complete, path, prices, model, max_usd, enc):
+    """예상 비용 > max_usd면 호출 없이 실패 → 생성 → 한 줄씩 path에 기록(중간 실패에도 쓴 호출이 남는다)."""
+    est = sum(common.usd(prices, model, input=len(enc.encode(p)), output=EST_COMPLETION_TOKENS) for _, _, p in plans)
+    print(f"생성 {len(plans)}회 예상 비용 ${est:.4f} (입력 = 로컬 tiktoken 추정 · 캐시 할인 미반영 · 출력 {EST_COMPLETION_TOKENS}토큰/회 가정)"
+          f" · 상한 ${max_usd:.2f}")
+    if est > max_usd:
+        raise ValueError(f"예상 비용 ${est:.4f} > 상한 ${max_usd:.2f} — 호출 없이 중단")
+    gens = defaultdict(dict)
+    with open(path, "x", encoding="utf-8") as f:
+        for kind, r, prompt in plans:
+            text, n_in, n_cached, n_out = complete(prompt)
+            rec = {"kind": kind, "qid": r["qid"], "question_sha256": sha(r["question"]), "text": text,
+                   "prompt_tokens": n_in, "cached_tokens": n_cached, "completion_tokens": n_out,
+                   "cost_usd": common.usd(prices, model, input=n_in - n_cached, cached_input=n_cached, output=n_out)}
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            f.flush()
+            gens[kind][r["qid"]] = rec
+    return gens
+
+
+def load_generations(path, rows, kinds):
+    """검색 평가가 남긴 생성문만 쓴다. 필요한 (종류 · 문항)이 없거나 질문이 바뀌었으면 실패(다시 생성하지 않는다)."""
+    gens = defaultdict(dict)
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                rec = json.loads(line)
+                gens[rec["kind"]][rec["qid"]] = rec
+    missing = [f"{k}:{r['qid']}" for k in kinds for r in rows
+               if gens[k].get(r["qid"], {}).get("question_sha256") != sha(r["question"])]
+    if missing:
+        raise ValueError(f"생성문 캐시에 없다(다시 생성 금지): {', '.join(missing)}")
+    return gens
+
+
+def gen_summary(gens):
+    return {k: {"n": len(v), **{t: sum(x[t] for x in v.values()) for t in ("prompt_tokens", "cached_tokens", "completion_tokens")},
+                "cost_usd": round(sum(x.get("cost_usd", 0.0) for x in v.values()), 6)} for k, v in gens.items()}
+
+
+def openai_gen(cfg, seed):
+    key = common.openai_key()
+    if not key:
+        raise ValueError("OPENAI_API_KEY가 없다 — tools/decisions-rag/.env에 넣을 것")
+    return query.make_gen_llm(cfg, key, seed)
+
+
+def prepare(a, need_dense_mock_ok, make_gen=openai_gen):
     """공통 준비: 설정 · 평가셋 · 커밋 고정 원문 · 청크 · 검색기 · 출력 폴더."""
     cfg = common.load_config(a.config)
     ecfg = load_eval_config(a.eval_config, cfg)
@@ -204,15 +319,39 @@ def prepare(a, need_dense_mock_ok):
         raise ValueError(f"질문 문장이 원문에 있다(오염): {', '.join(dirty)}")
     chunks = chunker.chunk(common.mask_secrets(raw), commit, cfg)
     retrievers = {"bm25": bm25_retriever(chunks, ecfg), "random": random_retriever(chunks, ecfg)}
+    kinds = [k for k in GEN_PROMPTS if any(split_condition(c)[0] == k for c in conditions)]
+    if kinds and a.cmd == "retrieval" and a.max_usd is None:
+        raise ValueError("hyde · rewrite 생성은 --max-usd가 필요하다")
+    if kinds and a.cmd == "answer" and not a.gen_cache:
+        raise ValueError("answer의 hyde · rewrite는 --gen-cache(검색 평가의 generated.jsonl)가 필요하다")
+    index = None
     if any(split_condition(c)[0] in NEEDS_INDEX for c in conditions):
         if not a.persist_dir:
-            raise ValueError("dense · hybrid 조건은 --persist-dir가 필요하다")
-        retrievers["dense"] = dense_retriever(chunks, cfg, commit, a.persist_dir, need_dense_mock_ok)
+            raise ValueError("dense · hybrid · hyde · rewrite 조건은 --persist-dir가 필요하다")
+        index = open_dense_index(cfg, commit, a.persist_dir, need_dense_mock_ok)
+        retrievers["dense"] = dense_search(index, chunks)
         retrievers["hybrid"] = hybrid_retriever(retrievers["dense"], retrievers["bm25"], ecfg)
     out = prepare_out_dir(a.out_dir)
     run = {"commit": commit, "config": cfg["name"], "config_hash": common.config_hash(cfg),
            "eval_config": ecfg, "conditions": conditions, "chunks": len(chunks),
            "chunker_version": chunker.CHUNKER_VERSION}
+    if kinds:
+        headings = heading_list(raw)
+        text = "\n".join(headings)
+        run["rewrite_headings"] = {"lines": len(headings), "chars": len(text), "sha256": sha(text), "cut": HEADING_CUT}
+        run["gen_model"] = {"model": cfg["answer_model"], "temperature": 0, "seed": ecfg["random_seed"]}
+        if a.cmd == "answer":
+            gens = load_generations(a.gen_cache, rows, kinds)
+            run["gen_cache"] = {"path": str(a.gen_cache), "sha256": hashlib.sha256(Path(a.gen_cache).read_bytes()).hexdigest()}
+        else:
+            common.use_bundled_tiktoken_cache()
+            import tiktoken
+            gens = generate(gen_prompts(rows, kinds, headings), make_gen(cfg, ecfg["random_seed"]), out / GEN_FILE,
+                            common.load_prices(cfg), cfg["answer_model"], a.max_usd,
+                            tiktoken.encoding_for_model(cfg["answer_model"]))
+        run["generation"] = gen_summary(gens)
+        for k in kinds:
+            retrievers[k] = dense_search(index, chunks, lambda r, g=gens[k]: g[r["qid"]]["text"])
     (out / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
     return cfg, ecfg, rows, chunks, retrievers, conditions, out
 
@@ -333,7 +472,7 @@ def run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, complete, price
         cited = [ids[c["chunk"] - 1] for c in res["citations"]]
         answered = not (res["refused"] or format_error or call_failed)
         items.append({
-            "qid": r["qid"], "type": r["type"], "config": cfg["name"], "condition": cond, "model": model,
+            "qid": r["qid"], "type": r["type"], "config": cfg["name"], "condition": cond, "model": model, "eval_set": ecfg["name"],
             "question": r["question"], "expected_answer": r["expected_answer"],
             "answer": res["answer"], "refused": res["refused"], "citations": res["citations"],
             "format_error": format_error, "call_failed": call_failed,
@@ -406,8 +545,9 @@ def score(verdicts, key):
     if set(verdicts) != {k["sheet_no"] for k in key}:
         raise ValueError("시트 번호가 열쇠와 다르다")
     out = []
-    for run in dict.fromkeys(map(run_label, key)):
-        ks = [dict(k, verdict=verdicts[k["sheet_no"]]) for k in key if run_label(k) == run]
+    labels = run_labels(key)
+    for run in dict.fromkeys(labels):
+        ks = [dict(k, verdict=verdicts[k["sheet_no"]]) for k, lb in zip(key, labels) if lb == run]
         ev = [k["evidence_valid"] for k in ks if k["evidence_valid"] is not None]
         out.append({
             "condition": run, "n": len(ks),
@@ -439,6 +579,31 @@ def score(verdicts, key):
 def run_label(k):
     """합친 열쇠에선 조건 이름만으로 실행이 갈리지 않는다(같은 dense라도 설정 · 답변 모델이 다르다)."""
     return " · ".join(x for x in (k.get("config"), k["condition"], k["model"]) if x)
+
+
+def qid_eval_sets():
+    """configs/eval_*.json의 평가셋 → {qid: 평가 설정 이름}. 평가셋끼리 qid가 겹치면 실패(판별 불가)."""
+    out = {}
+    for path in sorted((common.TOOL_DIR / "configs").glob("eval_*.json")):
+        ecfg = json.loads(path.read_text(encoding="utf-8"))
+        qids = {r["qid"] for r in load_eval_set(ecfg)}
+        if qids & out.keys():
+            raise ValueError(f"평가셋 qid가 겹친다 — 열쇠의 평가셋을 판별할 수 없다: {', '.join(sorted(qids & out.keys()))}")
+        out.update(dict.fromkeys(qids, ecfg["name"]))
+    return out
+
+
+def run_labels(key):
+    """열쇠 행마다 실행 이름. 평가셋이 둘 이상 섞인 열쇠만 평가셋 이름을 붙인다 — 설정 · 조건 · 모델이 같아도
+    평가셋이 다르면 다른 실행이다. 평가셋이 하나뿐인 열쇠는 이름이 그대로다(이전 합산과 같음).
+    평가셋 칸이 없는 열쇠(이 칸을 넣기 전)는 qid가 속한 평가셋 파일로 판별한다."""
+    lookup = qid_eval_sets() if any("eval_set" not in k for k in key) else {}
+    sets = [k.get("eval_set") or lookup.get(k["qid"]) for k in key]
+    distinct = set(sets)
+    if None in distinct and len(distinct) > 1:            # 판별 못 한 행이 다른 평가셋과 섞이면 실행을 가를 수 없다
+        raise ValueError(f"어느 평가셋 문항인지 모른다: {', '.join(sorted({k['qid'] for k, s in zip(key, sets) if s is None}))}")
+    multi = len(distinct) > 1
+    return [run_label(k) + (f" · {s}" if multi else "") for k, s in zip(key, sets)]
 
 
 def scope_ok(k, scope):
@@ -525,6 +690,73 @@ def adopt_table(r):
     return "\n".join(lines)
 
 
+# eval/PREREG_v2.md 「채택 규칙」 원문(사전 등록 f919fe5 — 그 파일은 고치지 않는다):
+#   1단계 — v1 검색(답 있는 25문항). 통과 = 전체 Hit@3 ≥ 기준선 + 2(즉 8 이상) · 어떤 유형도 Hit@3가 2문항 이상 줄지 않음.
+#   통과가 둘 이상이면 하나만 다음 단계로 보낸다: 전체 Hit@3가 높은 쪽 → 같으면 MRR@10이 높은 쪽 → 같으면 E5 · E3 · E4 순
+#   2단계 — H1 검색: 후보의 Hit@3 ≥ 기준선의 Hit@3(H1 답 있는 12문항).
+#   답변: … 통과 = 후보 v1 정답 수 ≥ 9 · 후보 H1 정답 수 ≥ 기준선 H1 정답 수.
+V2_STAGE1 = (("전체 Hit@3 +2문항 이상", "hit", "전체", 2),) \
+    + tuple((f"{t} Hit@3 2문항 이상 감소 없음", "hit", t, -1) for t in TYPES if t != NO_ANSWER)
+V2_STAGE2_RETRIEVAL = (("H1 전체 Hit@3 감소 0", "hit", "전체", 0),)
+V2_TIE_ORDER = ("E5", "E3", "E4")              # 질의마다 LLM 호출이 없는 쪽 먼저
+V2_ANSWER_V1_MIN_CORRECT = 9                   # 후보 v1 정답 수 ≥ 9(= 기준선 v1 정답 수)
+
+
+def hit_clauses(rules, base_ret, exp_ret):
+    clauses = []
+    for name, _, scope, need in rules:
+        [b], [e] = ([r for r in ret if r["scope"] == scope] for ret in (base_ret, exp_ret))
+        if b["n"] != e["n"]:
+            raise ValueError(f"{name}: 기준선 · 실험 문항 수가 다르다({b['n']} ≠ {e['n']})")
+        clauses.append({"clause": name, "n": b["n"], "base": b["hits"], "exp": e["hits"], "diff": e["hits"] - b["hits"],
+                        "need": need, "pass": e["hits"] - b["hits"] >= need})
+    return clauses
+
+
+def adopt_v2(stage, base_ret, cands):
+    """cands = {실험 이름: 검색 요약 한 조건}. 1단계 = 후보마다 조항 → 통과 중 하나 선택. 2단계 검색 = 후보 1개."""
+    rules = V2_STAGE1 if stage == 1 else V2_STAGE2_RETRIEVAL
+    if stage == 2 and len(cands) != 1:
+        raise ValueError("2단계는 후보 1개만 받는다")
+    results = []
+    for name, ret in cands.items():
+        clauses = hit_clauses(rules, base_ret, ret)
+        [total] = [r for r in ret if r["scope"] == "전체"]
+        results.append({"experiment": name, "clauses": clauses, "pass": all(c["pass"] for c in clauses),
+                        "hits": total["hits"], "mrr": total["mrr"]})
+    passed = [r for r in results if r["pass"]]
+    chosen = min(passed, key=lambda r: (-r["hits"], -r["mrr"], V2_TIE_ORDER.index(r["experiment"])))["experiment"] \
+        if passed else None
+    return {"stage": stage, "results": results, "chosen": chosen}
+
+
+def adopt_v2_answers(cand_v1, cand_h1, base_h1):
+    """2단계 답변 조건 — score 요약 한 실행씩. 「부분」은 정답이 아니다."""
+    c1, ch, bh = (correct(s["verdicts"]["전체"]) for s in (cand_v1, cand_h1, base_h1))
+    clauses = [{"clause": f"후보 v1 정답 수 ≥ {V2_ANSWER_V1_MIN_CORRECT}", "value": c1, "pass": c1 >= V2_ANSWER_V1_MIN_CORRECT},
+               {"clause": "후보 H1 정답 수 ≥ 기준선 H1 정답 수", "value": ch, "base": bh, "pass": ch >= bh}]
+    return {"clauses": clauses, "pass": all(c["pass"] for c in clauses)}
+
+
+def adopt_v2_answers_table(r):
+    lines = [f"### v2 2단계 답변 — {'통과' if r['pass'] else '미통과'}(사전 등록 규칙 기준)", "",
+             "| 조항 | 후보 | 기준 | 판정 |", "|---|---|---|---|"]
+    lines += [f"| {c['clause']} | {c['value']} | {c.get('base', V2_ANSWER_V1_MIN_CORRECT)} | {'통과' if c['pass'] else '미통과'} |"
+              for c in r["clauses"]]
+    return "\n".join(lines)
+
+
+def adopt_v2_table(r):
+    lines = [f"### v2 {r['stage']}단계 — 선택 = {r['chosen'] or '없음'}(사전 등록 규칙 기준)", "",
+             "| 실험 | 조항 | n | 기준선 | 실험 | 차이 | 필요 | 판정 |", "|---|---|---|---|---|---|---|---|"]
+    for x in r["results"]:
+        lines += [f"| {x['experiment']} | {c['clause']} | {c['n']} | {c['base']} | {c['exp']} | {c['diff']:+d} | ≥ {c['need']:+d}"
+                  f" | {'통과' if c['pass'] else '미통과'} |" for c in x["clauses"]]
+    lines += ["", "| 실험 | 전체 Hit@3 | MRR@10 | 통과 |", "|---|---|---|---|"]
+    lines += [f"| {x['experiment']} | {x['hits']} | {x['mrr']:.3f} | {'통과' if x['pass'] else '미통과'} |" for x in r["results"]]
+    return "\n".join(lines)
+
+
 # ---------- 채점 일관성 ----------
 
 def consistency(sheets):
@@ -567,6 +799,8 @@ def main(argv=None):
         p.add_argument("--persist-dir")
     sub.choices["answer"].add_argument("--max-usd", type=float, required=True, help="답변 호출 예상 비용 상한(달러)")
     sub.choices["answer"].add_argument("--local-model", help="Ollama 모델 태그 — 주면 답변 모델만 로컬로 바꾼다")
+    sub.choices["answer"].add_argument("--gen-cache", help="hyde · rewrite 생성문 — 검색 평가의 generated.jsonl")
+    sub.choices["retrieval"].add_argument("--max-usd", type=float, help="hyde · rewrite 생성 예상 비용 상한(달러)")
     p = sub.add_parser("merge")
     p.add_argument("--keys", required=True, help="쉼표로 구분한 key.jsonl 경로")
     p.add_argument("--config", required=True)
@@ -584,17 +818,48 @@ def main(argv=None):
         p.add_argument(f"--{side}-retrieval", required=True, help="retrieval의 summary.json")
         p.add_argument(f"--{side}-cond", required=True, help="그 파일에서 읽을 조건 이름")
     p.add_argument("--out-dir", required=True)
+    p = sub.add_parser("adopt-v2", help="PREREG_v2 채택 규칙 — 1단계(v1 검색) · 2단계 검색(H1)")
+    p.add_argument("--stage", type=int, required=True, choices=(1, 2))
+    p.add_argument("--base-retrieval", required=True, help="기준선 retrieval의 summary.json")
+    p.add_argument("--base-cond", required=True)
+    p.add_argument("--cands", required=True, help="쉼표로 구분한 실험 이름(E3 · E4 · E5)")
+    p.add_argument("--cand-retrievals", required=True, help="--cands와 같은 순서의 summary.json")
+    p.add_argument("--cand-conds", required=True, help="--cands와 같은 순서의 조건 이름")
+    p.add_argument("--out-dir", required=True)
+    p = sub.add_parser("adopt-v2-answers", help="PREREG_v2 2단계 답변 조건 — score summary.json 한 파일의 실행 3개")
+    p.add_argument("--score", required=True, help="score의 summary.json")
+    for name in ("cand-v1-run", "cand-h1-run", "base-h1-run"):
+        p.add_argument(f"--{name}", required=True, help="그 파일에서 읽을 실행 이름(condition 칸)")
+    p.add_argument("--out-dir", required=True)
     p = sub.add_parser("consistency", help="같은 답에 같은 판정을 줬는지 — 시트 안 · 시트 사이")
     p.add_argument("--sheets", required=True, help="쉼표로 구분한 채점 시트 경로")
     p.add_argument("--keys", required=True, help="--sheets와 같은 순서의 key.jsonl 경로")
     p.add_argument("--out-dir", required=True)
     a = ap.parse_args(argv)
 
+    def load(path):
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
     try:
-        if a.cmd == "adopt":
-            def load(path):
-                with open(path, encoding="utf-8") as f:
-                    return json.load(f)
+        if a.cmd == "adopt-v2":
+            names, paths, conds = a.cands.split(","), a.cand_retrievals.split(","), a.cand_conds.split(",")
+            if not len(names) == len(paths) == len(conds) or len(set(names)) != len(names) \
+                    or set(names) - set(V2_TIE_ORDER):
+                raise ValueError(f"--cands는 {' · '.join(V2_TIE_ORDER)} 중 서로 다른 이름, 세 목록 길이는 같아야 한다")
+            results = adopt_v2(a.stage, pick(load(a.base_retrieval), a.base_cond, "기준선 검색"),
+                               {n: pick(load(p), c, f"{n} 검색") for n, p, c in zip(names, paths, conds)})
+            results["inputs"] = {"base": [a.base_retrieval, a.base_cond], "cands": [list(x) for x in zip(names, paths, conds)]}
+            out = prepare_out_dir(a.out_dir)
+            table = adopt_v2_table(results)
+        elif a.cmd == "adopt-v2-answers":
+            sc = load(a.score)
+            [cv1], [ch1], [bh1] = (pick(sc, n, "score") for n in (a.cand_v1_run, a.cand_h1_run, a.base_h1_run))
+            results = adopt_v2_answers(cv1, ch1, bh1)
+            results["inputs"] = {k: getattr(a, k) for k in ("score", "cand_v1_run", "cand_h1_run", "base_h1_run")}
+            out = prepare_out_dir(a.out_dir)
+            table = adopt_v2_answers_table(results)
+        elif a.cmd == "adopt":
             [bs], [es] = pick(load(a.base_score), a.base_run, "기준선 score"), pick(load(a.exp_score), a.exp_run, "실험 score")
             results = adopt(a.experiment, bs, es, pick(load(a.base_retrieval), a.base_cond, "기준선 검색"),
                             pick(load(a.exp_retrieval), a.exp_cond, "실험 검색"))

@@ -1,0 +1,14 @@
+{
+  "name": "eval_h1",
+  "eval_set": "eval/eval_holdout_h1.jsonl",
+  "eval_set_sha256": "7dd7e268d3b8abc6877168a4bac51e5edf1681a6c8858e7cf0e18d7d20bbd679",
+  "hit_k": 3,
+  "mrr_cutoff": 10,
+  "answer_top_k": 5,
+  "bm25_k1": 1.5,
+  "bm25_b": 0.75,
+  "bm25_tokenizer": "word_ascii+hangul_bigram_v1",
+  "rrf_k": 60,
+  "random_seed": 20261007,
+  "sheet_shuffle_seed": 20261007
+}

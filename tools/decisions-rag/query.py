@@ -67,15 +67,30 @@ def parse_answer(raw, metas):
     }
 
 
-def make_llm(cfg, key):
+def _openai_llm(cfg, key, **extra):
     from llama_index.llms.openai import OpenAI
     from llama_index.llms.openai.utils import O1_MODELS
     if cfg["answer_model"] in O1_MODELS:
         # 이 계열은 llama-index-llms-openai가 temperature를 조용히 1.0으로 바꾼다 — 0 보장을 못 한다.
         raise ValueError(f"답변 모델 {cfg['answer_model']}은 temperature 0을 보장하지 못한다(추론 모델)")
-    llm = OpenAI(model=cfg["answer_model"], temperature=0, api_key=key, max_retries=1,
-                 additional_kwargs={"response_format": {"type": "json_object"}})
+    return OpenAI(model=cfg["answer_model"], temperature=0, api_key=key, max_retries=1, additional_kwargs=extra)
+
+
+def make_llm(cfg, key):
+    llm = _openai_llm(cfg, key, response_format={"type": "json_object"})
     return lambda prompt: llm.complete(prompt).text
+
+
+def make_gen_llm(cfg, key, seed):
+    """검색 질의 확장용 생성(평문 출력) → complete(prompt) = (출력, 입력 토큰, 캐시 입력 토큰, 출력 토큰). 토큰 = API usage."""
+    llm = _openai_llm(cfg, key, seed=seed)
+
+    def complete(prompt):
+        resp = llm.complete(prompt)
+        u = resp.raw.usage
+        cached = getattr(u.prompt_tokens_details, "cached_tokens", 0) if u.prompt_tokens_details else 0
+        return resp.text, u.prompt_tokens, cached or 0, u.completion_tokens
+    return complete
 
 
 OLLAMA_URL = "http://localhost:11434"
