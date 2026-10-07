@@ -129,19 +129,20 @@ def _units(lines):
     """(종류, span 목록, 제목 경로, 절) 단위를 원문 순서대로 낸다. 제목 줄 자체도 단위다."""
     path = []          # [(레벨, 제목 문자열, 절 이름)]
     sub = None         # (소절 문자, 제목)
+    outer = None       # 중첩 소절이 열려 있을 때 바깥 소절 (소절 문자, 제목)
     i, n_lines = 0, len(lines)
 
     def cur_path():
         p = [t for _, t, _ in path]
-        if sub:
-            p.append(f"({sub[0]}) {sub[1]}".strip())
+        for s in (outer, sub):
+            if s:
+                p.append(f"({s[0]}) {s[1]}".strip())
         return p
 
     def cur_section():
         if not path:
             return "(머리말)"
-        sec = path[-1][2]
-        return f"{sec}({sub[0]})" if sub else sec
+        return path[-1][2] + "".join(f"({s[0]})" for s in (outer, sub) if s)
 
     while i < n_lines:
         line = lines[i]
@@ -159,14 +160,24 @@ def _units(lines):
             level, title = len(HEADING_RE.match(line).group(1)), HEADING_RE.match(line).group(2).strip()
             path = [p for p in path if p[0] < level]
             m_num, m_cat = SECTION_NUM_RE.match(title), CATEGORY_RE.match(title)
-            name = m_num.group(1) if m_num else (m_cat.group(1) if m_cat else title)
+            if m_num:
+                name = m_num.group(1)
+            elif m_cat:
+                name = f"카테고리 {m_cat.group(1)}"
+            else:   # 번호 없는 제목 · 날짜 제목은 같은 이름이 여러 곳에 있다 → 바깥 제목 이름을 앞에 붙인다
+                name = f"{path[-1][2]} › {title}" if path else title
             path.append((level, title, name))
-            sub = None
+            sub = outer = None
             i += 1
             kind = "heading"
         elif SUBSECTION_RE.match(line):
             m = SUBSECTION_RE.match(line)
-            sub = (m.group(1), m.group(2).strip())
+            new = (m.group(1), m.group(2).strip())
+            if outer and _lower(new[0]) and _letter_key(new[0]) > _letter_key(outer[0]):
+                outer = None                      # 바깥 소절보다 뒤 글자 = 중첩 해제
+            elif not outer and sub and new[0] == "a" and _lower(sub[0]) and sub[0] != "a":
+                outer = sub                       # 열린 소절 뒤 (a) 재시작 = 그 안의 중첩
+            sub = new
             i += 1
             while i < n_lines and lines[i].strip() and lines[i][0].isspace():
                 i += 1
@@ -191,6 +202,15 @@ def _units(lines):
             kind = "para"
         spans = [_full(lines, k + 1) for k in range(start, i) if lines[k].strip()]
         yield kind, spans, cur_path(), cur_section()
+
+
+def _lower(letter):
+    return letter.split("-")[0].islower()
+
+
+def _letter_key(letter):
+    head = letter.split("-")[0]
+    return (len(head), head)
 
 
 def _starts_block(line):

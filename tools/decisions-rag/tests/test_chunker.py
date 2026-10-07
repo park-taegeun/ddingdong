@@ -56,11 +56,11 @@ class HeadingTest(unittest.TestCase):
         self.assertEqual(c.meta["section"], "6.2(f)")
         self.assertEqual(by_text(self.chunks, "머리 문단").meta["section"], "6.2")
         self.assertEqual(by_text(self.chunks, "하위 절 본문").meta["section"], "6.2.1")
-        self.assertEqual(by_text(self.chunks, "## 카테고리 6").meta["section"], "6")
+        self.assertEqual(by_text(self.chunks, "## 카테고리 6").meta["section"], "카테고리 6")
 
     def test_unnumbered_and_date_headings_use_title(self):
-        self.assertEqual(by_text(self.chunks, "날짜 제목 아래").meta["section"], "5/12 재검토 항목")
-        self.assertEqual(by_text(self.chunks, "마지막 단위").meta["section"], "번호 없는 제목")
+        self.assertEqual(by_text(self.chunks, "날짜 제목 아래").meta["section"], "카테고리 6 › 5/12 재검토 항목")
+        self.assertEqual(by_text(self.chunks, "마지막 단위").meta["section"], "카테고리 6 › 번호 없는 제목")
 
     def test_code_block_hash_and_pipe_are_not_structure(self):
         c = by_text(self.chunks, "코드 뒤 문단")
@@ -80,6 +80,60 @@ class HeadingTest(unittest.TestCase):
         lines = DOC.split("\n")
         for c in self.chunks:
             self.assertEqual(c.display, "\n".join(lines[n - 1][s:e] for n, s, e in c.spans))
+
+
+class NestedSubsectionTest(unittest.TestCase):
+    DOC = """## 카테고리 6: 서버
+
+### 6.3 마이크
+
+**(a) 진짜 a**
+
+본문 진짜 a.
+
+**(s) 바깥 소절**
+
+**(a) 안쪽 a**
+
+본문 안쪽 a.
+
+**(b) 안쪽 b**
+
+본문 안쪽 b.
+
+**(t) 바깥보다 뒤 글자**
+
+본문 t.
+
+**(g) 역순 g**
+
+**(f) 역순 f**
+
+본문 역순 f.
+
+**(F) 대문자 체계**
+
+본문 대문자 F.
+
+### 6.4 다음 절
+
+**(a) 다음 절 a**
+
+본문 다음 절 a."""
+
+    def test_nesting_starts_and_releases(self):
+        cs = chunker.chunk(self.DOC, "x", CFG)
+        sec = lambda needle: by_text(cs, needle).meta["section"]
+        self.assertEqual(sec("본문 진짜 a"), "6.3(a)")
+        self.assertEqual(sec("본문 안쪽 a"), "6.3(s)(a)")
+        self.assertEqual(sec("본문 안쪽 b"), "6.3(s)(b)")
+        self.assertEqual(by_text(cs, "본문 안쪽 b").heading_path,
+                         ["카테고리 6: 서버", "6.3 마이크", "(s) 바깥 소절", "(b) 안쪽 b"])
+        self.assertEqual(sec("본문 t"), "6.3(t)")                     # 바깥보다 뒤 글자 = 해제
+        self.assertEqual(sec("본문 역순 f"), "6.3(f)")                # 역순은 중첩이 아니다
+        self.assertEqual(sec("본문 대문자 F"), "6.3(F)")              # 별도 체계
+        self.assertEqual(sec("본문 다음 절 a"), "6.4(a)")             # 제목 줄 = 해제
+        self.assertEqual(chunker.uncovered_lines(self.DOC, cs), [])
 
 
 class SplitTest(unittest.TestCase):

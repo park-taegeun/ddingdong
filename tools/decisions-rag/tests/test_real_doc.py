@@ -46,6 +46,34 @@ class RealDocTest(unittest.TestCase):
             inner = [m.end() for m in chunker.SENTENCE_END_RE.finditer(lines[n - 1], s, e) if m.end() < e]
             self.assertLessEqual(len(inner), 1 if s > 0 else 0, c.meta)
 
+    def line_of(self, prefix, after=1):
+        lines = self.text.split("\n")
+        return next(n for n in range(after, len(lines) + 1) if lines[n - 1].startswith(prefix))
+
+    def section_at(self, n):
+        return [c.meta["section"] for c in self.chunks if c.meta["line_start"] <= n <= c.meta["line_end"]]
+
+    def test_nested_subsection_labels(self):
+        s = self.line_of("**(s) M5-c")
+        self.assertEqual(self.section_at(s), ["6.3(s)"])
+        self.assertEqual(self.section_at(self.line_of("**(a)", s)), ["6.3(s)(a)"])
+        self.assertEqual(self.section_at(self.line_of("**(e)", s)), ["6.3(s)(e)"])
+        self.assertEqual(self.section_at(self.line_of("**(a)", self.line_of("### 6.3 "))), ["6.3(a)"])
+        self.assertEqual(self.section_at(self.line_of("**(f)", self.line_of("**(g)", self.line_of("### 27.8 ")))),
+                         ["27.8(f)"])
+        self.assertEqual(self.section_at(self.line_of("**(F)", self.line_of("### 9.3 "))), ["9.3(F)"])
+        nested = sorted({c.meta["section"] for c in self.chunks if ")(" in c.meta["section"]})
+        self.assertEqual(nested, [f"6.3(s)({x})" for x in "abcde"])     # 실문서 중첩 = 6.3(s) 하나
+
+    def test_section_labels_are_unambiguous(self):
+        self.assertEqual(self.section_at(self.line_of("## 카테고리 3:")), ["카테고리 3"])
+        self.assertEqual(self.section_at(self.line_of("### 결정")), ["카테고리 23 › 결정"])
+        self.assertEqual(self.section_at(self.line_of("### 5/12 ")), ["카테고리 15 › 5/12 재검토 항목 (단독 테스트 결과 기반)"])
+        paths = {}
+        for c in self.chunks:
+            paths.setdefault(c.meta["section"], set()).add(c.meta["heading_path"])
+        self.assertEqual({k: len(v) for k, v in paths.items() if len(v) > 1}, {})
+
     def test_no_blocking_secrets(self):
         found = common.scan_secrets(common.read_doc_at(COMMIT))
         self.assertEqual([k for k in common.BLOCKING_SECRETS if found[k]], [])
