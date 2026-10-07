@@ -5,10 +5,14 @@
       --conditions bm25,random,gold_removed:bm25 --out-dir <repo 밖 빈 폴더> [--persist-dir <dense 인덱스>]
   # 답변 평가 → 블라인드 채점 시트(sheet.csv) + 열쇠(key.jsonl). 답변 모델 = OpenAI 호출
   python -B evaluate.py answer  (위와 같은 인자)
+  # 답변 모델만 로컬(Ollama)로 — 검색 · 프롬프트 · 파서는 같다. 비용 0
+  python -B evaluate.py answer  (위와 같은 인자) --local-model <Ollama 태그>
+  # 여러 답변 실행의 열쇠를 한 블라인드 시트로 다시 섞기
+  python -B evaluate.py merge --keys <key.jsonl,...> --config <설정> --eval-config <평가 설정> --out-dir <repo 밖 빈 폴더>
   # 채점 합산 — 사용자가 판정 칸을 채운 시트 + 열쇠
   python -B evaluate.py score --sheet <sheet.csv> --key <key.jsonl> --out-dir <repo 밖 빈 폴더>
 
-조건 = bm25 · random · dense · gold_removed:bm25 · gold_removed:dense. dense는 --persist-dir 인덱스가 필요하다.
+조건 = bm25 · random · dense · hybrid · gold_removed:<bm25|dense|hybrid>. dense · hybrid는 --persist-dir 인덱스가 필요하다.
 """
 import argparse
 import csv
@@ -30,7 +34,8 @@ EVAL_KEYS = ("name", "eval_set", "eval_set_sha256", "hit_k", "mrr_cutoff", "answ
 TOKENIZER = "word_ascii+hangul_bigram_v1"
 TYPES = ("fact", "identifier", "reversal", "not_in_doc", "false_premise")
 NO_ANSWER = "not_in_doc"                       # 검색 지표에서 뺀다
-CONDITIONS = ("bm25", "random", "dense", "gold_removed:bm25", "gold_removed:dense")
+CONDITIONS = ("bm25", "random", "dense", "hybrid", "gold_removed:bm25", "gold_removed:dense", "gold_removed:hybrid")
+NEEDS_INDEX = ("dense", "hybrid")
 VERDICTS = ("정답", "부분", "오답")
 SHEET_COLS = ("시트 번호", "질문", "기대 답", "모델 답", "거절 여부", "판정", "메모")
 
@@ -152,6 +157,27 @@ def dense_retriever(chunks, cfg, commit, persist_dir, allow_mock):
     return search
 
 
+# RRF에 넣는 각 목록의 깊이 — 사전 등록에 없어 결과를 보기 전에 고정했다.
+# 50 = mrr_cutoff 10의 5배: 한쪽 목록의 꼬리에만 있는 청크도 점수를 받게 해 깊이 경계의 동점 · 잘림 영향을 줄인다.
+RRF_DEPTH = 50
+
+
+def rrf(rankings, k):
+    """Reciprocal Rank Fusion — 점수 = Σ 1 / (k + 순위). 원점수는 쓰지 않는다. 동점은 청크 번호순(결정적)."""
+    score = Counter()
+    for ranking in rankings:
+        for rank, i in enumerate(ranking, 1):
+            score[i] += 1 / (k + rank)
+    return sorted(score, key=lambda i: (-score[i], i))
+
+
+def hybrid_retriever(dense, bm25, ecfg):
+    def search(row, k, exclude=frozenset()):
+        lists = [dense(row, RRF_DEPTH, exclude), bm25(row, RRF_DEPTH, exclude)]   # 뺄 청크는 양쪽 모두에서 뺀다
+        return rrf(lists, ecfg["rrf_k"])[:k]
+    return search
+
+
 def prepare(a, need_dense_mock_ok):
     """공통 준비: 설정 · 평가셋 · 커밋 고정 원문 · 청크 · 검색기 · 출력 폴더."""
     cfg = common.load_config(a.config)
@@ -170,10 +196,11 @@ def prepare(a, need_dense_mock_ok):
         raise ValueError(f"질문 문장이 원문에 있다(오염): {', '.join(dirty)}")
     chunks = chunker.chunk(common.mask_secrets(raw), commit, cfg)
     retrievers = {"bm25": bm25_retriever(chunks, ecfg), "random": random_retriever(chunks, ecfg)}
-    if any(c.endswith("dense") for c in conditions):
+    if any(split_condition(c)[0] in NEEDS_INDEX for c in conditions):
         if not a.persist_dir:
-            raise ValueError("dense 조건은 --persist-dir가 필요하다")
+            raise ValueError("dense · hybrid 조건은 --persist-dir가 필요하다")
         retrievers["dense"] = dense_retriever(chunks, cfg, commit, a.persist_dir, need_dense_mock_ok)
+        retrievers["hybrid"] = hybrid_retriever(retrievers["dense"], retrievers["bm25"], ecfg)
     out = prepare_out_dir(a.out_dir)
     run = {"commit": commit, "config": cfg["name"], "config_hash": common.config_hash(cfg),
            "eval_config": ecfg, "conditions": conditions, "chunks": len(chunks),
@@ -244,14 +271,19 @@ def retrieval_table(summary, ecfg):
 # ---------- 답변 평가 ----------
 
 EST_COMPLETION_TOKENS = 300   # 호출 전 예상 비용에만 쓰는 답 1회 출력 토큰 가정(실제 출력은 기록에서 센다)
+MAX_CALL_FAILURES = 10        # 로컬 모델 호출 실패가 이만큼 쌓이면 실행 실패
 
 
-def run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, complete, prices, max_usd):
-    """조건 × 문항마다 상위 answer_top_k → 프롬프트를 모두 만든 뒤 예상 비용 > max_usd면 호출 없이 실패 → 답변 모델 → 기록."""
+def run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, complete, prices, max_usd, local_model=None):
+    """조건 × 문항마다 상위 answer_top_k → 프롬프트를 모두 만든 뒤 예상 비용 > max_usd면 호출 없이 실패 → 답변 모델 → 기록.
+
+    local_model = 「태그@다이제스트」면 로컬 모델: complete가 (출력, 입력 토큰, 출력 토큰)을 돌려주고 비용 0.
+    모델 출력이 JSON이 아니면 거절로 치지 않고 원문을 답으로 남긴다(format_error).
+    """
     common.use_bundled_tiktoken_cache()
     import tiktoken
-    model = cfg["answer_model"]
-    enc = tiktoken.encoding_for_model(model)
+    model = local_model or cfg["answer_model"]
+    enc = tiktoken.encoding_for_model(cfg["answer_model"])
     plans = []
     for cond in conditions:
         base, removed = split_condition(cond)
@@ -263,32 +295,48 @@ def run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, complete, price
             metas = [chunks[i].meta for i in ids]
             prompt = query.build_prompt(r["question"], metas, [chunks[i].body for i in ids])
             plans.append((cond, r, gold, ids, metas, prompt, sec, len(enc.encode(prompt))))
-    est = sum(common.usd(prices, model, input=p[-1], output=EST_COMPLETION_TOKENS) for p in plans)
+    est = 0.0 if local_model else sum(common.usd(prices, model, input=p[-1], output=EST_COMPLETION_TOKENS) for p in plans)
     print(f"답변 {len(plans)}회 예상 비용 ${est:.4f} (입력 = 로컬 tiktoken 추정 · 출력 {EST_COMPLETION_TOKENS}토큰/회 가정)"
           f" · 상한 ${max_usd:.2f}")
     if est > max_usd:
         raise ValueError(f"예상 비용 ${est:.4f} > 상한 ${max_usd:.2f} — 호출 없이 중단")
-    items = []
+    items, failures = [], 0
     for cond, r, gold, ids, metas, prompt, retrieval_sec, prompt_tokens in plans:
         t1 = time.monotonic()
-        raw = complete(prompt)
+        call_failed = format_error = False
+        try:
+            out = complete(prompt)
+        except query.LocalCallError as e:
+            failures += 1
+            print(f"로컬 모델 호출 실패 {failures}회: {e}", file=sys.stderr)
+            if failures >= MAX_CALL_FAILURES:
+                raise EvalError(f"로컬 모델 호출 실패 {failures}회 — 중단")
+            call_failed, out = True, ""
         t2 = time.monotonic()
-        res = query.parse_answer(raw, metas)
+        if local_model:
+            raw, prompt_tokens, completion_tokens = out if not call_failed else ("", 0, 0)
+        else:
+            raw, completion_tokens = out, len(enc.encode(out))
+        try:
+            res = query.parse_answer(raw, metas)
+        except ValueError:
+            format_error = not call_failed
+            res = {"answer": raw, "refused": False, "citations": []}
         cited = [ids[c["chunk"] - 1] for c in res["citations"]]
-        answered = not res["refused"]
-        completion_tokens = len(enc.encode(raw))
+        answered = not (res["refused"] or format_error or call_failed)
         items.append({
-            "qid": r["qid"], "type": r["type"], "condition": cond, "model": model,
+            "qid": r["qid"], "type": r["type"], "config": cfg["name"], "condition": cond, "model": model,
             "question": r["question"], "expected_answer": r["expected_answer"],
             "answer": res["answer"], "refused": res["refused"], "citations": res["citations"],
+            "format_error": format_error, "call_failed": call_failed,
             "retrieved": ids,
             # 답한 · 답 있는 문항만 판정한다(not_in_doc은 정답 조각이 없다)
             "evidence_valid": any(i in gold for i in cited) if answered and r["type"] != NO_ANSWER else None,
             "trap_in_answer": any(t in res["answer"] for t in r["trap_anchors"]) if r["type"] == "reversal" else None,
             "retrieval_sec": round(retrieval_sec, 4), "answer_sec": round(t2 - t1, 4),
-            # 토큰 = 로컬 tiktoken 추정(채팅 형식 오버헤드 · 캐시 할인 미반영)
+            # 토큰 = OpenAI는 로컬 tiktoken 추정(채팅 형식 오버헤드 · 캐시 할인 미반영) · 로컬 모델은 서버가 센 값
             "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
-            "cost_usd_est": common.usd(prices, model, input=prompt_tokens, output=completion_tokens),
+            "cost_usd_est": 0.0 if local_model else common.usd(prices, model, input=prompt_tokens, output=completion_tokens),
         })
     return items
 
@@ -311,6 +359,18 @@ def write_sheet(out, sheet, key):
         w.writerow(SHEET_COLS)
         w.writerows(sheet)
     (out / "key.jsonl").write_text("".join(json.dumps(k, ensure_ascii=False) + "\n" for k in key), encoding="utf-8")
+
+
+def merge_keys(paths):
+    """여러 실행의 열쇠 → 시트 번호를 뗀 답변 기록. 같은 (문항 · 설정 · 조건 · 모델)이 두 번이면 실패."""
+    items = []
+    for path in paths:
+        with open(path, encoding="utf-8") as f:
+            items += [{k: v for k, v in json.loads(line).items() if k != "sheet_no"} for line in f if line.strip()]
+    ids = [(i["qid"], run_label(i)) for i in items]
+    if len(ids) != len(set(ids)):
+        raise ValueError("같은 문항 · 실행이 두 번 들어 있다")
+    return items
 
 
 # ---------- 채점 합산 ----------
@@ -338,11 +398,11 @@ def score(verdicts, key):
     if set(verdicts) != {k["sheet_no"] for k in key}:
         raise ValueError("시트 번호가 열쇠와 다르다")
     out = []
-    for cond in dict.fromkeys(k["condition"] for k in key):
-        ks = [dict(k, verdict=verdicts[k["sheet_no"]]) for k in key if k["condition"] == cond]
+    for run in dict.fromkeys(map(run_label, key)):
+        ks = [dict(k, verdict=verdicts[k["sheet_no"]]) for k in key if run_label(k) == run]
         ev = [k["evidence_valid"] for k in ks if k["evidence_valid"] is not None]
         out.append({
-            "condition": cond, "n": len(ks),
+            "condition": run, "n": len(ks),
             "verdicts": {t: dict(Counter(k["verdict"] for k in ks if scope_ok(k, t))) for t in ("전체",) + TYPES},
             "hallucination": sum(k["type"] == NO_ANSWER and not k["refused"] and k["verdict"] == "오답" for k in ks),
             "over_refusal": sum(k["type"] != NO_ANSWER and k["refused"] for k in ks),
@@ -356,6 +416,11 @@ def score(verdicts, key):
             "cost_usd_est": sum(k["cost_usd_est"] for k in ks),
         })
     return out
+
+
+def run_label(k):
+    """합친 열쇠에선 조건 이름만으로 실행이 갈리지 않는다(같은 dense라도 설정 · 답변 모델이 다르다)."""
+    return " · ".join(x for x in (k.get("config"), k["condition"], k["model"]) if x)
 
 
 def scope_ok(k, scope):
@@ -389,6 +454,12 @@ def main(argv=None):
         p.add_argument("--out-dir", required=True)
         p.add_argument("--persist-dir")
     sub.choices["answer"].add_argument("--max-usd", type=float, required=True, help="답변 호출 예상 비용 상한(달러)")
+    sub.choices["answer"].add_argument("--local-model", help="Ollama 모델 태그 — 주면 답변 모델만 로컬로 바꾼다")
+    p = sub.add_parser("merge")
+    p.add_argument("--keys", required=True, help="쉼표로 구분한 key.jsonl 경로")
+    p.add_argument("--config", required=True)
+    p.add_argument("--eval-config", required=True)
+    p.add_argument("--out-dir", required=True)
     p = sub.add_parser("score")
     p.add_argument("--sheet", required=True)
     p.add_argument("--key", required=True)
@@ -410,20 +481,33 @@ def main(argv=None):
             (out / "retrieval.jsonl").write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in records),
                                                  encoding="utf-8")
             table = retrieval_table(results, ecfg)
+        elif a.cmd == "merge":
+            ecfg = load_eval_config(a.eval_config, common.load_config(a.config))
+            items = merge_keys(a.keys.split(","))
+            out = prepare_out_dir(a.out_dir)
+            write_sheet(out, *make_sheet(items, ecfg["sheet_shuffle_seed"]))
+            print(f"합친 시트 {len(items)}행 → {out / 'sheet.csv'} (열쇠 key.jsonl은 채점 전에 열지 말 것)")
+            return 0
         else:
             key = common.openai_key()
             if not key:
                 common.fail("OPENAI_API_KEY가 없다 — tools/decisions-rag/.env에 넣을 것")
             cfg, ecfg, rows, chunks, retrievers, conditions, out = prepare(a, need_dense_mock_ok=False)
-            items = run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, query.make_llm(cfg, key),
-                                common.load_prices(cfg), a.max_usd)
+            if a.local_model:
+                local = f"{a.local_model}@{query.local_model_digest(a.local_model)[:12]}"
+                complete = query.make_local_llm(a.local_model, ecfg["random_seed"])
+            else:
+                local, complete = None, query.make_llm(cfg, key)
+            items = run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, complete,
+                                common.load_prices(cfg), a.max_usd, local)
             write_sheet(out, *make_sheet(items, ecfg["sheet_shuffle_seed"]))
-            print(f"시트 {len(items)}행 → {out / 'sheet.csv'} (열쇠 key.jsonl은 채점 전에 열지 말 것)")
+            print(f"시트 {len(items)}행 → {out / 'sheet.csv'} (열쇠 key.jsonl은 채점 전에 열지 말 것)"
+                  f" · 형식 오류 {sum(i['format_error'] for i in items)} · 호출 실패 {sum(i['call_failed'] for i in items)}")
             print(f"토큰(추정) 입력 {sum(i['prompt_tokens'] for i in items)} · 출력 {sum(i['completion_tokens'] for i in items)}"
                   f" · 비용 추정 ${sum(i['cost_usd_est'] for i in items):.4f}"
                   f" · 답변 초(평균) {sum(i['answer_sec'] for i in items) / len(items):.3f}")
             return 0
-    except (ValueError, FileNotFoundError) as e:
+    except (ValueError, OSError) as e:          # OSError = 파일 없음 · Ollama 연결 실패
         common.fail(str(e))
     (out / "summary.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     (out / "summary.md").write_text(table + "\n", encoding="utf-8")

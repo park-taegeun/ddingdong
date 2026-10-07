@@ -101,6 +101,34 @@ class GoldRemovedTest(unittest.TestCase):
             evaluate.evaluate_retrieval(self.rows, self.chunks, self.ecfg, leaky, ["gold_removed:bm25"])
 
 
+class HybridTest(unittest.TestCase):
+    def test_rrf_uses_reciprocal_rank_with_k(self):
+        # 순위가 엇갈린 예: 20은 양쪽 3위, 10 · 40은 한쪽 1위. k = 60이면 20이 앞, k를 무시하면 10 · 40이 앞
+        a, b = [10, 30, 20], [40, 50, 20]
+        self.assertEqual(evaluate.rrf([a, b], 60), [20, 10, 40, 30, 50])
+        self.assertEqual(evaluate.rrf([a, b], 0), [10, 40, 20, 30, 50])
+
+    def test_hybrid_reads_rrf_k_from_eval_config(self):
+        dense = lambda r, k, exclude=frozenset(): [10, 30, 20][:k]
+        bm25 = lambda r, k, exclude=frozenset(): [40, 50, 20][:k]
+        r = row("Q1", "fact", "q")
+        self.assertEqual(evaluate.hybrid_retriever(dense, bm25, {"rrf_k": 60})(r, 2), [20, 10])
+        self.assertEqual(evaluate.hybrid_retriever(dense, bm25, {"rrf_k": 0})(r, 2), [10, 40])
+
+    def test_gold_removed_hybrid_removes_from_both_lists(self):
+        chunks = [chunk("마이크 SCK 핀은 GPIO 41"), chunk("카카오 메시지"), chunk("마이크 소음")]
+        rows = [row("Q1", "fact", "마이크 SCK 핀", ["GPIO 41"])]
+        ecfg = {"hit_k": 3, "mrr_cutoff": 10, "bm25_k1": 1.5, "bm25_b": 0.75, "rrf_k": 60}
+        bm25 = evaluate.bm25_retriever(chunks, ecfg)
+
+        def dense(r, k, exclude=frozenset()):                          # 정답 청크를 맨 위로 내는 가짜 dense
+            return [i for i in (0, 2, 1) if i not in exclude][:k]
+        retr = {"hybrid": evaluate.hybrid_retriever(dense, bm25, ecfg)}
+        recs = evaluate.evaluate_retrieval(rows, chunks, ecfg, retr, ["hybrid", "gold_removed:hybrid"])
+        self.assertEqual([r["rank"] for r in recs], [1, None])
+        self.assertNotIn(0, recs[1]["ranking"])
+
+
 class RandomTest(unittest.TestCase):
     def test_seeded_and_deterministic(self):
         chunks = [chunk(str(i)) for i in range(100)]
@@ -256,6 +284,72 @@ class AnswerPathTest(unittest.TestCase):
                 evaluate.run_answers([row("Q1", "fact", "가나다", ["가나다"])], chunks, cfg, ecfg, retr, ["bm25"],
                                      lambda p: calls.append(p) or '{"refused": true}', common.load_prices(cfg), 0.0)
         self.assertEqual(calls, [])
+
+
+class LocalAnswerTest(unittest.TestCase):
+    def setUp(self):
+        self.chunks = [chunk("가나다"), chunk("라마바")]
+        self.ecfg = {"answer_top_k": 2, "bm25_k1": 1.5, "bm25_b": 0.75, "random_seed": 1}
+        self.retr = {"bm25": evaluate.bm25_retriever(self.chunks, self.ecfg)}
+        self.cfg = common.load_config(CFG_PATH)
+        self.rows = [row(f"Q{n}", "fact", "가나다", ["가나다"]) for n in range(3)]
+
+    def run_local(self, complete, rows=None):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return evaluate.run_answers(rows or self.rows, self.chunks, self.cfg, self.ecfg, self.retr, ["bm25"], complete,
+                                        common.load_prices(self.cfg), 0.0, "llama-test@abc")
+
+    def test_format_error_is_not_refusal_and_keeps_raw_text(self):
+        outs = iter([("그냥 문장", 50, 3), (json.dumps({"answer": "", "evidence": [], "refused": True}), 50, 9),
+                     (json.dumps({"answer": "가나다", "evidence": [1], "refused": False}), 50, 9)])
+        items = self.run_local(lambda p: next(outs))                   # 비용 상한 0이어도 로컬은 비용 0이라 돈다
+        bad, refused, ok = items
+        self.assertEqual((bad["format_error"], bad["refused"], bad["answer"], bad["evidence_valid"]),
+                         (True, False, "그냥 문장", None))
+        self.assertEqual((refused["format_error"], refused["refused"]), (False, True))
+        self.assertEqual((ok["format_error"], ok["evidence_valid"], ok["model"], ok["cost_usd_est"]),
+                         (False, True, "llama-test@abc", 0.0))
+        self.assertEqual((ok["prompt_tokens"], ok["completion_tokens"]), (50, 9))   # 서버가 센 값
+
+    def test_call_failure_is_recorded_then_stops_at_limit(self):
+        def broken(p):
+            raise query.LocalCallError("URLError")
+        [item] = self.run_local(broken, self.rows[:1])
+        self.assertEqual((item["call_failed"], item["format_error"], item["refused"]), (True, False, False))
+        many = [row(f"Q{n}", "fact", "가나다", ["가나다"]) for n in range(evaluate.MAX_CALL_FAILURES)]
+        with self.assertRaises(evaluate.EvalError):
+            self.run_local(broken, many)
+
+
+class MergeTest(unittest.TestCase):
+    def test_merged_sheet_is_blind_and_runs_stay_apart(self):
+        runs = [("e1_superseded", "dense", "gpt-4.1-mini-2025-04-14"), ("baseline", "hybrid", "gpt-4.1-mini-2025-04-14"),
+                ("baseline", "dense", "llama3.1:8b@46e0c10c039e"), ("baseline", "dense", "exaone3.5:7.8b@c7c4e3d1ca22")]
+        with tempfile.TemporaryDirectory() as d:
+            paths = []
+            for n, (cfg, cond, model) in enumerate(runs):
+                items = [dict(it, config=cfg, condition=cond, model=model) for it in fake_items(3)]
+                sub = Path(d) / str(n)
+                sub.mkdir()
+                evaluate.write_sheet(sub, *evaluate.make_sheet(items, 1))
+                paths.append(str(sub / "key.jsonl"))
+            items = evaluate.merge_keys(paths)
+            self.assertEqual(len(items), 12)
+            sheet, key = evaluate.make_sheet(items, 20261007)
+            out = Path(d) / "merged"
+            out.mkdir()
+            evaluate.write_sheet(out, sheet, key)
+            text = (out / "sheet.csv").read_text(encoding="utf-8-sig")
+            with self.assertRaises(ValueError):                          # 같은 실행을 두 번 넣으면 거부
+                evaluate.merge_keys(paths[:1] * 2)
+        self.assertEqual(tuple(next(csv.reader(io.StringIO(text)))), evaluate.SHEET_COLS)
+        for hidden in ("llama", "exaone", "gpt-4.1", "46e0c10c039e", "e1_superseded", "baseline", "hybrid", "dense", "Q1"):
+            self.assertNotIn(hidden, text)
+        self.assertEqual(len({evaluate.run_label(k) for k in key}), 4)  # 같은 dense도 설정 · 모델로 갈린다
+        verdicts = {k["sheet_no"]: "정답" for k in key}
+        self.assertEqual([s["n"] for s in evaluate.score(verdicts, [dict(k, retrieval_sec=0, answer_sec=0, prompt_tokens=0,
+                          completion_tokens=0, cost_usd_est=0, evidence_valid=None, trap_in_answer=None) for k in key])],
+                         [3, 3, 3, 3])
 
 
 class PriceTest(unittest.TestCase):
