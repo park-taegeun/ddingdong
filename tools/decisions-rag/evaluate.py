@@ -470,7 +470,7 @@ def run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, complete, price
         cited = [ids[c["chunk"] - 1] for c in res["citations"]]
         answered = not (res["refused"] or format_error or call_failed)
         items.append({
-            "qid": r["qid"], "type": r["type"], "config": cfg["name"], "condition": cond, "model": model,
+            "qid": r["qid"], "type": r["type"], "config": cfg["name"], "condition": cond, "model": model, "eval_set": ecfg["name"],
             "question": r["question"], "expected_answer": r["expected_answer"],
             "answer": res["answer"], "refused": res["refused"], "citations": res["citations"],
             "format_error": format_error, "call_failed": call_failed,
@@ -543,8 +543,9 @@ def score(verdicts, key):
     if set(verdicts) != {k["sheet_no"] for k in key}:
         raise ValueError("시트 번호가 열쇠와 다르다")
     out = []
-    for run in dict.fromkeys(map(run_label, key)):
-        ks = [dict(k, verdict=verdicts[k["sheet_no"]]) for k in key if run_label(k) == run]
+    labels = run_labels(key)
+    for run in dict.fromkeys(labels):
+        ks = [dict(k, verdict=verdicts[k["sheet_no"]]) for k, lb in zip(key, labels) if lb == run]
         ev = [k["evidence_valid"] for k in ks if k["evidence_valid"] is not None]
         out.append({
             "condition": run, "n": len(ks),
@@ -576,6 +577,31 @@ def score(verdicts, key):
 def run_label(k):
     """합친 열쇠에선 조건 이름만으로 실행이 갈리지 않는다(같은 dense라도 설정 · 답변 모델이 다르다)."""
     return " · ".join(x for x in (k.get("config"), k["condition"], k["model"]) if x)
+
+
+def qid_eval_sets():
+    """configs/eval_*.json의 평가셋 → {qid: 평가 설정 이름}. 평가셋끼리 qid가 겹치면 실패(판별 불가)."""
+    out = {}
+    for path in sorted((common.TOOL_DIR / "configs").glob("eval_*.json")):
+        ecfg = json.loads(path.read_text(encoding="utf-8"))
+        qids = {r["qid"] for r in load_eval_set(ecfg)}
+        if qids & out.keys():
+            raise ValueError(f"평가셋 qid가 겹친다 — 열쇠의 평가셋을 판별할 수 없다: {', '.join(sorted(qids & out.keys()))}")
+        out.update(dict.fromkeys(qids, ecfg["name"]))
+    return out
+
+
+def run_labels(key):
+    """열쇠 행마다 실행 이름. 평가셋이 둘 이상 섞인 열쇠만 평가셋 이름을 붙인다 — 설정 · 조건 · 모델이 같아도
+    평가셋이 다르면 다른 실행이다. 평가셋이 하나뿐인 열쇠는 이름이 그대로다(이전 합산과 같음).
+    평가셋 칸이 없는 열쇠(이 칸을 넣기 전)는 qid가 속한 평가셋 파일로 판별한다."""
+    lookup = qid_eval_sets() if any("eval_set" not in k for k in key) else {}
+    sets = [k.get("eval_set") or lookup.get(k["qid"]) for k in key]
+    distinct = set(sets)
+    if None in distinct and len(distinct) > 1:            # 판별 못 한 행이 다른 평가셋과 섞이면 실행을 가를 수 없다
+        raise ValueError(f"어느 평가셋 문항인지 모른다: {', '.join(sorted({k['qid'] for k, s in zip(key, sets) if s is None}))}")
+    multi = len(distinct) > 1
+    return [run_label(k) + (f" · {s}" if multi else "") for k, s in zip(key, sets)]
 
 
 def scope_ok(k, scope):

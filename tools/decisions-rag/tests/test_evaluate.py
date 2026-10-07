@@ -234,7 +234,7 @@ class AnswerPathTest(unittest.TestCase):
         chunks = [chunk("임계값 8이 양측에서 분리됨"), chunk("8→20 상향 제안"), chunk("배터리 무관")]
         rows = [row("Q1", "reversal", "임계값 8 양측", ["임계값 8이 양측에서 분리됨"], ["8→20 상향"]),
                 row("Q2", "not_in_doc", "배터리 며칠"), row("Q3", "fact", "상향 제안", ["8→20 상향 제안"])]
-        ecfg = {"answer_top_k": 2, "bm25_k1": 1.5, "bm25_b": 0.75, "random_seed": 1}
+        ecfg = {"name": "t", "answer_top_k": 2, "bm25_k1": 1.5, "bm25_b": 0.75, "random_seed": 1}
         retr = {"bm25": evaluate.bm25_retriever(chunks, ecfg)}
         prompts = []
 
@@ -254,6 +254,7 @@ class AnswerPathTest(unittest.TestCase):
         self.assertEqual((q1["evidence_valid"], q1["trap_in_answer"]), (True, True))
         self.assertIsNone(q2["evidence_valid"])
         self.assertTrue(q3["refused"])
+        self.assertEqual({i["eval_set"] for i in items}, {"t"})               # 열쇠에 평가셋 이름
         sheet, key = evaluate.make_sheet(items, 3)
         with tempfile.TemporaryDirectory() as d:
             evaluate.write_sheet(Path(d), sheet, key)
@@ -276,7 +277,7 @@ class AnswerPathTest(unittest.TestCase):
 
     def test_over_cap_stops_before_any_call(self):
         chunks = [chunk("가나다"), chunk("라마바")]
-        ecfg = {"answer_top_k": 2, "bm25_k1": 1.5, "bm25_b": 0.75, "random_seed": 1}
+        ecfg = {"name": "t", "answer_top_k": 2, "bm25_k1": 1.5, "bm25_b": 0.75, "random_seed": 1}
         retr = {"bm25": evaluate.bm25_retriever(chunks, ecfg)}
         cfg = common.load_config(CFG_PATH)
         calls = []
@@ -290,7 +291,7 @@ class AnswerPathTest(unittest.TestCase):
 class LocalAnswerTest(unittest.TestCase):
     def setUp(self):
         self.chunks = [chunk("가나다"), chunk("라마바")]
-        self.ecfg = {"answer_top_k": 2, "bm25_k1": 1.5, "bm25_b": 0.75, "random_seed": 1}
+        self.ecfg = {"name": "t", "answer_top_k": 2, "bm25_k1": 1.5, "bm25_b": 0.75, "random_seed": 1}
         self.retr = {"bm25": evaluate.bm25_retriever(self.chunks, self.ecfg)}
         self.cfg = common.load_config(CFG_PATH)
         self.rows = [row(f"Q{n}", "fact", "가나다", ["가나다"]) for n in range(3)]
@@ -377,6 +378,34 @@ class ScoreFieldsTest(unittest.TestCase):
         old = [{k: v for k, v in key_item(1, "Q1", "fact").items() if k not in ("call_failed", "format_error")}]
         [s] = evaluate.score({1: "정답"}, old)
         self.assertEqual((s["call_failed"], s["format_error"], s["correct_qids"]), (0, 0, ["Q1"]))
+
+
+
+class ScoreRunSplitTest(unittest.TestCase):
+    """설정 · 조건 · 모델이 같아도 평가셋이 다르면 다른 실행 — 평가셋이 하나뿐인 열쇠는 실행 이름이 그대로."""
+
+    def test_same_run_label_different_eval_sets_are_split(self):
+        key = [dict(key_item(1, "Q01", "fact"), eval_set="eval_v1"), dict(key_item(2, "H01", "fact"), eval_set="eval_h1"),
+               dict(key_item(3, "Q02", "fact"), eval_set="eval_v1")]
+        res = evaluate.score({1: "정답", 2: "오답", 3: "정답"}, key)
+        self.assertEqual([(r["condition"], r["n"], r["verdicts"]["전체"]) for r in res],
+                         [("dense · m · eval_v1", 2, {"정답": 2}), ("dense · m · eval_h1", 1, {"오답": 1})])
+
+    def test_old_keys_split_by_qid_membership(self):
+        res = evaluate.score({1: "정답", 2: "오답"}, [key_item(1, "Q01", "fact"), key_item(2, "H01", "fact")])
+        self.assertEqual([r["condition"] for r in res], ["dense · m · eval_v1", "dense · m · eval_h1"])
+
+    def test_single_eval_set_keeps_old_name(self):
+        res = evaluate.score({1: "정답", 2: "오답"}, [key_item(1, "Q01", "fact"), key_item(2, "Q02", "fact")])
+        self.assertEqual([r["condition"] for r in res], ["dense · m"])
+
+    def test_unknown_qid_mixed_with_known_set_fails(self):
+        with self.assertRaises(ValueError):
+            evaluate.run_labels([key_item(1, "Q01", "fact"), key_item(2, "X99", "fact")])
+
+    def test_registered_eval_sets_are_disjoint(self):
+        m = evaluate.qid_eval_sets()
+        self.assertEqual(Counter(m.values()), Counter({"eval_v1": 30, "eval_h1": 15}))
 
 
 def score_summary(by_type, qids=()):
