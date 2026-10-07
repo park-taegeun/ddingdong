@@ -106,6 +106,10 @@ export PYTHONDONTWRITEBYTECODE=1
   --exp-score <score/summary.json> --exp-run "<실행 이름>" --exp-retrieval <retrieval/summary.json> --exp-cond <조건> \
   --out-dir ~/ddingdong-rag/adopt-<이름>
 
+# v2 채택 판정(eval/PREREG_v2.md) — 1단계 = v1 검색 후보들(Hit@3 → MRR@10 → E5 · E3 · E4 순으로 하나 선택) · 2단계 = H1 검색 후보 1개
+.venv/bin/python -B evaluate.py adopt-v2 --stage 1 --base-retrieval <retrieval/summary.json> --base-cond dense \
+  --cands E3,E4,E5 --cand-retrievals <json>,<json>,<json> --cand-conds hyde,rewrite,dense --out-dir ~/ddingdong-rag/adopt-<이름>
+
 # 채점 일관성 — 같은 문항 · 같은 답(앞뒤 공백 제거) · 같은 거절 · 같은 호출 실패 여부인 행끼리 판정이 같은지(시트 안 · 시트 사이)
 .venv/bin/python -B evaluate.py consistency --sheets <a.csv>,<b.csv> --keys <a/key.jsonl>,<b/key.jsonl> \
   --out-dir ~/ddingdong-rag/consistency-<이름>
@@ -119,6 +123,7 @@ export PYTHONDONTWRITEBYTECODE=1
 | BM25 | 표준 라이브러리 구현. 문서 = 임베딩 본문(제목 경로 줄 + 본문). idf = log(1 + (N − df + 0.5) / (df + 0.5)), 점수 0 문서는 결과에서 뺀다 |
 | gold_removed | bm25는 정답 청크를 뺀 문서로 인덱스를 다시 만든다(df · 평균 길이 포함). dense는 넉넉히 받아 뺀 청크를 거른다(벡터 유사도는 다른 문서와 무관). 뺀 청크가 상위 `mrr_cutoff` 안에 나오면 실행 실패 |
 | hybrid | dense + bm25를 RRF(점수 = Σ 1 / (`rrf_k` + 순위), 동점은 청크 번호순)로 합친다. 각 목록 깊이 = 상위 50(사전 등록에 없어 결과 전에 고정 — `mrr_cutoff`의 5배). gold_removed:hybrid는 양쪽 목록에서 정답 청크를 뺀다 |
+| hyde · rewrite | 답변 모델 · 온도 0 · seed = `random_seed`로 PREREG_v2 프롬프트 원문(테스트가 문자 단위 대조)을 채워 문항마다 한 번 생성 → 검색 벡터 = 원 질문 임베딩과 생성문 임베딩의 산술 평균(llama-index `custom_embedding_strs` → `mean_agg`). retrieval이 `<out-dir>/generated.jsonl`에 남기고(예상 비용 > `--max-usd`면 호출 0), answer는 `--gen-cache`로 그 파일만 읽는다(없는 문항 = 실패). rewrite 제목 목록 = `##` · `###` · 소절 제목을 문서 순서로 각 80자 — 코드 블록 안 줄은 제외(청커와 같은 규칙) |
 | 로컬 모델 | Ollama 채팅 API(표준 라이브러리 HTTP) · 온도 0 · seed = `random_seed` · JSON 형식 · `num_ctx` 16384. Ollama는 `num_ctx`를 넘는 프롬프트를 오류 없이 잘라내므로, 서버가 센 입력 토큰이 절반을 넘으면 호출 실패로 처리. 모델 = 「태그@다이제스트 12자」로 기록 |
 | 형식 오류 · 호출 실패 | 모델 출력이 JSON이 아니면 거절로 치지 않고 원문을 답으로 남긴다(`format_error`). 로컬 호출 실패는 `call_failed`로 따로 기록하고 10회면 중단 |
 | 실행 구분 | 열쇠에 설정 이름(`config`)을 남긴다. 합산은 설정 · 조건 · 모델로 실행을 가른다(같은 dense라도 갈린다) |

@@ -585,5 +585,206 @@ class RealEvalSetTest(unittest.TestCase):
                 evaluate.dense_retriever(self.chunks, self.base, common.resolve_commit(COMMIT), str(persist), False)
 
 
+
+# ---------- v2: 질의 확장(hyde · rewrite) · 채택 판정 ----------
+
+class PromptTextTest(unittest.TestCase):
+    def test_prompts_match_prereg_v2_blocks(self):
+        import re
+        doc = (TOOL / "eval" / "PREREG_v2.md").read_text(encoding="utf-8")
+        for label, kind in (("E3", "hyde"), ("E4", "rewrite")):
+            [block] = re.findall(rf"^{label}:\n\n```\n(.*?)\n```$", doc, re.S | re.M)
+            self.assertEqual(evaluate.GEN_PROMPTS[kind], block)
+
+
+class HeadingListTest(unittest.TestCase):
+    def test_levels_subsections_cut_and_fences(self):
+        raw = "\n".join(["# 문서", "## 1 가", "본문", "### 1.1 나", "#### 1.1.1 깊은 제목", "**(a) 소절** 설명",
+                         "```", "## 코드 안 예시", "```", "**(B-2) " + "다" * 100 + "**"])
+        self.assertEqual(evaluate.heading_list(raw), ["## 1 가", "### 1.1 나", "**(a) 소절** 설명", ("**(B-2) " + "다" * 100)[:80]])
+
+    def test_real_doc(self):
+        h = evaluate.heading_list(common.read_doc_at(COMMIT))
+        self.assertEqual(len(h), 567)                         # 정규식만으로는 573 — 코드 블록 안 템플릿 6줄 제외
+        self.assertLessEqual(max(map(len, h)), evaluate.HEADING_CUT)
+
+
+def keyword_index(chunks):
+    """「알파」 · 「베타」 포함 여부 → 2차원 벡터. 메모리 인덱스(코사인)."""
+    from llama_index.core import VectorStoreIndex
+    from llama_index.core.embeddings import BaseEmbedding
+    import index as index_mod
+
+    class KeywordEmbedding(BaseEmbedding):
+        def _vec(self, text):
+            return [float("알파" in text), float("베타" in text)]
+
+        def _get_text_embedding(self, text):
+            return self._vec(text)
+
+        def _get_query_embedding(self, query):
+            return self._vec(query)
+
+        async def _aget_query_embedding(self, query):
+            return self._vec(query)
+
+    return VectorStoreIndex(index_mod.build_nodes(chunks), embed_model=KeywordEmbedding())
+
+
+class ExpandTest(unittest.TestCase):
+    """질문만 → 0(알파) 1위 · 생성문만 → 1(베타) 1위 · 둘의 평균 → 2(알파 베타) 1위. 어느 한쪽을 버리면 순위가 바뀐다."""
+
+    def setUp(self):
+        self.chunks = [chunk("알파 문단"), chunk("베타 문단"), chunk("알파 베타 정답")]
+        self.idx = keyword_index(self.chunks)
+        self.row = row("Q1", "fact", "알파 질문", ["알파 베타 정답"])
+        self.gen = lambda r: "베타 생성문"
+
+    def test_vector_is_mean_of_question_and_generated(self):
+        self.assertEqual(evaluate.dense_search(self.idx, self.chunks)(self.row, 3)[0], 0)
+        self.assertEqual(evaluate.dense_search(self.idx, self.chunks, self.gen)(self.row, 3)[0], 2)
+
+    def test_gold_removed_expanded(self):
+        ecfg = {"hit_k": 3, "mrr_cutoff": 10}
+        retr = {k: evaluate.dense_search(self.idx, self.chunks, self.gen) for k in ("hyde", "rewrite")}
+        conds = ["hyde", "gold_removed:hyde", "rewrite", "gold_removed:rewrite"]
+        recs = evaluate.evaluate_retrieval([self.row], self.chunks, ecfg, retr, conds)
+        self.assertEqual([r["rank"] for r in recs], [1, None, 1, None])
+        self.assertTrue(all(2 not in r["ranking"] for r in recs if r["condition"].startswith("gold_removed:")))
+
+
+def fake_gen_factory(calls):
+    def make(cfg, seed):
+        def complete(prompt):
+            calls.append(prompt)
+            return f"생성 {len(calls)}", 100, 0, 10
+        return complete
+    return make
+
+
+class GenerationCacheTest(unittest.TestCase):
+    """검색 평가가 문항마다 한 번 만들고, 답변 단계는 그 파일만 읽는다."""
+
+    @classmethod
+    def setUpClass(cls):
+        import index
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.persist = Path(cls.tmp.name) / "idx"
+        with contextlib.redirect_stdout(io.StringIO()):
+            index.main(["--commit", COMMIT, "--config", str(CFG_PATH), "--persist-dir", str(cls.persist),
+                        "--embed-cache", str(Path(cls.tmp.name) / "cache"), "--mock-embed"])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def args(self, cmd, out, conditions, **kw):
+        return SimpleNamespace(cmd=cmd, commit=COMMIT, config=str(CFG_PATH), eval_config=str(ECFG_PATH), conditions=conditions,
+                               out_dir=str(Path(self.tmp.name) / out), persist_dir=str(self.persist), **kw)
+
+    def test_retrieval_generates_once_per_question_then_answer_reads_cache(self):
+        calls = []
+        with contextlib.redirect_stdout(io.StringIO()):
+            _, _, rows, _, retr, _, out = evaluate.prepare(
+                self.args("retrieval", "r1", "hyde,gold_removed:hyde", max_usd=1.0), True, fake_gen_factory(calls))
+        self.assertEqual(len(calls), len(rows))                 # gold_removed 변형도 같은 생성문
+        self.assertTrue(all(c.startswith(evaluate.GEN_PROMPTS["hyde"].split("{")[0]) for c in calls))
+        cache = out / evaluate.GEN_FILE
+        self.assertEqual(len(cache.read_text(encoding="utf-8").splitlines()), len(rows))
+        run = json.loads((out / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual((run["generation"]["hyde"]["n"], run["rewrite_headings"]["lines"]), (len(rows), 567))
+
+        calls.clear()
+        _, _, _, _, retr, _, _ = evaluate.prepare(self.args("answer", "a1", "hyde", gen_cache=str(cache)), True,
+                                                  fake_gen_factory(calls))
+        self.assertEqual(len(calls), 0)
+        self.assertEqual(len(retr["hyde"](rows[0], 5)), 5)
+
+        lines = cache.read_text(encoding="utf-8").splitlines()
+        short = Path(self.tmp.name) / "short.jsonl"
+        short.write_text("\n".join(lines[1:]) + "\n", encoding="utf-8")
+        with self.assertRaises(ValueError):                      # 캐시에 없는 문항 = 실패(다시 생성하지 않는다)
+            evaluate.prepare(self.args("answer", "a2", "hyde", gen_cache=str(short)), True, fake_gen_factory(calls))
+        self.assertEqual(len(calls), 0)
+
+    def test_cost_cap_stops_before_any_call(self):
+        calls = []
+        with self.assertRaises(ValueError), contextlib.redirect_stdout(io.StringIO()):
+            evaluate.prepare(self.args("retrieval", "r2", "rewrite", max_usd=0.0001), True, fake_gen_factory(calls))
+        self.assertEqual(calls, [])
+
+
+def v2_ret(hits, mrr=0.1):
+    return [dict(r, mrr=mrr) for r in ret_summary(hits)]
+
+
+BASE_V2_HITS = {"fact": 3, "identifier": 1, "reversal": 2, "false_premise": 0}   # 전체 6
+
+
+class AdoptV2Test(unittest.TestCase):
+    def test_stage1_boundary_plus_two(self):
+        r = evaluate.adopt_v2(1, v2_ret(BASE_V2_HITS), {"E3": v2_ret(dict(BASE_V2_HITS, fact=5)),     # +2 = 통과
+                                                       "E4": v2_ret(dict(BASE_V2_HITS, fact=4))})    # +1 = 미통과
+        self.assertEqual([(x["experiment"], x["clauses"][0]["diff"], x["pass"]) for x in r["results"]],
+                         [("E3", 2, True), ("E4", 1, False)])
+        self.assertEqual(r["chosen"], "E3")
+
+    def test_stage1_type_drop_of_two_fails(self):
+        r = evaluate.adopt_v2(1, v2_ret(BASE_V2_HITS), {"E5": v2_ret(dict(BASE_V2_HITS, fact=8, reversal=0))})
+        self.assertFalse(r["results"][0]["pass"])
+        self.assertIsNone(r["chosen"])
+        r = evaluate.adopt_v2(1, v2_ret(BASE_V2_HITS), {"E5": v2_ret(dict(BASE_V2_HITS, fact=8, reversal=1))})
+        self.assertEqual(r["chosen"], "E5")
+
+    def test_stage1_tie_order(self):
+        same = v2_ret(dict(BASE_V2_HITS, fact=5), mrr=0.3)
+        for cands, want in ((("E3", "E4", "E5"), "E5"), (("E4", "E3"), "E3"), (("E4",), "E4")):
+            r = evaluate.adopt_v2(1, v2_ret(BASE_V2_HITS), {c: same for c in cands})
+            self.assertEqual(r["chosen"], want)
+        r = evaluate.adopt_v2(1, v2_ret(BASE_V2_HITS), {"E5": same, "E3": v2_ret(dict(BASE_V2_HITS, fact=5), mrr=0.31)})
+        self.assertEqual(r["chosen"], "E3")                     # Hit@3 같으면 MRR이 먼저
+        r = evaluate.adopt_v2(1, v2_ret(BASE_V2_HITS), {"E5": same, "E4": v2_ret(dict(BASE_V2_HITS, fact=6), mrr=0.1)})
+        self.assertEqual(r["chosen"], "E4")                     # Hit@3가 가장 먼저
+
+    def test_stage2_retrieval_and_answers(self):
+        n = {"fact": 3, "identifier": 3, "reversal": 3, "false_premise": 3}
+        base = [dict(x, mrr=0.1) for x in ret_summary({"fact": 1, "identifier": 1, "reversal": 1, "false_premise": 0}, n)]
+        same = [dict(x, mrr=0.1) for x in ret_summary({"fact": 0, "identifier": 2, "reversal": 1, "false_premise": 0}, n)]
+        self.assertEqual(evaluate.adopt_v2(2, base, {"E3": same})["chosen"], "E3")             # 차이 0 = 통과
+        less = [dict(x, mrr=0.1) for x in ret_summary({"fact": 0, "identifier": 1, "reversal": 1, "false_premise": 0}, n)]
+        self.assertIsNone(evaluate.adopt_v2(2, base, {"E3": less})["chosen"])
+        with self.assertRaises(ValueError):
+            evaluate.adopt_v2(2, base, {"E3": same, "E5": same})
+        s = lambda c, p=0: score_summary({"fact": {"정답": c, "부분": p, "오답": 1}})
+        self.assertTrue(evaluate.adopt_v2_answers(s(9), s(5), s(5))["pass"])
+        self.assertFalse(evaluate.adopt_v2_answers(s(8, 1), s(5), s(5))["pass"])              # 부분은 정답이 아니다
+        self.assertFalse(evaluate.adopt_v2_answers(s(9), s(4), s(5))["pass"])
+
+    def test_cli(self):
+        with tempfile.TemporaryDirectory() as d:
+            paths = []
+            for name, obj in (("b", v2_ret(BASE_V2_HITS)), ("e", v2_ret(dict(BASE_V2_HITS, fact=5)))):
+                paths.append(Path(d) / f"{name}.json")
+                paths[-1].write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+            args = ["adopt-v2", "--stage", "1", "--base-retrieval", str(paths[0]), "--base-cond", "c", "--cands", "E3,E5",
+                    "--cand-retrievals", f"{paths[1]},{paths[1]}", "--cand-conds", "c,c", "--out-dir", str(Path(d) / "out")]
+            with contextlib.redirect_stdout(io.StringIO()) as buf:
+                evaluate.main(args)
+            self.assertIn("선택 = E5", buf.getvalue())
+            bad = [x if x != "E3,E5" else "E3,E9" for x in args[:-1]] + [str(Path(d) / "out2")]
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                evaluate.main(bad)
+
+
+class V2ConfigTest(unittest.TestCase):
+    def test_h1_set_loads_and_e5_price_matches(self):
+        base = common.load_config(CFG_PATH)
+        rows = evaluate.load_eval_set(evaluate.load_eval_config(TOOL / "configs" / "eval_h1.json", base))
+        self.assertEqual(Counter(r["type"] for r in rows), Counter({t: 3 for t in evaluate.TYPES}))
+        e5 = common.load_config(TOOL / "configs" / "e5_large.json")
+        self.assertEqual({k for k in base if base[k] != e5[k]}, {"name", "embed_model", "embed_price_usd_per_1m_tokens"})
+        common.load_prices(e5)
+
+
 if __name__ == "__main__":
     unittest.main()
