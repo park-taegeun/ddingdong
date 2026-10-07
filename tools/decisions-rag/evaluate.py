@@ -243,37 +243,53 @@ def retrieval_table(summary, ecfg):
 
 # ---------- 답변 평가 ----------
 
-def run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, complete):
-    """조건 × 문항마다 상위 answer_top_k → 답변 모델(query.py 프롬프트 · 파서) → 기록."""
+EST_COMPLETION_TOKENS = 300   # 호출 전 예상 비용에만 쓰는 답 1회 출력 토큰 가정(실제 출력은 기록에서 센다)
+
+
+def run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, complete, prices, max_usd):
+    """조건 × 문항마다 상위 answer_top_k → 프롬프트를 모두 만든 뒤 예상 비용 > max_usd면 호출 없이 실패 → 답변 모델 → 기록."""
     common.use_bundled_tiktoken_cache()
     import tiktoken
-    enc = tiktoken.encoding_for_model(cfg["answer_model"])
-    items = []
+    model = cfg["answer_model"]
+    enc = tiktoken.encoding_for_model(model)
+    plans = []
     for cond in conditions:
         base, removed = split_condition(cond)
         for r in rows:
             gold = gold_chunks(chunks, r["gold_anchors"])
             t0 = time.monotonic()
             ids = retrievers[base](r, ecfg["answer_top_k"], gold if removed else frozenset())
-            t1 = time.monotonic()
+            sec = time.monotonic() - t0
             metas = [chunks[i].meta for i in ids]
             prompt = query.build_prompt(r["question"], metas, [chunks[i].body for i in ids])
-            raw = complete(prompt)
-            t2 = time.monotonic()
-            res = query.parse_answer(raw, metas)
-            cited = [ids[c["chunk"] - 1] for c in res["citations"]]
-            answered = not res["refused"]
-            items.append({
-                "qid": r["qid"], "type": r["type"], "condition": cond, "model": cfg["answer_model"],
-                "question": r["question"], "expected_answer": r["expected_answer"],
-                "answer": res["answer"], "refused": res["refused"], "citations": res["citations"],
-                "retrieved": ids,
-                # 답한 · 답 있는 문항만 판정한다(not_in_doc은 정답 조각이 없다)
-                "evidence_valid": any(i in gold for i in cited) if answered and r["type"] != NO_ANSWER else None,
-                "trap_in_answer": any(t in res["answer"] for t in r["trap_anchors"]) if r["type"] == "reversal" else None,
-                "retrieval_sec": round(t1 - t0, 4), "answer_sec": round(t2 - t1, 4),
-                "prompt_tokens": len(enc.encode(prompt)), "completion_tokens": len(enc.encode(raw)),
-            })
+            plans.append((cond, r, gold, ids, metas, prompt, sec, len(enc.encode(prompt))))
+    est = sum(common.usd(prices, model, input=p[-1], output=EST_COMPLETION_TOKENS) for p in plans)
+    print(f"답변 {len(plans)}회 예상 비용 ${est:.4f} (입력 = 로컬 tiktoken 추정 · 출력 {EST_COMPLETION_TOKENS}토큰/회 가정)"
+          f" · 상한 ${max_usd:.2f}")
+    if est > max_usd:
+        raise ValueError(f"예상 비용 ${est:.4f} > 상한 ${max_usd:.2f} — 호출 없이 중단")
+    items = []
+    for cond, r, gold, ids, metas, prompt, retrieval_sec, prompt_tokens in plans:
+        t1 = time.monotonic()
+        raw = complete(prompt)
+        t2 = time.monotonic()
+        res = query.parse_answer(raw, metas)
+        cited = [ids[c["chunk"] - 1] for c in res["citations"]]
+        answered = not res["refused"]
+        completion_tokens = len(enc.encode(raw))
+        items.append({
+            "qid": r["qid"], "type": r["type"], "condition": cond, "model": model,
+            "question": r["question"], "expected_answer": r["expected_answer"],
+            "answer": res["answer"], "refused": res["refused"], "citations": res["citations"],
+            "retrieved": ids,
+            # 답한 · 답 있는 문항만 판정한다(not_in_doc은 정답 조각이 없다)
+            "evidence_valid": any(i in gold for i in cited) if answered and r["type"] != NO_ANSWER else None,
+            "trap_in_answer": any(t in res["answer"] for t in r["trap_anchors"]) if r["type"] == "reversal" else None,
+            "retrieval_sec": round(retrieval_sec, 4), "answer_sec": round(t2 - t1, 4),
+            # 토큰 = 로컬 tiktoken 추정(채팅 형식 오버헤드 · 캐시 할인 미반영)
+            "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+            "cost_usd_est": common.usd(prices, model, input=prompt_tokens, output=completion_tokens),
+        })
     return items
 
 
@@ -337,6 +353,7 @@ def score(verdicts, key):
             "answer_sec_mean": sum(k["answer_sec"] for k in ks) / len(ks),
             "prompt_tokens": sum(k["prompt_tokens"] for k in ks),
             "completion_tokens": sum(k["completion_tokens"] for k in ks),
+            "cost_usd_est": sum(k["cost_usd_est"] for k in ks),
         })
     return out
 
@@ -350,11 +367,11 @@ def score_table(results):
     for s in results:
         for scope, c in s["verdicts"].items():
             lines.append(f"| {s['condition']} | {scope} | {c.get('정답', 0)} | {c.get('부분', 0)} | {c.get('오답', 0)} |")
-    lines += ["", "| 조건 | 환각 | 과잉 거절 | 근거 유효 | 번복 오답(자동 · 채점) | 검색 초(평균) | 답변 초(평균) | 토큰(입력 · 출력) |",
-              "|---|---|---|---|---|---|---|---|"]
+    lines += ["", "| 조건 | 환각 | 과잉 거절 | 근거 유효 | 번복 오답(자동 · 채점) | 검색 초(평균) | 답변 초(평균) | 토큰(입력 · 출력, 추정) | 달러(추정) |",
+              "|---|---|---|---|---|---|---|---|---|"]
     lines += [f"| {s['condition']} | {s['hallucination']} | {s['over_refusal']} | {s['evidence_valid'][0]} / {s['evidence_valid'][1]}"
               f" | {s['reversal_trap_auto']} · {s['reversal_wrong']} | {s['retrieval_sec_mean']:.3f} | {s['answer_sec_mean']:.3f}"
-              f" | {s['prompt_tokens']} · {s['completion_tokens']} |" for s in results]
+              f" | {s['prompt_tokens']} · {s['completion_tokens']} | {s['cost_usd_est']:.4f} |" for s in results]
     return "\n".join(lines)
 
 
@@ -371,6 +388,7 @@ def main(argv=None):
         p.add_argument("--conditions", required=True)
         p.add_argument("--out-dir", required=True)
         p.add_argument("--persist-dir")
+    sub.choices["answer"].add_argument("--max-usd", type=float, required=True, help="답변 호출 예상 비용 상한(달러)")
     p = sub.add_parser("score")
     p.add_argument("--sheet", required=True)
     p.add_argument("--key", required=True)
@@ -397,9 +415,13 @@ def main(argv=None):
             if not key:
                 common.fail("OPENAI_API_KEY가 없다 — tools/decisions-rag/.env에 넣을 것")
             cfg, ecfg, rows, chunks, retrievers, conditions, out = prepare(a, need_dense_mock_ok=False)
-            items = run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, query.make_llm(cfg, key))
+            items = run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, query.make_llm(cfg, key),
+                                common.load_prices(cfg), a.max_usd)
             write_sheet(out, *make_sheet(items, ecfg["sheet_shuffle_seed"]))
             print(f"시트 {len(items)}행 → {out / 'sheet.csv'} (열쇠 key.jsonl은 채점 전에 열지 말 것)")
+            print(f"토큰(추정) 입력 {sum(i['prompt_tokens'] for i in items)} · 출력 {sum(i['completion_tokens'] for i in items)}"
+                  f" · 비용 추정 ${sum(i['cost_usd_est'] for i in items):.4f}"
+                  f" · 답변 초(평균) {sum(i['answer_sec'] for i in items) / len(items):.3f}")
             return 0
     except (ValueError, FileNotFoundError) as e:
         common.fail(str(e))

@@ -217,7 +217,8 @@ class AnswerPathTest(unittest.TestCase):
                 return json.dumps({"answer": "3일", "evidence": [], "refused": False})
             return json.dumps({"answer": "", "evidence": [], "refused": True})
 
-        items = evaluate.run_answers(rows, chunks, {"answer_model": "gpt-4.1-mini"}, ecfg, retr, ["bm25"], fake)
+        cfg = common.load_config(CFG_PATH)
+        items = evaluate.run_answers(rows, chunks, cfg, ecfg, retr, ["bm25"], fake, common.load_prices(cfg), 1.0)
         self.assertEqual(prompts[0], query.build_prompt(rows[0]["question"], [chunks[0].meta, chunks[1].meta],
                                                         [chunks[0].body, chunks[1].body]))
         q1, q2, q3 = items
@@ -242,6 +243,40 @@ class AnswerPathTest(unittest.TestCase):
         self.assertEqual(s["evidence_valid"], [1, 1])
         self.assertEqual((s["reversal_trap_auto"], s["reversal_wrong"]), (1, 1))
         self.assertGreater(s["prompt_tokens"], 0)
+        self.assertAlmostEqual(s["cost_usd_est"], (0.40 * s["prompt_tokens"] + 1.60 * s["completion_tokens"]) / 1e6)
+
+    def test_over_cap_stops_before_any_call(self):
+        chunks = [chunk("가나다"), chunk("라마바")]
+        ecfg = {"answer_top_k": 2, "bm25_k1": 1.5, "bm25_b": 0.75, "random_seed": 1}
+        retr = {"bm25": evaluate.bm25_retriever(chunks, ecfg)}
+        cfg = common.load_config(CFG_PATH)
+        calls = []
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(ValueError):
+                evaluate.run_answers([row("Q1", "fact", "가나다", ["가나다"])], chunks, cfg, ecfg, retr, ["bm25"],
+                                     lambda p: calls.append(p) or '{"refused": true}', common.load_prices(cfg), 0.0)
+        self.assertEqual(calls, [])
+
+
+class PriceTest(unittest.TestCase):
+    def setUp(self):
+        self.cfg = common.load_config(CFG_PATH)
+        self.prices = common.load_prices(self.cfg)
+
+    def test_cost(self):
+        m = self.cfg["answer_model"]
+        self.assertAlmostEqual(common.usd(self.prices, m, input=1_000_000, output=500_000), 0.40 + 0.80)
+        self.assertAlmostEqual(common.usd(self.prices, self.cfg["embed_model"], input=760_000), 0.0152)
+
+    def test_unknown_model_fails_not_zero(self):
+        with self.assertRaises(ValueError):
+            common.usd(self.prices, "gpt-unknown", input=1000)
+        with self.assertRaises(ValueError):
+            common.load_prices(dict(self.cfg, answer_model="gpt-4.1-mini"))     # 별칭은 가격표에 없다
+
+    def test_embed_price_mismatch_fails(self):
+        with self.assertRaises(ValueError):
+            common.load_prices(dict(self.cfg, embed_price_usd_per_1m_tokens=0.03))
 
 
 class RealEvalSetTest(unittest.TestCase):

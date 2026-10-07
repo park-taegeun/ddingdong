@@ -47,6 +47,29 @@ def load_config(path):
     return cfg
 
 
+def load_prices(cfg, path=None):
+    """configs/prices.json(달러 / 100만 토큰). 설정의 모델이 없거나 임베딩 단가가 설정과 다르면 실패."""
+    with open(path or TOOL_DIR / "configs" / "prices.json", encoding="utf-8") as f:
+        prices = json.load(f)["models"]
+    if price(prices, cfg["embed_model"], "input") != cfg["embed_price_usd_per_1m_tokens"]:
+        raise ValueError(f"prices.json의 {cfg['embed_model']} 단가 ≠ 설정 embed_price_usd_per_1m_tokens")
+    price(prices, cfg["answer_model"], "input")
+    price(prices, cfg["answer_model"], "output")
+    return prices
+
+
+def price(prices, model, kind):
+    try:
+        return prices[model][kind]
+    except KeyError:
+        raise ValueError(f"prices.json에 가격이 없다(기본값 금지): {model} {kind}")
+
+
+def usd(prices, model, **tokens):
+    """usd(prices, 모델, input=…, output=…) — 토큰 수 × 단가."""
+    return sum(n * price(prices, model, kind) for kind, n in tokens.items()) / 1_000_000
+
+
 def config_hash(cfg):
     return hashlib.sha256(json.dumps(cfg, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 

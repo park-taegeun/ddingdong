@@ -56,14 +56,14 @@ export PYTHONDONTWRITEBYTECODE=1
 | 커버리지 | 청크는 원문 줄 조각(span)으로만 만든다 | 「비어 있지 않은 모든 줄이 어떤 청크에 들어간다」를 테스트로 증명 |
 | 임베딩 본문 | 제목 경로 한 줄 + 본문 | 메타데이터 키 · 값은 임베딩 · 답변 본문에서 뺀다(`excluded_*_metadata_keys`) |
 | 근거 표기 | 코드가 메타데이터에서 붙인다 | 모델 출력은 근거 청크 **번호**만 신뢰하고 범위 밖 번호는 버린다 |
-| 답변 모델 | `gpt-4.1-mini` · temperature 0 · JSON | 현행 소형 추론 모델(`gpt-5.4-mini` 등)은 `llama-index-llms-openai`가 temperature를 조용히 1.0으로 바꾼다 → 설정하면 거부 |
+| 답변 모델 | `gpt-4.1-mini-2025-04-14`(스냅샷 고정 — 별칭은 가리키는 대상이 바뀔 수 있다) · temperature 0 · JSON | 현행 소형 추론 모델(`gpt-5.4-mini` 등)은 `llama-index-llms-openai`가 temperature를 조용히 1.0으로 바꾼다 → 설정하면 거부 |
 | E1 스위치 | `mark_superseded` | 참이면 `~~X~~` → `[폐기] X [/폐기]`로 바꾼 본문을 임베딩 · 답변에 쓴다(표시 원문 보존). 기준선 = 거짓 |
 | 설정 | `configs/*.json` — 모든 손잡이 명시, 빠지면 실패(기본값 금지) | manifest에 설정 해시 · 커밋 · 청커 버전 · 패키지 버전을 남기고, 질의 때 해시가 다르면 거부 |
 | 비밀값 | 인덱싱 전 OpenAI 키 · `Bearer` 긴 토큰 · quick tunnel 주소를 센다 | 키 · 토큰이 나오면 인덱싱 중단, 터널 주소는 인덱스 본문에서만 마스킹. md5 같은 16진 해시는 세지 않는다 |
 | 개인정보 | 개인통관고유번호 · 메일 주소 · AWS 계정 ID(`Account ID` 뒤) · 휴대폰(하이픈 형식)을 센다 | 인덱싱은 막지 않고 인덱스 본문에서만 마스킹(원문 수정 0). 메일은 `@` 뒤 첫 글자가 영문일 때만 — `pkg@1.2.3.tgz` 같은 버전 문자열 제외. 출력은 종류별 개수 · 절 위치뿐 |
 | 절 표기 | `6.2` · `33.30(f)` · `카테고리 3` · 번호 없는 제목은 `카테고리 23 › 결정`(바깥 제목 이름을 붙임) | 같은 표기가 두 곳을 가리키지 않게(실문서 0건을 테스트로 고정) |
 | 중첩 소절 | 소절이 열린 채 `(a)`가 다시 시작하면 그 안의 중첩 → `6.3(s)(a)` | 해제 = 다음 제목 줄 또는 바깥보다 뒤 글자인 소문자 소절. 역순(`(g)` 뒤 `(f)`) · 대문자 체계(`(F)`)는 중첩이 아니다 |
-| 비용 | 임베딩 전 토큰 수 출력 · `max_embed_tokens` 넘으면 중단 | |
+| 비용 | 임베딩 전 토큰 수 출력 · `max_embed_tokens` 넘으면 중단 | 단가 = `configs/prices.json`(달러 / 100만 토큰). 설정의 모델이 없으면 실패(기본값 금지) · 임베딩 단가가 `embed_price_usd_per_1m_tokens`와 다르면 실패 |
 | 저장 | Chroma 로컬 영속(`--persist-dir`, 비어 있지 않으면 거부) | 익명 통계는 `Settings(anonymized_telemetry=False)`로 끈다. 컬렉션은 `embedding_function=None`(Chroma 기본 ONNX 모델을 받지 않는다) |
 
 `-k`는 출력 개수다. 설정의 `top_k`와 다르면 경고만 한다(평가 조건 = `top_k`).
@@ -87,7 +87,8 @@ export PYTHONDONTWRITEBYTECODE=1
   --eval-config configs/eval_v1.json --conditions bm25,random,gold_removed:bm25 --out-dir ~/ddingdong-rag/eval-<이름>
 
 # 답변 평가(OpenAI 답변 모델) → sheet.csv(블라인드) + key.jsonl(열쇠 — 채점 전에 열지 않는다)
-.venv/bin/python -B evaluate.py answer (위와 같은 인자)
+# 프롬프트를 모두 만든 뒤 예상 비용 > --max-usd면 호출 없이 중단
+.venv/bin/python -B evaluate.py answer (위와 같은 인자) --max-usd 1.00
 
 # 채점 합산 — sheet.csv의 판정 칸에 정답 · 부분 · 오답 중 하나를 채운 뒤
 .venv/bin/python -B evaluate.py score --sheet <sheet.csv> --key <key.jsonl> --out-dir ~/ddingdong-rag/score-<이름>
@@ -100,7 +101,7 @@ export PYTHONDONTWRITEBYTECODE=1
 | gold_removed | bm25는 정답 청크를 뺀 문서로 인덱스를 다시 만든다(df · 평균 길이 포함). dense는 넉넉히 받아 뺀 청크를 거른다(벡터 유사도는 다른 문서와 무관). 뺀 청크가 상위 `mrr_cutoff` 안에 나오면 실행 실패 |
 | random | 문항마다 `random.Random("<random_seed>:<qid>")` — 실행 순서와 무관하게 고정 |
 | 근거 유효 | 답한(거절 안 한) · 답 있는 문항만 센다(not_in_doc은 정답 조각이 없다) |
-| 토큰 | 답변 모델 인코딩(tiktoken, 동봉 캐시)으로 프롬프트 · 출력을 센다. 달러 환산은 가격 손잡이가 아직 없다 |
+| 토큰 · 달러 | 답변 모델 인코딩(tiktoken, 동봉 캐시)으로 프롬프트 · 출력을 센다 = **추정**(채팅 형식 오버헤드 · 캐시 할인 미반영). 달러 = 토큰 × `configs/prices.json`. 호출 전 예상은 출력 300토큰/회를 가정 |
 
 ## 다음 PR
 
