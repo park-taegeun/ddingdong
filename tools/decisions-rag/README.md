@@ -99,7 +99,19 @@ export PYTHONDONTWRITEBYTECODE=1
 
 # 채점 합산 — sheet.csv의 판정 칸에 정답 · 부분 · 오답 중 하나를 채운 뒤
 .venv/bin/python -B evaluate.py score --sheet <sheet.csv> --key <key.jsonl> --out-dir ~/ddingdong-rag/score-<이름>
+
+# 채택 판정 — PREREG 「실험」 절 E1 · E2 규칙을 조항별로(기준선 · 실험의 score · retrieval summary.json + 읽을 실행 · 조건 이름, 인자 전부 필수)
+.venv/bin/python -B evaluate.py adopt --experiment E1 \
+  --base-score <score/summary.json> --base-run "<실행 이름>" --base-retrieval <retrieval/summary.json> --base-cond <조건> \
+  --exp-score <score/summary.json> --exp-run "<실행 이름>" --exp-retrieval <retrieval/summary.json> --exp-cond <조건> \
+  --out-dir ~/ddingdong-rag/adopt-<이름>
+
+# 채점 일관성 — 같은 문항 · 같은 답(앞뒤 공백 제거) · 같은 거절 · 같은 호출 실패 여부인 행끼리 판정이 같은지(시트 안 · 시트 사이)
+.venv/bin/python -B evaluate.py consistency --sheets <a.csv>,<b.csv> --keys <a/key.jsonl>,<b/key.jsonl> \
+  --out-dir ~/ddingdong-rag/consistency-<이름>
 ```
+
+결과 v1(검색 · 답변 · 채택 판정 · 로컬 모델 비교 · 오답 분석) = [`eval/results_v1.md`](eval/results_v1.md).
 
 | 항목 | 결정 |
 |---|---|
@@ -112,9 +124,11 @@ export PYTHONDONTWRITEBYTECODE=1
 | 실행 구분 | 열쇠에 설정 이름(`config`)을 남긴다. 합산은 설정 · 조건 · 모델로 실행을 가른다(같은 dense라도 갈린다) |
 | random | 문항마다 `random.Random("<random_seed>:<qid>")` — 실행 순서와 무관하게 고정 |
 | 근거 유효 | 답한(거절 안 한) · 답 있는 문항만 센다(not_in_doc은 정답 조각이 없다) |
+| 환각 · 호출 실패 | 환각 = not_in_doc에서 거절 없이 오답. 호출 실패 행은 오답으로 채점하되 환각에서 뺀다(지어낸 답이 아님). score는 호출 실패 · 형식 오류 개수와 지연 중앙값도 낸다 |
+| 채택 판정 | 규칙 = `evaluate.py`의 상수 + PREREG 원문 인용 주석. 「정답 수」는 개수 비교(「부분」은 정답 아님) · 문항별 뒤집힘은 참고 칸 |
 | 토큰 · 달러 | 답변 모델 인코딩(tiktoken, 동봉 캐시)으로 프롬프트 · 출력을 센다 = **추정**(채팅 형식 오버헤드 · 캐시 할인 미반영). 달러 = 토큰 × `configs/prices.json`. 호출 전 예상은 출력 300토큰/회를 가정 |
 
 ## 다음 PR
 
-- ③ 기준선 측정 · 오답 분류 · 실험 E1(취소선 폐기 표시) · E2(하이브리드 검색) · 로컬 모델(Ollama) 비교
+- ③ 기준선 측정 · 오답 분류 · 실험 E1(취소선 폐기 표시) · E2(하이브리드 검색) · 로컬 모델(Ollama) 비교 — 결과 = `eval/results_v1.md`
 - ④(선택) MCP 서버
