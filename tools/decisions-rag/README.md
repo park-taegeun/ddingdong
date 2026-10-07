@@ -90,6 +90,13 @@ export PYTHONDONTWRITEBYTECODE=1
 # 프롬프트를 모두 만든 뒤 예상 비용 > --max-usd면 호출 없이 중단
 .venv/bin/python -B evaluate.py answer (위와 같은 인자) --max-usd 1.00
 
+# 답변 모델만 로컬(Ollama, http://localhost:11434)로 — 검색 · 프롬프트 · 파서는 같다(비용 0)
+.venv/bin/python -B evaluate.py answer (위와 같은 인자) --max-usd 0 --local-model llama3.1:8b
+
+# 여러 답변 실행의 열쇠(key.jsonl)를 한 블라인드 시트로 다시 섞기(sheet_shuffle_seed)
+.venv/bin/python -B evaluate.py merge --keys <a/key.jsonl>,<b/key.jsonl> --config configs/baseline.json \
+  --eval-config configs/eval_v1.json --out-dir ~/ddingdong-rag/<이름>
+
 # 채점 합산 — sheet.csv의 판정 칸에 정답 · 부분 · 오답 중 하나를 채운 뒤
 .venv/bin/python -B evaluate.py score --sheet <sheet.csv> --key <key.jsonl> --out-dir ~/ddingdong-rag/score-<이름>
 ```
@@ -99,6 +106,10 @@ export PYTHONDONTWRITEBYTECODE=1
 | 적중 | 정답 조각 하나의 **전체 문자열**을 담은 청크(표시 원문 · 마스킹 반영). 청크 경계에 걸쳐 잘린 조각은 적중 아님 |
 | BM25 | 표준 라이브러리 구현. 문서 = 임베딩 본문(제목 경로 줄 + 본문). idf = log(1 + (N − df + 0.5) / (df + 0.5)), 점수 0 문서는 결과에서 뺀다 |
 | gold_removed | bm25는 정답 청크를 뺀 문서로 인덱스를 다시 만든다(df · 평균 길이 포함). dense는 넉넉히 받아 뺀 청크를 거른다(벡터 유사도는 다른 문서와 무관). 뺀 청크가 상위 `mrr_cutoff` 안에 나오면 실행 실패 |
+| hybrid | dense + bm25를 RRF(점수 = Σ 1 / (`rrf_k` + 순위), 동점은 청크 번호순)로 합친다. 각 목록 깊이 = 상위 50(사전 등록에 없어 결과 전에 고정 — `mrr_cutoff`의 5배). gold_removed:hybrid는 양쪽 목록에서 정답 청크를 뺀다 |
+| 로컬 모델 | Ollama 채팅 API(표준 라이브러리 HTTP) · 온도 0 · seed = `random_seed` · JSON 형식 · `num_ctx` 16384. Ollama는 `num_ctx`를 넘는 프롬프트를 오류 없이 잘라내므로, 서버가 센 입력 토큰이 절반을 넘으면 호출 실패로 처리. 모델 = 「태그@다이제스트 12자」로 기록 |
+| 형식 오류 · 호출 실패 | 모델 출력이 JSON이 아니면 거절로 치지 않고 원문을 답으로 남긴다(`format_error`). 로컬 호출 실패는 `call_failed`로 따로 기록하고 10회면 중단 |
+| 실행 구분 | 열쇠에 설정 이름(`config`)을 남긴다. 합산은 설정 · 조건 · 모델로 실행을 가른다(같은 dense라도 갈린다) |
 | random | 문항마다 `random.Random("<random_seed>:<qid>")` — 실행 순서와 무관하게 고정 |
 | 근거 유효 | 답한(거절 안 한) · 답 있는 문항만 센다(not_in_doc은 정답 조각이 없다) |
 | 토큰 · 달러 | 답변 모델 인코딩(tiktoken, 동봉 캐시)으로 프롬프트 · 출력을 센다 = **추정**(채팅 형식 오버헤드 · 캐시 할인 미반영). 달러 = 토큰 × `configs/prices.json`. 호출 전 예상은 출력 300토큰/회를 가정 |
