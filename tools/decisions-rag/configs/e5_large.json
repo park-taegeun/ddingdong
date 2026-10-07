@@ -1,0 +1,12 @@
+{
+  "name": "e5_large",
+  "chunk_target_chars": 800,
+  "chunk_max_chars": 800,
+  "overlap_chars": 100,
+  "mark_superseded": false,
+  "embed_model": "text-embedding-3-large",
+  "embed_price_usd_per_1m_tokens": 0.13,
+  "max_embed_tokens": 1500000,
+  "top_k": 5,
+  "answer_model": "gpt-4.1-mini-2025-04-14"
+}
