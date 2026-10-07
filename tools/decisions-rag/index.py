@@ -75,6 +75,7 @@ def main(argv=None):
     t0 = time.monotonic()
     try:
         cfg = common.load_config(a.config)
+        prices = common.load_prices(cfg)
         persist = common.check_outside_repo(a.persist_dir)
         cache_dir = common.check_outside_repo(a.embed_cache)
         commit = common.resolve_commit(a.commit)
@@ -104,7 +105,7 @@ def main(argv=None):
     import tiktoken
     enc = tiktoken.encoding_for_model(cfg["embed_model"])
     tokens = sum(len(enc.encode(c.embed_text)) for c in chunks)
-    cost = tokens / 1_000_000 * cfg["embed_price_usd_per_1m_tokens"]
+    cost = common.usd(prices, cfg["embed_model"], input=tokens)
     print(f"임베딩 토큰 수: {tokens} (상한 {cfg['max_embed_tokens']}) · 예상 비용 ${cost:.4f} (캐시 적중분 미차감)")
     if tokens > cfg["max_embed_tokens"]:
         common.fail("임베딩 토큰 수가 설정 상한을 넘는다 — 호출 전 중단", code=4)
@@ -147,6 +148,7 @@ def main(argv=None):
         "chunker_version": chunker.CHUNKER_VERSION,
         "embedder": embedder, "embed_model": cfg["embed_model"] if embedder == "openai" else f"mock-{MOCK_DIM}",
         "chunks": len(chunks), "embed_tokens": tokens, "newly_embedded_chunks": new_embeds,
+        "embed_cost_usd_est": round(cost, 6),   # 로컬 tiktoken 토큰 수 × prices.json(캐시 적중분 미차감)
         "packages": common.package_versions(),
         "secret_scan": {k: len(v) for k, v in secrets.items()},
         "elapsed_sec": round(time.monotonic() - t0, 2),

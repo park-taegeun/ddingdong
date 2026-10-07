@@ -8,6 +8,7 @@ import argparse
 import json
 import sys
 import time
+import urllib.request
 
 import common
 
@@ -75,6 +76,44 @@ def make_llm(cfg, key):
     llm = OpenAI(model=cfg["answer_model"], temperature=0, api_key=key, max_retries=1,
                  additional_kwargs={"response_format": {"type": "json_object"}})
     return lambda prompt: llm.complete(prompt).text
+
+
+OLLAMA_URL = "http://localhost:11434"
+# Ollama는 num_ctx를 넘는 프롬프트를 오류 없이 앞을 잘라 약 절반만 남긴다(0.40.0 실측: 256 → 130).
+# → 넉넉히 잡고, 서버가 센 입력 토큰이 절반을 넘으면 잘렸을 수 있다고 보고 실패로 처리한다.
+LOCAL_NUM_CTX = 16384
+
+
+class LocalCallError(RuntimeError):
+    """로컬 모델 호출 실패(연결 · 시간 초과 · 응답 형식) — 모델 출력의 JSON 형식 오류와 구분한다."""
+
+
+def local_model_digest(model, opener=urllib.request.urlopen):
+    """→ 설치된 모델의 다이제스트(태그 목록 API). 없으면 ValueError."""
+    with opener(f"{OLLAMA_URL}/api/tags", timeout=10) as r:
+        tags = {m["name"]: m["digest"] for m in json.load(r)["models"]}
+    if model not in tags:
+        raise ValueError(f"Ollama에 모델이 없다: {model}")
+    return tags[model]
+
+
+def make_local_llm(model, seed, opener=urllib.request.urlopen):
+    """Ollama 채팅 API(표준 라이브러리 HTTP) → complete(prompt) = (출력, 입력 토큰, 출력 토큰). 사용자 메시지 1개 = OpenAI 경로와 같은 형태."""
+    def complete(prompt):
+        body = {"model": model, "messages": [{"role": "user", "content": prompt}], "stream": False, "format": "json",
+                "options": {"temperature": 0, "seed": seed, "num_ctx": LOCAL_NUM_CTX}}
+        req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=json.dumps(body).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with opener(req, timeout=600) as r:
+                data = json.load(r)
+            text, n_in, n_out = data["message"]["content"], data["prompt_eval_count"], data["eval_count"]
+        except (OSError, ValueError, KeyError) as e:
+            raise LocalCallError(f"{type(e).__name__}") from e
+        if n_in > LOCAL_NUM_CTX // 2:
+            raise LocalCallError(f"입력 {n_in}토큰 > num_ctx {LOCAL_NUM_CTX}의 절반 — 잘렸을 수 있다")
+        return text, n_in, n_out
+    return complete
 
 
 def open_index(persist, manifest):

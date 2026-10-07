@@ -5,10 +5,19 @@
       --conditions bm25,random,gold_removed:bm25 --out-dir <repo 밖 빈 폴더> [--persist-dir <dense 인덱스>]
   # 답변 평가 → 블라인드 채점 시트(sheet.csv) + 열쇠(key.jsonl). 답변 모델 = OpenAI 호출
   python -B evaluate.py answer  (위와 같은 인자)
+  # 답변 모델만 로컬(Ollama)로 — 검색 · 프롬프트 · 파서는 같다. 비용 0
+  python -B evaluate.py answer  (위와 같은 인자) --local-model <Ollama 태그>
+  # 여러 답변 실행의 열쇠를 한 블라인드 시트로 다시 섞기
+  python -B evaluate.py merge --keys <key.jsonl,...> --config <설정> --eval-config <평가 설정> --out-dir <repo 밖 빈 폴더>
   # 채점 합산 — 사용자가 판정 칸을 채운 시트 + 열쇠
   python -B evaluate.py score --sheet <sheet.csv> --key <key.jsonl> --out-dir <repo 밖 빈 폴더>
+  # 채택 판정 — PREREG 「실험」 절 규칙(E1 · E2)을 조항별로. 입력 = score · retrieval의 summary.json + 읽을 실행 · 조건 이름
+  python -B evaluate.py adopt --experiment <E1|E2> --base-score <json> --base-run <이름> --base-retrieval <json> --base-cond <이름> \
+      --exp-score <json> --exp-run <이름> --exp-retrieval <json> --exp-cond <이름> --out-dir <repo 밖 빈 폴더>
+  # 채점 일관성 — 같은 문항 · 같은 답(앞뒤 공백 제거) · 같은 거절 · 같은 호출 실패 여부인 행끼리 판정이 같은지
+  python -B evaluate.py consistency --sheets <a.csv,b.csv> --keys <a/key.jsonl,b/key.jsonl> --out-dir <repo 밖 빈 폴더>
 
-조건 = bm25 · random · dense · gold_removed:bm25 · gold_removed:dense. dense는 --persist-dir 인덱스가 필요하다.
+조건 = bm25 · random · dense · hybrid · gold_removed:<bm25|dense|hybrid>. dense · hybrid는 --persist-dir 인덱스가 필요하다.
 """
 import argparse
 import csv
@@ -17,9 +26,12 @@ import json
 import math
 import random
 import re
+import statistics
 import sys
 import time
-from collections import Counter
+from collections import Counter, defaultdict
+from itertools import combinations
+from pathlib import Path
 
 import chunker
 import common
@@ -30,7 +42,8 @@ EVAL_KEYS = ("name", "eval_set", "eval_set_sha256", "hit_k", "mrr_cutoff", "answ
 TOKENIZER = "word_ascii+hangul_bigram_v1"
 TYPES = ("fact", "identifier", "reversal", "not_in_doc", "false_premise")
 NO_ANSWER = "not_in_doc"                       # 검색 지표에서 뺀다
-CONDITIONS = ("bm25", "random", "dense", "gold_removed:bm25", "gold_removed:dense")
+CONDITIONS = ("bm25", "random", "dense", "hybrid", "gold_removed:bm25", "gold_removed:dense", "gold_removed:hybrid")
+NEEDS_INDEX = ("dense", "hybrid")
 VERDICTS = ("정답", "부분", "오답")
 SHEET_COLS = ("시트 번호", "질문", "기대 답", "모델 답", "거절 여부", "판정", "메모")
 
@@ -152,6 +165,27 @@ def dense_retriever(chunks, cfg, commit, persist_dir, allow_mock):
     return search
 
 
+# RRF에 넣는 각 목록의 깊이 — 사전 등록에 없어 결과를 보기 전에 고정했다.
+# 50 = mrr_cutoff 10의 5배: 한쪽 목록의 꼬리에만 있는 청크도 점수를 받게 해 깊이 경계의 동점 · 잘림 영향을 줄인다.
+RRF_DEPTH = 50
+
+
+def rrf(rankings, k):
+    """Reciprocal Rank Fusion — 점수 = Σ 1 / (k + 순위). 원점수는 쓰지 않는다. 동점은 청크 번호순(결정적)."""
+    score = Counter()
+    for ranking in rankings:
+        for rank, i in enumerate(ranking, 1):
+            score[i] += 1 / (k + rank)
+    return sorted(score, key=lambda i: (-score[i], i))
+
+
+def hybrid_retriever(dense, bm25, ecfg):
+    def search(row, k, exclude=frozenset()):
+        lists = [dense(row, RRF_DEPTH, exclude), bm25(row, RRF_DEPTH, exclude)]   # 뺄 청크는 양쪽 모두에서 뺀다
+        return rrf(lists, ecfg["rrf_k"])[:k]
+    return search
+
+
 def prepare(a, need_dense_mock_ok):
     """공통 준비: 설정 · 평가셋 · 커밋 고정 원문 · 청크 · 검색기 · 출력 폴더."""
     cfg = common.load_config(a.config)
@@ -170,10 +204,11 @@ def prepare(a, need_dense_mock_ok):
         raise ValueError(f"질문 문장이 원문에 있다(오염): {', '.join(dirty)}")
     chunks = chunker.chunk(common.mask_secrets(raw), commit, cfg)
     retrievers = {"bm25": bm25_retriever(chunks, ecfg), "random": random_retriever(chunks, ecfg)}
-    if any(c.endswith("dense") for c in conditions):
+    if any(split_condition(c)[0] in NEEDS_INDEX for c in conditions):
         if not a.persist_dir:
-            raise ValueError("dense 조건은 --persist-dir가 필요하다")
+            raise ValueError("dense · hybrid 조건은 --persist-dir가 필요하다")
         retrievers["dense"] = dense_retriever(chunks, cfg, commit, a.persist_dir, need_dense_mock_ok)
+        retrievers["hybrid"] = hybrid_retriever(retrievers["dense"], retrievers["bm25"], ecfg)
     out = prepare_out_dir(a.out_dir)
     run = {"commit": commit, "config": cfg["name"], "config_hash": common.config_hash(cfg),
            "eval_config": ecfg, "conditions": conditions, "chunks": len(chunks),
@@ -243,37 +278,74 @@ def retrieval_table(summary, ecfg):
 
 # ---------- 답변 평가 ----------
 
-def run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, complete):
-    """조건 × 문항마다 상위 answer_top_k → 답변 모델(query.py 프롬프트 · 파서) → 기록."""
+EST_COMPLETION_TOKENS = 300   # 호출 전 예상 비용에만 쓰는 답 1회 출력 토큰 가정(실제 출력은 기록에서 센다)
+MAX_CALL_FAILURES = 10        # 로컬 모델 호출 실패가 이만큼 쌓이면 실행 실패
+
+
+def run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, complete, prices, max_usd, local_model=None):
+    """조건 × 문항마다 상위 answer_top_k → 프롬프트를 모두 만든 뒤 예상 비용 > max_usd면 호출 없이 실패 → 답변 모델 → 기록.
+
+    local_model = 「태그@다이제스트」면 로컬 모델: complete가 (출력, 입력 토큰, 출력 토큰)을 돌려주고 비용 0.
+    모델 출력이 JSON이 아니면 거절로 치지 않고 원문을 답으로 남긴다(format_error).
+    """
     common.use_bundled_tiktoken_cache()
     import tiktoken
+    model = local_model or cfg["answer_model"]
     enc = tiktoken.encoding_for_model(cfg["answer_model"])
-    items = []
+    plans = []
     for cond in conditions:
         base, removed = split_condition(cond)
         for r in rows:
             gold = gold_chunks(chunks, r["gold_anchors"])
             t0 = time.monotonic()
             ids = retrievers[base](r, ecfg["answer_top_k"], gold if removed else frozenset())
-            t1 = time.monotonic()
+            sec = time.monotonic() - t0
             metas = [chunks[i].meta for i in ids]
             prompt = query.build_prompt(r["question"], metas, [chunks[i].body for i in ids])
-            raw = complete(prompt)
-            t2 = time.monotonic()
+            plans.append((cond, r, gold, ids, metas, prompt, sec, len(enc.encode(prompt))))
+    est = 0.0 if local_model else sum(common.usd(prices, model, input=p[-1], output=EST_COMPLETION_TOKENS) for p in plans)
+    print(f"답변 {len(plans)}회 예상 비용 ${est:.4f} (입력 = 로컬 tiktoken 추정 · 출력 {EST_COMPLETION_TOKENS}토큰/회 가정)"
+          f" · 상한 ${max_usd:.2f}")
+    if est > max_usd:
+        raise ValueError(f"예상 비용 ${est:.4f} > 상한 ${max_usd:.2f} — 호출 없이 중단")
+    items, failures = [], 0
+    for cond, r, gold, ids, metas, prompt, retrieval_sec, prompt_tokens in plans:
+        t1 = time.monotonic()
+        call_failed = format_error = False
+        try:
+            out = complete(prompt)
+        except query.LocalCallError as e:
+            failures += 1
+            print(f"로컬 모델 호출 실패 {failures}회: {e}", file=sys.stderr)
+            if failures >= MAX_CALL_FAILURES:
+                raise EvalError(f"로컬 모델 호출 실패 {failures}회 — 중단")
+            call_failed, out = True, ""
+        t2 = time.monotonic()
+        if local_model:
+            raw, prompt_tokens, completion_tokens = out if not call_failed else ("", 0, 0)
+        else:
+            raw, completion_tokens = out, len(enc.encode(out))
+        try:
             res = query.parse_answer(raw, metas)
-            cited = [ids[c["chunk"] - 1] for c in res["citations"]]
-            answered = not res["refused"]
-            items.append({
-                "qid": r["qid"], "type": r["type"], "condition": cond, "model": cfg["answer_model"],
-                "question": r["question"], "expected_answer": r["expected_answer"],
-                "answer": res["answer"], "refused": res["refused"], "citations": res["citations"],
-                "retrieved": ids,
-                # 답한 · 답 있는 문항만 판정한다(not_in_doc은 정답 조각이 없다)
-                "evidence_valid": any(i in gold for i in cited) if answered and r["type"] != NO_ANSWER else None,
-                "trap_in_answer": any(t in res["answer"] for t in r["trap_anchors"]) if r["type"] == "reversal" else None,
-                "retrieval_sec": round(t1 - t0, 4), "answer_sec": round(t2 - t1, 4),
-                "prompt_tokens": len(enc.encode(prompt)), "completion_tokens": len(enc.encode(raw)),
-            })
+        except ValueError:
+            format_error = not call_failed
+            res = {"answer": raw, "refused": False, "citations": []}
+        cited = [ids[c["chunk"] - 1] for c in res["citations"]]
+        answered = not (res["refused"] or format_error or call_failed)
+        items.append({
+            "qid": r["qid"], "type": r["type"], "config": cfg["name"], "condition": cond, "model": model,
+            "question": r["question"], "expected_answer": r["expected_answer"],
+            "answer": res["answer"], "refused": res["refused"], "citations": res["citations"],
+            "format_error": format_error, "call_failed": call_failed,
+            "retrieved": ids,
+            # 답한 · 답 있는 문항만 판정한다(not_in_doc은 정답 조각이 없다)
+            "evidence_valid": any(i in gold for i in cited) if answered and r["type"] != NO_ANSWER else None,
+            "trap_in_answer": any(t in res["answer"] for t in r["trap_anchors"]) if r["type"] == "reversal" else None,
+            "retrieval_sec": round(retrieval_sec, 4), "answer_sec": round(t2 - t1, 4),
+            # 토큰 = OpenAI는 로컬 tiktoken 추정(채팅 형식 오버헤드 · 캐시 할인 미반영) · 로컬 모델은 서버가 센 값
+            "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+            "cost_usd_est": 0.0 if local_model else common.usd(prices, model, input=prompt_tokens, output=completion_tokens),
+        })
     return items
 
 
@@ -295,6 +367,18 @@ def write_sheet(out, sheet, key):
         w.writerow(SHEET_COLS)
         w.writerows(sheet)
     (out / "key.jsonl").write_text("".join(json.dumps(k, ensure_ascii=False) + "\n" for k in key), encoding="utf-8")
+
+
+def merge_keys(paths):
+    """여러 실행의 열쇠 → 시트 번호를 뗀 답변 기록. 같은 (문항 · 설정 · 조건 · 모델)이 두 번이면 실패."""
+    items = []
+    for path in paths:
+        with open(path, encoding="utf-8") as f:
+            items += [{k: v for k, v in json.loads(line).items() if k != "sheet_no"} for line in f if line.strip()]
+    ids = [(i["qid"], run_label(i)) for i in items]
+    if len(ids) != len(set(ids)):
+        raise ValueError("같은 문항 · 실행이 두 번 들어 있다")
+    return items
 
 
 # ---------- 채점 합산 ----------
@@ -322,23 +406,39 @@ def score(verdicts, key):
     if set(verdicts) != {k["sheet_no"] for k in key}:
         raise ValueError("시트 번호가 열쇠와 다르다")
     out = []
-    for cond in dict.fromkeys(k["condition"] for k in key):
-        ks = [dict(k, verdict=verdicts[k["sheet_no"]]) for k in key if k["condition"] == cond]
+    for run in dict.fromkeys(map(run_label, key)):
+        ks = [dict(k, verdict=verdicts[k["sheet_no"]]) for k in key if run_label(k) == run]
         ev = [k["evidence_valid"] for k in ks if k["evidence_valid"] is not None]
         out.append({
-            "condition": cond, "n": len(ks),
+            "condition": run, "n": len(ks),
             "verdicts": {t: dict(Counter(k["verdict"] for k in ks if scope_ok(k, t))) for t in ("전체",) + TYPES},
-            "hallucination": sum(k["type"] == NO_ANSWER and not k["refused"] and k["verdict"] == "오답" for k in ks),
+            # 호출 실패 행은 모델이 지어낸 답이 아니다 → 환각에서 뺀다(오답 채점은 그대로)
+            "hallucination": sum(k["type"] == NO_ANSWER and not k["refused"] and not k.get("call_failed")
+                                 and k["verdict"] == "오답" for k in ks),
             "over_refusal": sum(k["type"] != NO_ANSWER and k["refused"] for k in ks),
             "evidence_valid": [sum(ev), len(ev)],
             "reversal_trap_auto": sum(bool(k["trap_in_answer"]) for k in ks),
+            # reversal 문항의 「오답」 판정 수(거절 · 다른 틀린 값 포함) — PREREG 「번복 오답」(폐기안 채택 수)과 다르다
             "reversal_wrong": sum(k["type"] == "reversal" and k["verdict"] == "오답" for k in ks),
             "retrieval_sec_mean": sum(k["retrieval_sec"] for k in ks) / len(ks),
             "answer_sec_mean": sum(k["answer_sec"] for k in ks) / len(ks),
             "prompt_tokens": sum(k["prompt_tokens"] for k in ks),
             "completion_tokens": sum(k["completion_tokens"] for k in ks),
+            "cost_usd_est": sum(k["cost_usd_est"] for k in ks),
+            # 아래는 나중에 더한 칸 — 이전 열쇠엔 call_failed · format_error가 없다(= 거짓)
+            "call_failed": sum(bool(k.get("call_failed")) for k in ks),
+            "format_error": sum(bool(k.get("format_error")) for k in ks),
+            # 로컬 모델은 첫 호출에 모델 적재 시간이 들어 평균을 끌 수 있다
+            "retrieval_sec_median": statistics.median(k["retrieval_sec"] for k in ks),
+            "answer_sec_median": statistics.median(k["answer_sec"] for k in ks),
+            "correct_qids": sorted(k["qid"] for k in ks if k["verdict"] == "정답"),   # adopt의 참고 칸(뒤집힘)용
         })
     return out
+
+
+def run_label(k):
+    """합친 열쇠에선 조건 이름만으로 실행이 갈리지 않는다(같은 dense라도 설정 · 답변 모델이 다르다)."""
+    return " · ".join(x for x in (k.get("config"), k["condition"], k["model"]) if x)
 
 
 def scope_ok(k, scope):
@@ -350,11 +450,105 @@ def score_table(results):
     for s in results:
         for scope, c in s["verdicts"].items():
             lines.append(f"| {s['condition']} | {scope} | {c.get('정답', 0)} | {c.get('부분', 0)} | {c.get('오답', 0)} |")
-    lines += ["", "| 조건 | 환각 | 과잉 거절 | 근거 유효 | 번복 오답(자동 · 채점) | 검색 초(평균) | 답변 초(평균) | 토큰(입력 · 출력) |",
-              "|---|---|---|---|---|---|---|---|"]
+    lines += ["", "| 조건 | 환각 | 과잉 거절 | 근거 유효 | 번복 앵커(자동) | reversal 오답(채점) | 호출 실패 | 형식 오류 | 검색 초(평균 · 중앙값)"
+              " | 답변 초(평균 · 중앙값) | 토큰(입력 · 출력, 추정) | 달러(추정) |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     lines += [f"| {s['condition']} | {s['hallucination']} | {s['over_refusal']} | {s['evidence_valid'][0]} / {s['evidence_valid'][1]}"
-              f" | {s['reversal_trap_auto']} · {s['reversal_wrong']} | {s['retrieval_sec_mean']:.3f} | {s['answer_sec_mean']:.3f}"
-              f" | {s['prompt_tokens']} · {s['completion_tokens']} |" for s in results]
+              f" | {s['reversal_trap_auto']} | {s['reversal_wrong']} | {s['call_failed']} | {s['format_error']}"
+              f" | {s['retrieval_sec_mean']:.3f} · {s['retrieval_sec_median']:.3f} | {s['answer_sec_mean']:.3f} · {s['answer_sec_median']:.3f}"
+              f" | {s['prompt_tokens']} · {s['completion_tokens']} | {s['cost_usd_est']:.4f} |" for s in results]
+    return "\n".join(lines)
+
+
+# ---------- 채택 판정 ----------
+
+# eval/PREREG.md 「실험」 절 원문(사전 등록 7188a4a — 그 파일은 고치지 않는다):
+#   E1 = `mark_superseded` 참(취소선 → [폐기] 표시). 채택 = reversal 정답 수 +1 이상 · 나머지 25문항 정답 수 감소 0 · 전체 Hit@3 감소 0
+#   E2 = dense + bm25를 RRF(k = 60)로 합침. 채택 = 전체 Hit@3 +2문항 이상 · 정답 수 감소 0 · 어떤 유형도 Hit@3가 2문항 이상 줄지 않음
+# 조항 = (이름, 지표, 범위, 통과에 필요한 최소 차이(실험 − 기준선)). 「정답 수」는 개수 비교 — 「부분」은 정답이 아니다.
+REV_OUT = "reversal 밖"
+ADOPT_RULES = {
+    "E1": (("reversal 정답 수 +1 이상", "correct", "reversal", 1),
+           ("나머지 25문항 정답 수 감소 0", "correct", REV_OUT, 0),
+           ("전체 Hit@3 감소 0", "hit", "전체", 0)),
+    "E2": (("전체 Hit@3 +2문항 이상", "hit", "전체", 2),
+           ("정답 수 감소 0", "correct", "전체", 0))
+          + tuple((f"{t} Hit@3 2문항 이상 감소 없음", "hit", t, -1) for t in TYPES if t != NO_ANSWER),
+}
+
+
+def correct(counts):
+    return counts.get("정답", 0)                  # 「부분」은 정답이 아니다
+
+
+def pick(rows, name, what):
+    got = [r for r in rows if r["condition"] == name]
+    if not got:
+        raise ValueError(f"{what}에 「{name}」이 없다 — 있는 것: {', '.join(dict.fromkeys(r['condition'] for r in rows))}")
+    return got
+
+
+def adopt(exp, base_score, exp_score, base_ret, exp_ret):
+    """score 한 실행 + 검색 요약 한 조건씩(기준선 · 실험) → 조항별 판정. 문항별 뒤집힘은 참고 칸 — 판정에 안 쓴다."""
+    if not ("correct_qids" in base_score and "correct_qids" in exp_score):
+        raise ValueError("score 요약에 correct_qids가 없다 — 지금 score로 다시 합산할 것")
+    if base_score["n"] != exp_score["n"]:
+        raise ValueError(f"답변 문항 수가 다르다: {base_score['n']} ≠ {exp_score['n']}")
+
+    def value(metric, scope, s, ret):
+        """→ (값, 문항 수)."""
+        if metric == "hit":
+            [r] = [r for r in ret if r["scope"] == scope]
+            return r["hits"], r["n"]
+        v = s["verdicts"]
+        if scope == REV_OUT:
+            return correct(v["전체"]) - correct(v["reversal"]), sum(v["전체"].values()) - sum(v["reversal"].values())
+        return correct(v[scope]), sum(v[scope].values())
+
+    clauses = []
+    for name, metric, scope, need in ADOPT_RULES[exp]:
+        (b, bn), (e, en) = value(metric, scope, base_score, base_ret), value(metric, scope, exp_score, exp_ret)
+        if bn != en:
+            raise ValueError(f"{name}: 기준선 · 실험 문항 수가 다르다({bn} ≠ {en})")
+        clauses.append({"clause": name, "n": bn, "base": b, "exp": e, "diff": e - b, "need": need, "pass": e - b >= need})
+    bq, eq = set(base_score["correct_qids"]), set(exp_score["correct_qids"])
+    return {"experiment": exp, "clauses": clauses, "adopted": all(c["pass"] for c in clauses),
+            "ref_correct_lost": sorted(bq - eq), "ref_correct_gained": sorted(eq - bq)}
+
+
+def adopt_table(r):
+    lines = [f"### {r['experiment']} — {'채택' if r['adopted'] else '미채택'}(사전 등록 규칙 기준)", "",
+             "| 조항 | n | 기준선 | 실험 | 차이 | 필요 | 판정 |", "|---|---|---|---|---|---|---|"]
+    lines += [f"| {c['clause']} | {c['n']} | {c['base']} | {c['exp']} | {c['diff']:+d} | ≥ {c['need']:+d} | {'통과' if c['pass'] else '미통과'} |"
+              for c in r["clauses"]]
+    lines += ["", f"참고(판정에 안 씀) — 정답 → 비정답: {', '.join(r['ref_correct_lost']) or '없음'}"
+                  f" · 비정답 → 정답: {', '.join(r['ref_correct_gained']) or '없음'}"]
+    return "\n".join(lines)
+
+
+# ---------- 채점 일관성 ----------
+
+def consistency(sheets):
+    """sheets = [(이름, {시트 번호: 판정}, 열쇠)]. 같은 문항 · 같은 답 본문(앞뒤 공백 제거) · 같은 거절 여부 · 같은 호출 실패 여부인
+    행끼리 판정이 같은지 — 시트 안 · 시트 사이 모두. 거절 · 호출 실패를 짝 기준에 넣는다: 빈 답이라도 거절(정답일 수 있다)과
+    호출 실패(오답)는 판정이 다른 게 맞다."""
+    groups = defaultdict(list)
+    for name, verdicts, key in sheets:
+        if set(verdicts) != {k["sheet_no"] for k in key}:
+            raise ValueError(f"{name}: 시트 번호가 열쇠와 다르다")
+        for k in key:
+            ans = k["answer"].strip()
+            groups[(k["qid"], ans, bool(k["refused"]), bool(k.get("call_failed")))].append(
+                {"qid": k["qid"], "sheet": name, "sheet_no": k["sheet_no"], "verdict": verdicts[k["sheet_no"]], "empty": not ans})
+    pairs = [(a, b) for g in groups.values() for a, b in combinations(g, 2)]
+    return {"pairs": sum(not a["empty"] for a, _ in pairs), "empty_pairs": sum(a["empty"] for a, _ in pairs),
+            "mismatches": [[{x: r[x] for x in ("qid", "sheet", "sheet_no", "verdict")} for r in p]
+                           for p in pairs if p[0]["verdict"] != p[1]["verdict"]]}
+
+
+def consistency_table(r):
+    lines = [f"동일 답 쌍 {r['pairs']} · 빈 답 쌍 {r['empty_pairs']} · 판정 불일치 {len(r['mismatches'])}"]
+    lines += [f"- {a['qid']}: {a['sheet']} #{a['sheet_no']} {a['verdict']} ↔ {b['sheet']} #{b['sheet_no']} {b['verdict']}"
+              for a, b in r["mismatches"]]
     return "\n".join(lines)
 
 
@@ -371,14 +565,54 @@ def main(argv=None):
         p.add_argument("--conditions", required=True)
         p.add_argument("--out-dir", required=True)
         p.add_argument("--persist-dir")
+    sub.choices["answer"].add_argument("--max-usd", type=float, required=True, help="답변 호출 예상 비용 상한(달러)")
+    sub.choices["answer"].add_argument("--local-model", help="Ollama 모델 태그 — 주면 답변 모델만 로컬로 바꾼다")
+    p = sub.add_parser("merge")
+    p.add_argument("--keys", required=True, help="쉼표로 구분한 key.jsonl 경로")
+    p.add_argument("--config", required=True)
+    p.add_argument("--eval-config", required=True)
+    p.add_argument("--out-dir", required=True)
     p = sub.add_parser("score")
     p.add_argument("--sheet", required=True)
     p.add_argument("--key", required=True)
     p.add_argument("--out-dir", required=True)
+    p = sub.add_parser("adopt", help="PREREG 「실험」 절 채택 규칙을 조항별로 판정")
+    p.add_argument("--experiment", required=True, choices=sorted(ADOPT_RULES))
+    for side in ("base", "exp"):
+        p.add_argument(f"--{side}-score", required=True, help="score의 summary.json")
+        p.add_argument(f"--{side}-run", required=True, help="그 파일에서 읽을 실행 이름(condition 칸)")
+        p.add_argument(f"--{side}-retrieval", required=True, help="retrieval의 summary.json")
+        p.add_argument(f"--{side}-cond", required=True, help="그 파일에서 읽을 조건 이름")
+    p.add_argument("--out-dir", required=True)
+    p = sub.add_parser("consistency", help="같은 답에 같은 판정을 줬는지 — 시트 안 · 시트 사이")
+    p.add_argument("--sheets", required=True, help="쉼표로 구분한 채점 시트 경로")
+    p.add_argument("--keys", required=True, help="--sheets와 같은 순서의 key.jsonl 경로")
+    p.add_argument("--out-dir", required=True)
     a = ap.parse_args(argv)
 
     try:
-        if a.cmd == "score":
+        if a.cmd == "adopt":
+            def load(path):
+                with open(path, encoding="utf-8") as f:
+                    return json.load(f)
+            [bs], [es] = pick(load(a.base_score), a.base_run, "기준선 score"), pick(load(a.exp_score), a.exp_run, "실험 score")
+            results = adopt(a.experiment, bs, es, pick(load(a.base_retrieval), a.base_cond, "기준선 검색"),
+                            pick(load(a.exp_retrieval), a.exp_cond, "실험 검색"))
+            results["inputs"] = {k: getattr(a, k) for k in ("base_run", "base_cond", "exp_run", "exp_cond")}
+            out = prepare_out_dir(a.out_dir)
+            table = adopt_table(results)
+        elif a.cmd == "consistency":
+            sheets, keys = a.sheets.split(","), a.keys.split(",")
+            if len(sheets) != len(keys):
+                raise ValueError("--sheets와 --keys 개수가 다르다")
+            loaded = []
+            for s, k in zip(sheets, keys):
+                with open(k, encoding="utf-8") as f:
+                    loaded.append(("/".join(Path(s).parts[-2:]), read_sheet(s), [json.loads(line) for line in f if line.strip()]))
+            results = consistency(loaded)
+            out = prepare_out_dir(a.out_dir)
+            table = consistency_table(results)
+        elif a.cmd == "score":
             verdicts = read_sheet(a.sheet)
             with open(a.key, encoding="utf-8") as f:
                 key = [json.loads(line) for line in f if line.strip()]
@@ -392,16 +626,33 @@ def main(argv=None):
             (out / "retrieval.jsonl").write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in records),
                                                  encoding="utf-8")
             table = retrieval_table(results, ecfg)
+        elif a.cmd == "merge":
+            ecfg = load_eval_config(a.eval_config, common.load_config(a.config))
+            items = merge_keys(a.keys.split(","))
+            out = prepare_out_dir(a.out_dir)
+            write_sheet(out, *make_sheet(items, ecfg["sheet_shuffle_seed"]))
+            print(f"합친 시트 {len(items)}행 → {out / 'sheet.csv'} (열쇠 key.jsonl은 채점 전에 열지 말 것)")
+            return 0
         else:
             key = common.openai_key()
             if not key:
                 common.fail("OPENAI_API_KEY가 없다 — tools/decisions-rag/.env에 넣을 것")
             cfg, ecfg, rows, chunks, retrievers, conditions, out = prepare(a, need_dense_mock_ok=False)
-            items = run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, query.make_llm(cfg, key))
+            if a.local_model:
+                local = f"{a.local_model}@{query.local_model_digest(a.local_model)[:12]}"
+                complete = query.make_local_llm(a.local_model, ecfg["random_seed"])
+            else:
+                local, complete = None, query.make_llm(cfg, key)
+            items = run_answers(rows, chunks, cfg, ecfg, retrievers, conditions, complete,
+                                common.load_prices(cfg), a.max_usd, local)
             write_sheet(out, *make_sheet(items, ecfg["sheet_shuffle_seed"]))
-            print(f"시트 {len(items)}행 → {out / 'sheet.csv'} (열쇠 key.jsonl은 채점 전에 열지 말 것)")
+            print(f"시트 {len(items)}행 → {out / 'sheet.csv'} (열쇠 key.jsonl은 채점 전에 열지 말 것)"
+                  f" · 형식 오류 {sum(i['format_error'] for i in items)} · 호출 실패 {sum(i['call_failed'] for i in items)}")
+            print(f"토큰(추정) 입력 {sum(i['prompt_tokens'] for i in items)} · 출력 {sum(i['completion_tokens'] for i in items)}"
+                  f" · 비용 추정 ${sum(i['cost_usd_est'] for i in items):.4f}"
+                  f" · 답변 초(평균) {sum(i['answer_sec'] for i in items) / len(items):.3f}")
             return 0
-    except (ValueError, FileNotFoundError) as e:
+    except (ValueError, OSError) as e:          # OSError = 파일 없음 · Ollama 연결 실패
         common.fail(str(e))
     (out / "summary.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     (out / "summary.md").write_text(table + "\n", encoding="utf-8")

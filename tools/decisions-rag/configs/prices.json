@@ -1,0 +1,9 @@
+{
+  "_unit": "USD per 1M tokens",
+  "_source": "OpenAI model docs (gpt-4.1-mini, text-embedding-3-small pages)",
+  "_checked": "2026-10-07",
+  "models": {
+    "text-embedding-3-small": {"input": 0.02},
+    "gpt-4.1-mini-2025-04-14": {"input": 0.40, "cached_input": 0.10, "output": 1.60}
+  }
+}

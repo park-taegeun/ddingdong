@@ -1,9 +1,9 @@
 {
-  "name": "baseline",
+  "name": "e1_superseded",
   "chunk_target_chars": 800,
   "chunk_max_chars": 800,
   "overlap_chars": 100,
-  "mark_superseded": false,
+  "mark_superseded": true,
   "embed_model": "text-embedding-3-small",
   "embed_price_usd_per_1m_tokens": 0.02,
   "max_embed_tokens": 1500000,

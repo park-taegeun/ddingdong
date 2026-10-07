@@ -1,7 +1,9 @@
 """질의 · 답변 경로 테스트 — 모델 호출 없음(네트워크 0)."""
+import io
 import json
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 
 import common
@@ -50,6 +52,47 @@ class ParseAnswerTest(unittest.TestCase):
         self.assertIn("없는 내용은 답하지 말고 거절", p)
         self.assertIn("[3] (카테고리 33 > 33.3)\n본문3", p)
         self.assertNotIn("e471052", p)                                 # 근거 표기는 프롬프트에도 맡기지 않는다
+
+
+class FakeResponse(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class LocalLlmTest(unittest.TestCase):
+    def call(self, reply):
+        sent = []
+
+        def opener(req, timeout):
+            sent.append(json.loads(req.data))
+            if isinstance(reply, Exception):
+                raise reply
+            return FakeResponse(json.dumps(reply).encode())
+        return query.make_local_llm("llama3.1:8b", 20261007, opener), sent
+
+    def test_request_pins_temperature_seed_context_and_json(self):
+        complete, sent = self.call({"message": {"content": "{}"}, "prompt_eval_count": 2400, "eval_count": 30})
+        self.assertEqual(complete("프롬프트"), ("{}", 2400, 30))
+        self.assertEqual(sent, [{"model": "llama3.1:8b", "messages": [{"role": "user", "content": "프롬프트"}],
+                                 "stream": False, "format": "json",
+                                 "options": {"temperature": 0, "seed": 20261007, "num_ctx": query.LOCAL_NUM_CTX}}])
+
+    def test_possible_truncation_and_transport_errors_are_call_failures(self):
+        for reply in ({"message": {"content": "{}"}, "prompt_eval_count": query.LOCAL_NUM_CTX // 2 + 1, "eval_count": 1},
+                      urllib.error.URLError("refused"), {"error": "model not found"}):
+            complete, _ = self.call(reply)
+            with self.assertRaises(query.LocalCallError):
+                complete("p")
+
+    def test_digest_from_tags(self):
+        tags = {"models": [{"name": "llama3.1:8b", "digest": "46e0c10c039e" + "0" * 52}]}
+        opener = lambda url, timeout: FakeResponse(json.dumps(tags).encode())
+        self.assertTrue(query.local_model_digest("llama3.1:8b", opener).startswith("46e0c10c039e"))
+        with self.assertRaises(ValueError):
+            query.local_model_digest("exaone3.5:7.8b", opener)
 
 
 class ManifestTest(unittest.TestCase):
