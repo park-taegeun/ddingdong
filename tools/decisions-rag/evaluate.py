@@ -11,6 +11,11 @@
   python -B evaluate.py merge --keys <key.jsonl,...> --config <설정> --eval-config <평가 설정> --out-dir <repo 밖 빈 폴더>
   # 채점 합산 — 사용자가 판정 칸을 채운 시트 + 열쇠
   python -B evaluate.py score --sheet <sheet.csv> --key <key.jsonl> --out-dir <repo 밖 빈 폴더>
+  # 채택 판정 — PREREG 「실험」 절 규칙(E1 · E2)을 조항별로. 입력 = score · retrieval의 summary.json + 읽을 실행 · 조건 이름
+  python -B evaluate.py adopt --experiment <E1|E2> --base-score <json> --base-run <이름> --base-retrieval <json> --base-cond <이름> \
+      --exp-score <json> --exp-run <이름> --exp-retrieval <json> --exp-cond <이름> --out-dir <repo 밖 빈 폴더>
+  # 채점 일관성 — 같은 문항 · 같은 답(앞뒤 공백 제거) · 같은 거절 · 같은 호출 실패 여부인 행끼리 판정이 같은지
+  python -B evaluate.py consistency --sheets <a.csv,b.csv> --keys <a/key.jsonl,b/key.jsonl> --out-dir <repo 밖 빈 폴더>
 
 조건 = bm25 · random · dense · hybrid · gold_removed:<bm25|dense|hybrid>. dense · hybrid는 --persist-dir 인덱스가 필요하다.
 """
@@ -21,9 +26,12 @@ import json
 import math
 import random
 import re
+import statistics
 import sys
 import time
-from collections import Counter
+from collections import Counter, defaultdict
+from itertools import combinations
+from pathlib import Path
 
 import chunker
 import common
@@ -404,7 +412,9 @@ def score(verdicts, key):
         out.append({
             "condition": run, "n": len(ks),
             "verdicts": {t: dict(Counter(k["verdict"] for k in ks if scope_ok(k, t))) for t in ("전체",) + TYPES},
-            "hallucination": sum(k["type"] == NO_ANSWER and not k["refused"] and k["verdict"] == "오답" for k in ks),
+            # 호출 실패 행은 모델이 지어낸 답이 아니다 → 환각에서 뺀다(오답 채점은 그대로)
+            "hallucination": sum(k["type"] == NO_ANSWER and not k["refused"] and not k.get("call_failed")
+                                 and k["verdict"] == "오답" for k in ks),
             "over_refusal": sum(k["type"] != NO_ANSWER and k["refused"] for k in ks),
             "evidence_valid": [sum(ev), len(ev)],
             "reversal_trap_auto": sum(bool(k["trap_in_answer"]) for k in ks),
@@ -414,6 +424,13 @@ def score(verdicts, key):
             "prompt_tokens": sum(k["prompt_tokens"] for k in ks),
             "completion_tokens": sum(k["completion_tokens"] for k in ks),
             "cost_usd_est": sum(k["cost_usd_est"] for k in ks),
+            # 아래는 나중에 더한 칸 — 이전 열쇠엔 call_failed · format_error가 없다(= 거짓)
+            "call_failed": sum(bool(k.get("call_failed")) for k in ks),
+            "format_error": sum(bool(k.get("format_error")) for k in ks),
+            # 로컬 모델은 첫 호출에 모델 적재 시간이 들어 평균을 끌 수 있다
+            "retrieval_sec_median": statistics.median(k["retrieval_sec"] for k in ks),
+            "answer_sec_median": statistics.median(k["answer_sec"] for k in ks),
+            "correct_qids": sorted(k["qid"] for k in ks if k["verdict"] == "정답"),   # adopt의 참고 칸(뒤집힘)용
         })
     return out
 
@@ -432,11 +449,105 @@ def score_table(results):
     for s in results:
         for scope, c in s["verdicts"].items():
             lines.append(f"| {s['condition']} | {scope} | {c.get('정답', 0)} | {c.get('부분', 0)} | {c.get('오답', 0)} |")
-    lines += ["", "| 조건 | 환각 | 과잉 거절 | 근거 유효 | 번복 오답(자동 · 채점) | 검색 초(평균) | 답변 초(평균) | 토큰(입력 · 출력, 추정) | 달러(추정) |",
-              "|---|---|---|---|---|---|---|---|---|"]
+    lines += ["", "| 조건 | 환각 | 과잉 거절 | 근거 유효 | 번복 오답(자동 · 채점) | 호출 실패 | 형식 오류 | 검색 초(평균 · 중앙값)"
+              " | 답변 초(평균 · 중앙값) | 토큰(입력 · 출력, 추정) | 달러(추정) |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     lines += [f"| {s['condition']} | {s['hallucination']} | {s['over_refusal']} | {s['evidence_valid'][0]} / {s['evidence_valid'][1]}"
-              f" | {s['reversal_trap_auto']} · {s['reversal_wrong']} | {s['retrieval_sec_mean']:.3f} | {s['answer_sec_mean']:.3f}"
+              f" | {s['reversal_trap_auto']} · {s['reversal_wrong']} | {s['call_failed']} | {s['format_error']}"
+              f" | {s['retrieval_sec_mean']:.3f} · {s['retrieval_sec_median']:.3f} | {s['answer_sec_mean']:.3f} · {s['answer_sec_median']:.3f}"
               f" | {s['prompt_tokens']} · {s['completion_tokens']} | {s['cost_usd_est']:.4f} |" for s in results]
+    return "\n".join(lines)
+
+
+# ---------- 채택 판정 ----------
+
+# eval/PREREG.md 「실험」 절 원문(사전 등록 7188a4a — 그 파일은 고치지 않는다):
+#   E1 = `mark_superseded` 참(취소선 → [폐기] 표시). 채택 = reversal 정답 수 +1 이상 · 나머지 25문항 정답 수 감소 0 · 전체 Hit@3 감소 0
+#   E2 = dense + bm25를 RRF(k = 60)로 합침. 채택 = 전체 Hit@3 +2문항 이상 · 정답 수 감소 0 · 어떤 유형도 Hit@3가 2문항 이상 줄지 않음
+# 조항 = (이름, 지표, 범위, 통과에 필요한 최소 차이(실험 − 기준선)). 「정답 수」는 개수 비교 — 「부분」은 정답이 아니다.
+REV_OUT = "reversal 밖"
+ADOPT_RULES = {
+    "E1": (("reversal 정답 수 +1 이상", "correct", "reversal", 1),
+           ("나머지 25문항 정답 수 감소 0", "correct", REV_OUT, 0),
+           ("전체 Hit@3 감소 0", "hit", "전체", 0)),
+    "E2": (("전체 Hit@3 +2문항 이상", "hit", "전체", 2),
+           ("정답 수 감소 0", "correct", "전체", 0))
+          + tuple((f"{t} Hit@3 2문항 이상 감소 없음", "hit", t, -1) for t in TYPES if t != NO_ANSWER),
+}
+
+
+def correct(counts):
+    return counts.get("정답", 0)                  # 「부분」은 정답이 아니다
+
+
+def pick(rows, name, what):
+    got = [r for r in rows if r["condition"] == name]
+    if not got:
+        raise ValueError(f"{what}에 「{name}」이 없다 — 있는 것: {', '.join(dict.fromkeys(r['condition'] for r in rows))}")
+    return got
+
+
+def adopt(exp, base_score, exp_score, base_ret, exp_ret):
+    """score 한 실행 + 검색 요약 한 조건씩(기준선 · 실험) → 조항별 판정. 문항별 뒤집힘은 참고 칸 — 판정에 안 쓴다."""
+    if not ("correct_qids" in base_score and "correct_qids" in exp_score):
+        raise ValueError("score 요약에 correct_qids가 없다 — 지금 score로 다시 합산할 것")
+    if base_score["n"] != exp_score["n"]:
+        raise ValueError(f"답변 문항 수가 다르다: {base_score['n']} ≠ {exp_score['n']}")
+
+    def value(metric, scope, s, ret):
+        """→ (값, 문항 수)."""
+        if metric == "hit":
+            [r] = [r for r in ret if r["scope"] == scope]
+            return r["hits"], r["n"]
+        v = s["verdicts"]
+        if scope == REV_OUT:
+            return correct(v["전체"]) - correct(v["reversal"]), sum(v["전체"].values()) - sum(v["reversal"].values())
+        return correct(v[scope]), sum(v[scope].values())
+
+    clauses = []
+    for name, metric, scope, need in ADOPT_RULES[exp]:
+        (b, bn), (e, en) = value(metric, scope, base_score, base_ret), value(metric, scope, exp_score, exp_ret)
+        if bn != en:
+            raise ValueError(f"{name}: 기준선 · 실험 문항 수가 다르다({bn} ≠ {en})")
+        clauses.append({"clause": name, "n": bn, "base": b, "exp": e, "diff": e - b, "need": need, "pass": e - b >= need})
+    bq, eq = set(base_score["correct_qids"]), set(exp_score["correct_qids"])
+    return {"experiment": exp, "clauses": clauses, "adopted": all(c["pass"] for c in clauses),
+            "ref_correct_lost": sorted(bq - eq), "ref_correct_gained": sorted(eq - bq)}
+
+
+def adopt_table(r):
+    lines = [f"### {r['experiment']} — {'채택' if r['adopted'] else '미채택'}(사전 등록 규칙 기준)", "",
+             "| 조항 | n | 기준선 | 실험 | 차이 | 필요 | 판정 |", "|---|---|---|---|---|---|---|"]
+    lines += [f"| {c['clause']} | {c['n']} | {c['base']} | {c['exp']} | {c['diff']:+d} | ≥ {c['need']:+d} | {'통과' if c['pass'] else '미통과'} |"
+              for c in r["clauses"]]
+    lines += ["", f"참고(판정에 안 씀) — 정답 → 비정답: {', '.join(r['ref_correct_lost']) or '없음'}"
+                  f" · 비정답 → 정답: {', '.join(r['ref_correct_gained']) or '없음'}"]
+    return "\n".join(lines)
+
+
+# ---------- 채점 일관성 ----------
+
+def consistency(sheets):
+    """sheets = [(이름, {시트 번호: 판정}, 열쇠)]. 같은 문항 · 같은 답 본문(앞뒤 공백 제거) · 같은 거절 여부 · 같은 호출 실패 여부인
+    행끼리 판정이 같은지 — 시트 안 · 시트 사이 모두. 거절 · 호출 실패를 짝 기준에 넣는다: 빈 답이라도 거절(정답일 수 있다)과
+    호출 실패(오답)는 판정이 다른 게 맞다."""
+    groups = defaultdict(list)
+    for name, verdicts, key in sheets:
+        if set(verdicts) != {k["sheet_no"] for k in key}:
+            raise ValueError(f"{name}: 시트 번호가 열쇠와 다르다")
+        for k in key:
+            ans = k["answer"].strip()
+            groups[(k["qid"], ans, bool(k["refused"]), bool(k.get("call_failed")))].append(
+                {"qid": k["qid"], "sheet": name, "sheet_no": k["sheet_no"], "verdict": verdicts[k["sheet_no"]], "empty": not ans})
+    pairs = [(a, b) for g in groups.values() for a, b in combinations(g, 2)]
+    return {"pairs": sum(not a["empty"] for a, _ in pairs), "empty_pairs": sum(a["empty"] for a, _ in pairs),
+            "mismatches": [[{x: r[x] for x in ("qid", "sheet", "sheet_no", "verdict")} for r in p]
+                           for p in pairs if p[0]["verdict"] != p[1]["verdict"]]}
+
+
+def consistency_table(r):
+    lines = [f"동일 답 쌍 {r['pairs']} · 빈 답 쌍 {r['empty_pairs']} · 판정 불일치 {len(r['mismatches'])}"]
+    lines += [f"- {a['qid']}: {a['sheet']} #{a['sheet_no']} {a['verdict']} ↔ {b['sheet']} #{b['sheet_no']} {b['verdict']}"
+              for a, b in r["mismatches"]]
     return "\n".join(lines)
 
 
@@ -464,10 +575,43 @@ def main(argv=None):
     p.add_argument("--sheet", required=True)
     p.add_argument("--key", required=True)
     p.add_argument("--out-dir", required=True)
+    p = sub.add_parser("adopt", help="PREREG 「실험」 절 채택 규칙을 조항별로 판정")
+    p.add_argument("--experiment", required=True, choices=sorted(ADOPT_RULES))
+    for side in ("base", "exp"):
+        p.add_argument(f"--{side}-score", required=True, help="score의 summary.json")
+        p.add_argument(f"--{side}-run", required=True, help="그 파일에서 읽을 실행 이름(condition 칸)")
+        p.add_argument(f"--{side}-retrieval", required=True, help="retrieval의 summary.json")
+        p.add_argument(f"--{side}-cond", required=True, help="그 파일에서 읽을 조건 이름")
+    p.add_argument("--out-dir", required=True)
+    p = sub.add_parser("consistency", help="같은 답에 같은 판정을 줬는지 — 시트 안 · 시트 사이")
+    p.add_argument("--sheets", required=True, help="쉼표로 구분한 채점 시트 경로")
+    p.add_argument("--keys", required=True, help="--sheets와 같은 순서의 key.jsonl 경로")
+    p.add_argument("--out-dir", required=True)
     a = ap.parse_args(argv)
 
     try:
-        if a.cmd == "score":
+        if a.cmd == "adopt":
+            def load(path):
+                with open(path, encoding="utf-8") as f:
+                    return json.load(f)
+            [bs], [es] = pick(load(a.base_score), a.base_run, "기준선 score"), pick(load(a.exp_score), a.exp_run, "실험 score")
+            results = adopt(a.experiment, bs, es, pick(load(a.base_retrieval), a.base_cond, "기준선 검색"),
+                            pick(load(a.exp_retrieval), a.exp_cond, "실험 검색"))
+            results["inputs"] = {k: getattr(a, k) for k in ("base_run", "base_cond", "exp_run", "exp_cond")}
+            out = prepare_out_dir(a.out_dir)
+            table = adopt_table(results)
+        elif a.cmd == "consistency":
+            sheets, keys = a.sheets.split(","), a.keys.split(",")
+            if len(sheets) != len(keys):
+                raise ValueError("--sheets와 --keys 개수가 다르다")
+            loaded = []
+            for s, k in zip(sheets, keys):
+                with open(k, encoding="utf-8") as f:
+                    loaded.append(("/".join(Path(s).parts[-2:]), read_sheet(s), [json.loads(line) for line in f if line.strip()]))
+            results = consistency(loaded)
+            out = prepare_out_dir(a.out_dir)
+            table = consistency_table(results)
+        elif a.cmd == "score":
             verdicts = read_sheet(a.sheet)
             with open(a.key, encoding="utf-8") as f:
                 key = [json.loads(line) for line in f if line.strip()]

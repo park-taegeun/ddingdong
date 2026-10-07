@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -350,6 +351,157 @@ class MergeTest(unittest.TestCase):
         self.assertEqual([s["n"] for s in evaluate.score(verdicts, [dict(k, retrieval_sec=0, answer_sec=0, prompt_tokens=0,
                           completion_tokens=0, cost_usd_est=0, evidence_valid=None, trap_in_answer=None) for k in key])],
                          [3, 3, 3, 3])
+
+
+def key_item(no, qid, typ, answer="답", refused=False, call_failed=False, format_error=False, answer_sec=1.0):
+    return {"sheet_no": no, "qid": qid, "type": typ, "condition": "dense", "model": "m", "answer": answer, "refused": refused,
+            "call_failed": call_failed, "format_error": format_error, "evidence_valid": None, "trap_in_answer": None,
+            "retrieval_sec": 0.1, "answer_sec": answer_sec, "prompt_tokens": 0, "completion_tokens": 0, "cost_usd_est": 0.0}
+
+
+class ScoreFieldsTest(unittest.TestCase):
+    def test_call_failure_is_wrong_but_not_hallucination(self):
+        # not_in_doc · 호출 실패 · 오답 행이 없으면 환각 정의 검사가 늘 통과한다 — 반드시 넣는다
+        key = [key_item(1, "Q1", "not_in_doc", "", call_failed=True, answer_sec=100.0),
+               key_item(2, "Q2", "not_in_doc", "지어낸 답", answer_sec=1.0),
+               key_item(3, "Q3", "fact", "형식 밖 원문", format_error=True, answer_sec=2.0)]
+        [s] = evaluate.score({1: "오답", 2: "오답", 3: "부분"}, key)
+        self.assertEqual(s["verdicts"]["not_in_doc"], {"오답": 2})          # 채점은 그대로 오답
+        self.assertEqual(s["hallucination"], 1)
+        self.assertEqual((s["call_failed"], s["format_error"], s["over_refusal"]), (1, 1, 0))
+        self.assertEqual(s["answer_sec_median"], 2.0)                      # 적재 시간이 낀 첫 호출이 평균만 끈다
+        self.assertAlmostEqual(s["answer_sec_mean"], 103 / 3)
+        self.assertEqual(s["correct_qids"], [])
+
+    def test_old_keys_without_new_fields_count_zero(self):
+        old = [{k: v for k, v in key_item(1, "Q1", "fact").items() if k not in ("call_failed", "format_error")}]
+        [s] = evaluate.score({1: "정답"}, old)
+        self.assertEqual((s["call_failed"], s["format_error"], s["correct_qids"]), (0, 0, ["Q1"]))
+
+
+def score_summary(by_type, qids=()):
+    """by_type = {유형: {판정: 개수}} → score 결과 한 실행(전체 = 합)."""
+    total = Counter()
+    for c in by_type.values():
+        total.update(c)
+    return {"condition": "run", "n": sum(total.values()), "verdicts": {"전체": dict(total), **by_type},
+            "correct_qids": list(qids)}
+
+
+def ret_summary(hits, n=None):
+    n = n or {"fact": 10, "identifier": 5, "reversal": 5, "false_premise": 5}
+    return [{"condition": "c", "scope": "전체", "n": sum(n.values()), "hits": sum(hits.values())}] + \
+        [{"condition": "c", "scope": t, "n": n[t], "hits": hits[t]} for t in n]
+
+
+BASE_TYPES = {"fact": {"정답": 3, "오답": 7}, "identifier": {"정답": 1, "오답": 4}, "reversal": {"정답": 2, "오답": 3},
+              "not_in_doc": {"정답": 4, "오답": 1}, "false_premise": {"오답": 5}}
+BASE_HITS = {"fact": 3, "identifier": 1, "reversal": 2, "false_premise": 0}
+
+
+def with_types(**changes):
+    return {t: changes.get(t, c) for t, c in BASE_TYPES.items()}
+
+
+class AdoptTest(unittest.TestCase):
+    def judge(self, exp, exp_types, exp_hits=BASE_HITS, base_qids=(), exp_qids=()):
+        r = evaluate.adopt(exp, score_summary(BASE_TYPES, base_qids), score_summary(exp_types, exp_qids),
+                           ret_summary(BASE_HITS), ret_summary(exp_hits))
+        return r, {c["clause"]: c for c in r["clauses"]}
+
+    def test_e1_adopted_when_reversal_plus_one(self):
+        r, c = self.judge("E1", with_types(reversal={"정답": 3, "오답": 2}))
+        self.assertTrue(r["adopted"])
+        self.assertEqual([(x["base"], x["exp"], x["diff"]) for x in r["clauses"]], [(2, 3, 1), (8, 8, 0), (6, 6, 0)])
+        self.assertEqual(c["나머지 25문항 정답 수 감소 0"]["n"], 25)
+
+    def test_e1_reversal_unchanged_is_not_adopted(self):
+        # 차이가 정확히 0 — 「+1 이상」을 「≥ 0」으로 잘못 두면 통과해 버린다
+        r, c = self.judge("E1", BASE_TYPES)
+        self.assertEqual(c["reversal 정답 수 +1 이상"]["diff"], 0)
+        self.assertFalse(c["reversal 정답 수 +1 이상"]["pass"])
+        self.assertFalse(r["adopted"])
+
+    def test_partial_is_not_correct(self):
+        # reversal 정답 2 그대로 + 오답 1 → 부분 1. 부분을 정답으로 세면 +1이 돼 채택돼 버린다
+        r, c = self.judge("E1", with_types(reversal={"정답": 2, "부분": 1, "오답": 2}))
+        self.assertEqual(c["reversal 정답 수 +1 이상"]["exp"], 2)
+        self.assertFalse(r["adopted"])
+        r, c = self.judge("E2", with_types(fact={"정답": 2, "부분": 2, "오답": 6}),
+                          dict(BASE_HITS, fact=5, identifier=2))
+        self.assertEqual((c["정답 수 감소 0"]["diff"], c["정답 수 감소 0"]["pass"]), (-1, False))
+
+    def test_e2_type_clause_uses_each_type(self):
+        # 전체는 +3 늘었는데 reversal만 2 줄었다 → 미채택. fact −1은 경계 안(통과)
+        hits = dict(BASE_HITS, reversal=0, fact=2, identifier=5, false_premise=2)
+        r, c = self.judge("E2", BASE_TYPES, hits)
+        self.assertEqual((c["전체 Hit@3 +2문항 이상"]["diff"], c["전체 Hit@3 +2문항 이상"]["pass"]), (3, True))
+        self.assertEqual((c["reversal Hit@3 2문항 이상 감소 없음"]["diff"], c["reversal Hit@3 2문항 이상 감소 없음"]["pass"]),
+                         (-2, False))
+        self.assertTrue(c["fact Hit@3 2문항 이상 감소 없음"]["pass"])
+        self.assertFalse(r["adopted"])
+        r, _ = self.judge("E2", BASE_TYPES, dict(hits, reversal=1))
+        self.assertTrue(r["adopted"])
+
+    def test_flips_are_reference_only(self):
+        # 개수는 같고 문항만 바뀌었다 — 뒤집힘이 있어도 판정은 개수로
+        r, _ = self.judge("E1", with_types(reversal={"정답": 3, "오답": 2}), base_qids=["Q01", "Q16"], exp_qids=["Q16", "Q17"])
+        self.assertTrue(r["adopted"])
+        self.assertEqual((r["ref_correct_lost"], r["ref_correct_gained"]), (["Q01"], ["Q17"]))
+
+    def test_cli_requires_names_and_writes_out_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            paths = {}
+            for name, obj in (("bs", [dict(score_summary(BASE_TYPES), condition="dense")]),
+                              ("es", [dict(score_summary(with_types(reversal={"정답": 3, "오답": 2})), condition="e1")]),
+                              ("br", ret_summary(BASE_HITS)), ("er", ret_summary(BASE_HITS))):
+                paths[name] = Path(d) / f"{name}.json"
+                paths[name].write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+            args = ["adopt", "--experiment", "E1", "--base-score", str(paths["bs"]), "--base-run", "dense",
+                    "--base-retrieval", str(paths["br"]), "--base-cond", "c", "--exp-score", str(paths["es"]),
+                    "--exp-run", "e1", "--exp-retrieval", str(paths["er"]), "--exp-cond", "c", "--out-dir", str(Path(d) / "out")]
+            with contextlib.redirect_stdout(io.StringIO()) as buf:
+                evaluate.main(args)
+            self.assertIn("E1 — 채택", buf.getvalue())
+            self.assertTrue(json.loads((Path(d) / "out" / "summary.json").read_text(encoding="utf-8"))["adopted"])
+            bad = list(args)
+            bad[bad.index("--exp-run") + 1] = "없는 실행"
+            bad[-1] = str(Path(d) / "out2")
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                evaluate.main(bad)
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                evaluate.main(args[:2] + args[4:])                      # 인자 하나라도 빠지면 거부(기본값 없음)
+
+
+class ConsistencyTest(unittest.TestCase):
+    def check(self, a, b, va, vb):
+        return evaluate.consistency([("A", {1: va}, [dict(a, sheet_no=1)]), ("B", {1: vb}, [dict(b, sheet_no=1)])])
+
+    def test_same_answer_same_verdict_is_a_consistent_pair(self):
+        r = self.check(key_item(1, "Q1", "fact", "GPIO 41"), key_item(1, "Q1", "fact", " GPIO 41\n"), "정답", "정답")
+        self.assertEqual((r["pairs"], r["empty_pairs"], r["mismatches"]), (1, 0, []))
+
+    def test_same_answer_different_verdict_is_reported(self):
+        r = self.check(key_item(1, "Q1", "fact", "GPIO 41"), key_item(1, "Q1", "fact", "GPIO 41 "), "정답", "부분")
+        self.assertEqual(r["mismatches"], [[{"qid": "Q1", "sheet": "A", "sheet_no": 1, "verdict": "정답"},
+                                            {"qid": "Q1", "sheet": "B", "sheet_no": 1, "verdict": "부분"}]])
+
+    def test_same_qid_different_answer_is_not_a_pair(self):
+        # qid만으로 짝지으면 다른 답의 다른 판정을 불일치로 잘못 센다
+        r = self.check(key_item(1, "Q1", "fact", "GPIO 41"), key_item(1, "Q1", "fact", "GPIO 42"), "정답", "오답")
+        self.assertEqual((r["pairs"], r["mismatches"]), (0, []))
+
+    def test_empty_call_failure_is_not_paired_with_empty_answer(self):
+        # 빈 거절(정답) ↔ 빈 호출 실패(오답)는 거절 여부부터 달라 호출 실패 칸이 없어도 갈린다.
+        # 호출 실패 칸을 지키려면 거절 여부까지 같은 예 — 거절 없이 빈 답(정답) ↔ 빈 호출 실패(오답) — 가 있어야 한다
+        refusal = key_item(1, "Q24", "not_in_doc", "", refused=True)
+        failed = key_item(1, "Q24", "not_in_doc", "", call_failed=True)
+        blank = key_item(1, "Q24", "not_in_doc", "")
+        self.assertEqual(self.check(refusal, failed, "정답", "오답")["mismatches"], [])
+        r = self.check(blank, failed, "정답", "오답")
+        self.assertEqual((r["pairs"], r["empty_pairs"], r["mismatches"]), (0, 0, []))
+        r = self.check(failed, dict(failed), "오답", "오답")
+        self.assertEqual((r["pairs"], r["empty_pairs"]), (0, 1))
 
 
 class PriceTest(unittest.TestCase):
