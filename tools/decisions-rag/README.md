@@ -158,6 +158,7 @@ export PYTHONDONTWRITEBYTECODE=1
 - **결과는 힌트다** — 인용 전에 원문(`git show <커밋>:docs/decisions.md`)과 대조한다. 본문은 마스킹한 원문에서만 나온다.
 - 검색어가 문서 용어와 어긋나면 `list_sections`로 제목을 보고 그 용어로 다시 검색하거나 `get_section`으로 펼친다. `list_sections`는 제목만 찾는다(본문 단어는 `search_decisions`).
 - 범위 밖 · 빠진 인자 · 없는 라벨은 도구 오류로 돌아온다(서버는 계속 돈다). stdout은 MCP 프로토콜 전용 — 로그는 stderr.
+- 시연 기록(Claude Code 대화 원문 · 근거 줄 대조) = [`docs/mcp_demo.md`](docs/mcp_demo.md)
 - 기동 인자 `--commit` · `--config` · `--persist-dir`는 전부 필수(기본값 없음). 기동 검사 — 설정 해시 = 인덱스 manifest · manifest 커밋 = `--commit` · 인덱스는 repo 밖 · 그 커밋의 마스킹 원문 청크(개수 · 해시) = 인덱스 청크. 하나라도 어긋나면 기동 거부. 가짜 임베딩 인덱스는 `--allow-mock-index`(테스트용)일 때만 연다.
 
 등록(사용자 몫 — 자리표시자를 채운다. `<index>`는 `<commit>` · `baseline`으로 만든 인덱스):
