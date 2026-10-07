@@ -144,7 +144,49 @@ export PYTHONDONTWRITEBYTECODE=1
 | 채택 판정 | 규칙 = `evaluate.py`의 상수 + PREREG 원문 인용 주석. 「정답 수」는 개수 비교(「부분」은 정답 아님) · 문항별 뒤집힘은 참고 칸 |
 | 토큰 · 달러 | 답변 모델 인코딩(tiktoken, 동봉 캐시)으로 프롬프트 · 출력을 센다 = **추정**(채팅 형식 오버헤드 · 캐시 할인 미반영). 달러 = 토큰 × `configs/prices.json`. 호출 전 예상은 출력 300토큰/회를 가정 |
 
+## MCP 서버
+
+`mcp_server.py` = 이 검색기를 MCP 서버(stdio · 읽기 전용)로 내놓는다. Claude Code 같은 MCP 클라이언트가 decisions.md를 직접 찾는다.
+서버는 검색 · 탐색만 하고 **답은 만들지 않는다**(답은 호출한 LLM 몫 — 답변 모델 호출 0). 검색은 기준선(dense · `baseline` 설정) 그대로다.
+
+| 도구 | 입력 | 출력 | 키 |
+|---|---|---|---|
+| `search_decisions` | `query` · `k`(1~10) | 커밋 · 설정 · 임베더 + 결과[순위 · 점수 · 절 라벨 · 제목 경로 · 근거 표기 `<커밋7>@L시작-L끝` · 본문] + 「결과는 힌트」 안내 | 필요(질의 임베딩 1회). 없으면 도구 오류 — 다른 검색으로 바꾸지 않는다 |
+| `list_sections` | `contains`(라벨 · 제목 경로 부분 문자열, 대소문자 무시 · 빈 문자열 = 전부) | 절 라벨을 문서 순서로(라벨 · 첫 제목 경로 · 줄 범위) · 최대 200개 + `truncated` | 불필요 |
+| `get_section` | `section`(라벨) · `offset`(≥ 0) | 그 라벨 + 하위 라벨(`6.3(a)` · `6.3 › …` — `6.30` · `16.3`은 아님) 청크를 8개씩 + 전체 수 · `next_offset` | 불필요 |
+
+- **결과는 힌트다** — 인용 전에 원문(`git show <커밋>:docs/decisions.md`)과 대조한다. 본문은 마스킹한 원문에서만 나온다.
+- 검색어가 문서 용어와 어긋나면 `list_sections`로 제목을 보고 그 용어로 다시 검색하거나 `get_section`으로 펼친다. `list_sections`는 제목만 찾는다(본문 단어는 `search_decisions`).
+- 범위 밖 · 빠진 인자 · 없는 라벨은 도구 오류로 돌아온다(서버는 계속 돈다). stdout은 MCP 프로토콜 전용 — 로그는 stderr.
+- 기동 인자 `--commit` · `--config` · `--persist-dir`는 전부 필수(기본값 없음). 기동 검사 — 설정 해시 = 인덱스 manifest · manifest 커밋 = `--commit` · 인덱스는 repo 밖 · 그 커밋의 마스킹 원문 청크(개수 · 해시) = 인덱스 청크. 하나라도 어긋나면 기동 거부. 가짜 임베딩 인덱스는 `--allow-mock-index`(테스트용)일 때만 연다.
+
+등록(사용자 몫 — 자리표시자를 채운다. `<index>`는 `<commit>` · `baseline`으로 만든 인덱스):
+
+```sh
+# Claude Code(사용자 범위)
+claude mcp add --scope user decisions-rag -e PYTHONDONTWRITEBYTECODE=1 -- \
+  <repo>/tools/decisions-rag/.venv/bin/python -B <repo>/tools/decisions-rag/mcp_server.py \
+  --commit <commit> --config <repo>/tools/decisions-rag/configs/baseline.json --persist-dir <index>
+```
+
+Claude Desktop(`claude_desktop_config.json`의 `mcpServers`):
+
+```json
+{
+  "mcpServers": {
+    "decisions-rag": {
+      "command": "<repo>/tools/decisions-rag/.venv/bin/python",
+      "args": ["-B", "<repo>/tools/decisions-rag/mcp_server.py", "--commit", "<commit>",
+               "--config", "<repo>/tools/decisions-rag/configs/baseline.json", "--persist-dir", "<index>"],
+      "env": {"PYTHONDONTWRITEBYTECODE": "1"}
+    }
+  }
+}
+```
+
+키는 서버가 `tools/decisions-rag/.env`에서 읽는다(설정 파일에 키를 넣지 않는다). 키가 없어도 `list_sections` · `get_section`은 돈다.
+
 ## 다음 PR
 
 - ③ 기준선 측정 · 오답 분류 · 실험 E1(취소선 폐기 표시) · E2(하이브리드 검색) · 로컬 모델(Ollama) 비교 — 결과 = `eval/results_v1.md`
-- ④(선택) MCP 서버
+- ④ MCP 서버 — `mcp_server.py`(위 「MCP 서버」 절)
