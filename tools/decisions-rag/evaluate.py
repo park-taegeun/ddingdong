@@ -20,6 +20,8 @@
   # v2 채택 판정(eval/PREREG_v2.md) — 1단계 = v1 검색 후보들 · 2단계 검색 = H1 검색 후보 1개
   python -B evaluate.py adopt-v2 --stage <1|2> --base-retrieval <json> --base-cond dense \
       --cands <E3,E4,E5> --cand-retrievals <json,...> --cand-conds <hyde,rewrite,dense> --out-dir <repo 밖 빈 폴더>
+  # v2 2단계 답변 조건 — score summary.json 한 파일에서 실행 3개(후보 v1 · 후보 H1 · 기준선 H1)
+  python -B evaluate.py adopt-v2-answers --score <json> --cand-v1-run <이름> --cand-h1-run <이름> --base-h1-run <이름> --out-dir <…>
 
 조건 = bm25 · random · dense · hybrid · hyde · rewrite · gold_removed:<bm25|dense|hybrid|hyde|rewrite>.
 dense · hybrid · hyde · rewrite는 --persist-dir 인덱스가 필요하다. hyde · rewrite 생성문은 retrieval이 만들어
@@ -736,6 +738,14 @@ def adopt_v2_answers(cand_v1, cand_h1, base_h1):
     return {"clauses": clauses, "pass": all(c["pass"] for c in clauses)}
 
 
+def adopt_v2_answers_table(r):
+    lines = [f"### v2 2단계 답변 — {'통과' if r['pass'] else '미통과'}(사전 등록 규칙 기준)", "",
+             "| 조항 | 후보 | 기준 | 판정 |", "|---|---|---|---|"]
+    lines += [f"| {c['clause']} | {c['value']} | {c.get('base', V2_ANSWER_V1_MIN_CORRECT)} | {'통과' if c['pass'] else '미통과'} |"
+              for c in r["clauses"]]
+    return "\n".join(lines)
+
+
 def adopt_v2_table(r):
     lines = [f"### v2 {r['stage']}단계 — 선택 = {r['chosen'] or '없음'}(사전 등록 규칙 기준)", "",
              "| 실험 | 조항 | n | 기준선 | 실험 | 차이 | 필요 | 판정 |", "|---|---|---|---|---|---|---|---|"]
@@ -816,6 +826,11 @@ def main(argv=None):
     p.add_argument("--cand-retrievals", required=True, help="--cands와 같은 순서의 summary.json")
     p.add_argument("--cand-conds", required=True, help="--cands와 같은 순서의 조건 이름")
     p.add_argument("--out-dir", required=True)
+    p = sub.add_parser("adopt-v2-answers", help="PREREG_v2 2단계 답변 조건 — score summary.json 한 파일의 실행 3개")
+    p.add_argument("--score", required=True, help="score의 summary.json")
+    for name in ("cand-v1-run", "cand-h1-run", "base-h1-run"):
+        p.add_argument(f"--{name}", required=True, help="그 파일에서 읽을 실행 이름(condition 칸)")
+    p.add_argument("--out-dir", required=True)
     p = sub.add_parser("consistency", help="같은 답에 같은 판정을 줬는지 — 시트 안 · 시트 사이")
     p.add_argument("--sheets", required=True, help="쉼표로 구분한 채점 시트 경로")
     p.add_argument("--keys", required=True, help="--sheets와 같은 순서의 key.jsonl 경로")
@@ -837,6 +852,13 @@ def main(argv=None):
             results["inputs"] = {"base": [a.base_retrieval, a.base_cond], "cands": [list(x) for x in zip(names, paths, conds)]}
             out = prepare_out_dir(a.out_dir)
             table = adopt_v2_table(results)
+        elif a.cmd == "adopt-v2-answers":
+            sc = load(a.score)
+            [cv1], [ch1], [bh1] = (pick(sc, n, "score") for n in (a.cand_v1_run, a.cand_h1_run, a.base_h1_run))
+            results = adopt_v2_answers(cv1, ch1, bh1)
+            results["inputs"] = {k: getattr(a, k) for k in ("score", "cand_v1_run", "cand_h1_run", "base_h1_run")}
+            out = prepare_out_dir(a.out_dir)
+            table = adopt_v2_answers_table(results)
         elif a.cmd == "adopt":
             [bs], [es] = pick(load(a.base_score), a.base_run, "기준선 score"), pick(load(a.exp_score), a.exp_run, "실험 score")
             results = adopt(a.experiment, bs, es, pick(load(a.base_retrieval), a.base_cond, "기준선 검색"),

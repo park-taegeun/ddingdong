@@ -789,6 +789,19 @@ class AdoptV2Test(unittest.TestCase):
         self.assertFalse(evaluate.adopt_v2_answers(s(8, 1), s(5), s(5))["pass"])              # 부분은 정답이 아니다
         self.assertFalse(evaluate.adopt_v2_answers(s(9), s(4), s(5))["pass"])
 
+    def test_answers_cli_reads_three_runs(self):
+        runs = [dict(score_summary({"fact": {"정답": c, "오답": 1}}), condition=n) for n, c in (("cv1", 9), ("ch1", 4), ("bh1", 5))]
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "score.json"
+            path.write_text(json.dumps(runs, ensure_ascii=False), encoding="utf-8")
+            args = ["adopt-v2-answers", "--score", str(path), "--cand-v1-run", "cv1", "--cand-h1-run", "ch1",
+                    "--base-h1-run", "bh1", "--out-dir", str(Path(d) / "out")]
+            with contextlib.redirect_stdout(io.StringIO()) as buf:
+                evaluate.main(args)
+            self.assertIn("2단계 답변 — 미통과", buf.getvalue())
+            self.assertEqual([c["pass"] for c in json.loads((Path(d) / "out" / "summary.json").read_text(encoding="utf-8"))["clauses"]],
+                             [True, False])
+
     def test_cli(self):
         with tempfile.TemporaryDirectory() as d:
             paths = []
