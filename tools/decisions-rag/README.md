@@ -90,6 +90,12 @@ export PYTHONDONTWRITEBYTECODE=1
 # 프롬프트를 모두 만든 뒤 예상 비용 > --max-usd면 호출 없이 중단
 .venv/bin/python -B evaluate.py answer (위와 같은 인자) --max-usd 1.00
 
+# v2 질의 확장 — hyde · rewrite는 검색 평가가 문항마다 한 번 생성해 <out-dir>/generated.jsonl에 남긴다(--max-usd 필요),
+# 답변 평가는 --gen-cache로 그 파일만 읽는다(캐시에 없는 문항 = 실패, 다시 생성 0)
+.venv/bin/python -B evaluate.py retrieval (위와 같은 인자 · --persist-dir) --conditions rewrite,gold_removed:rewrite --max-usd 1.00
+.venv/bin/python -B evaluate.py answer (위와 같은 인자 · --persist-dir) --conditions rewrite --max-usd 1.00 \
+  --gen-cache <검색 평가 out-dir>/generated.jsonl
+
 # 답변 모델만 로컬(Ollama, http://localhost:11434)로 — 검색 · 프롬프트 · 파서는 같다(비용 0)
 .venv/bin/python -B evaluate.py answer (위와 같은 인자) --max-usd 0 --local-model llama3.1:8b
 
@@ -110,12 +116,17 @@ export PYTHONDONTWRITEBYTECODE=1
 .venv/bin/python -B evaluate.py adopt-v2 --stage 1 --base-retrieval <retrieval/summary.json> --base-cond dense \
   --cands E3,E4,E5 --cand-retrievals <json>,<json>,<json> --cand-conds hyde,rewrite,dense --out-dir ~/ddingdong-rag/adopt-<이름>
 
+# v2 2단계 답변 조건 — score summary.json 한 파일의 실행 3개(이름 = score 표의 조건 칸)
+.venv/bin/python -B evaluate.py adopt-v2-answers --score <score/summary.json> --cand-v1-run "<이름>" \
+  --cand-h1-run "<이름>" --base-h1-run "<이름>" --out-dir ~/ddingdong-rag/adopt-<이름>
+
 # 채점 일관성 — 같은 문항 · 같은 답(앞뒤 공백 제거) · 같은 거절 · 같은 호출 실패 여부인 행끼리 판정이 같은지(시트 안 · 시트 사이)
 .venv/bin/python -B evaluate.py consistency --sheets <a.csv>,<b.csv> --keys <a/key.jsonl>,<b/key.jsonl> \
   --out-dir ~/ddingdong-rag/consistency-<이름>
 ```
 
 결과 v1(검색 · 답변 · 채택 판정 · 로컬 모델 비교 · 오답 분석) = [`eval/results_v1.md`](eval/results_v1.md).
+결과 v2(검색 개선 E3 · E4 · E5 · 확인 세트 H1 · 2단계 채택 판정 · 오답 분석) = [`eval/results_v2.md`](eval/results_v2.md).
 
 | 항목 | 결정 |
 |---|---|
@@ -126,7 +137,7 @@ export PYTHONDONTWRITEBYTECODE=1
 | hyde · rewrite | 답변 모델 · 온도 0 · seed = `random_seed`로 PREREG_v2 프롬프트 원문(테스트가 문자 단위 대조)을 채워 문항마다 한 번 생성 → 검색 벡터 = 원 질문 임베딩과 생성문 임베딩의 산술 평균(llama-index `custom_embedding_strs` → `mean_agg`). retrieval이 `<out-dir>/generated.jsonl`에 남기고(예상 비용 > `--max-usd`면 호출 0), answer는 `--gen-cache`로 그 파일만 읽는다(없는 문항 = 실패). rewrite 제목 목록 = `##` · `###` · 소절 제목을 문서 순서로 각 80자 — 코드 블록 안 줄은 제외(청커와 같은 규칙) |
 | 로컬 모델 | Ollama 채팅 API(표준 라이브러리 HTTP) · 온도 0 · seed = `random_seed` · JSON 형식 · `num_ctx` 16384. Ollama는 `num_ctx`를 넘는 프롬프트를 오류 없이 잘라내므로, 서버가 센 입력 토큰이 절반을 넘으면 호출 실패로 처리. 모델 = 「태그@다이제스트 12자」로 기록 |
 | 형식 오류 · 호출 실패 | 모델 출력이 JSON이 아니면 거절로 치지 않고 원문을 답으로 남긴다(`format_error`). 로컬 호출 실패는 `call_failed`로 따로 기록하고 10회면 중단 |
-| 실행 구분 | 열쇠에 설정 이름(`config`)을 남긴다. 합산은 설정 · 조건 · 모델로 실행을 가른다(같은 dense라도 갈린다) |
+| 실행 구분 | 열쇠에 설정 이름(`config`) · 평가셋 이름(`eval_set`)을 남긴다. 합산은 설정 · 조건 · 모델로 실행을 가르고, 평가셋이 둘 이상 섞인 열쇠는 평가셋으로도 가른다(`eval_set`이 없는 이전 열쇠는 qid가 속한 평가셋 파일로 판별) |
 | random | 문항마다 `random.Random("<random_seed>:<qid>")` — 실행 순서와 무관하게 고정 |
 | 근거 유효 | 답한(거절 안 한) · 답 있는 문항만 센다(not_in_doc은 정답 조각이 없다) |
 | 환각 · 호출 실패 | 환각 = not_in_doc에서 거절 없이 오답. 호출 실패 행은 오답으로 채점하되 환각에서 뺀다(지어낸 답이 아님). score는 호출 실패 · 형식 오류 개수와 지연 중앙값도 낸다 |
