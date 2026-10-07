@@ -1,0 +1,14 @@
+{
+  "name": "eval_v1",
+  "eval_set": "eval/eval_set_v1.jsonl",
+  "eval_set_sha256": "761f112d990546cbff450006ddeeed1d79aceaf64fe665dec95cb08b0dff97f7",
+  "hit_k": 3,
+  "mrr_cutoff": 10,
+  "answer_top_k": 5,
+  "bm25_k1": 1.5,
+  "bm25_b": 0.75,
+  "bm25_tokenizer": "word_ascii+hangul_bigram_v1",
+  "rrf_k": 60,
+  "random_seed": 20261007,
+  "sheet_shuffle_seed": 20261007
+}

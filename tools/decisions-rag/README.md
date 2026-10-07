@@ -77,8 +77,32 @@ export PYTHONDONTWRITEBYTECODE=1
 
 `name` · `chunk_target_chars`(묶기 목표) · `chunk_max_chars`(이보다 큰 단위를 쪼갬) · `overlap_chars`(문장 경계 조각 겹침) · `mark_superseded`(E1) · `embed_model` · `embed_price_usd_per_1m_tokens` · `max_embed_tokens` · `top_k` · `answer_model`.
 
+## 평가 (`evaluate.py`)
+
+규칙은 `eval/PREREG.md`(결과 전 등록 — 이 파일 · `eval/eval_set_v1.jsonl` · `configs/eval_v1.json`은 바꾸지 않는다). 출력은 `--out-dir`(repo 밖 · 빈 폴더)에만 쓴다.
+
+```sh
+# 검색 평가 — bm25 · random · gold_removed:bm25는 네트워크 0. dense는 --persist-dir 인덱스(실임베딩)
+.venv/bin/python -B evaluate.py retrieval --commit e471052 --config configs/baseline.json \
+  --eval-config configs/eval_v1.json --conditions bm25,random,gold_removed:bm25 --out-dir ~/ddingdong-rag/eval-<이름>
+
+# 답변 평가(OpenAI 답변 모델) → sheet.csv(블라인드) + key.jsonl(열쇠 — 채점 전에 열지 않는다)
+.venv/bin/python -B evaluate.py answer (위와 같은 인자)
+
+# 채점 합산 — sheet.csv의 판정 칸에 정답 · 부분 · 오답 중 하나를 채운 뒤
+.venv/bin/python -B evaluate.py score --sheet <sheet.csv> --key <key.jsonl> --out-dir ~/ddingdong-rag/score-<이름>
+```
+
+| 항목 | 결정 |
+|---|---|
+| 적중 | 정답 조각 하나의 **전체 문자열**을 담은 청크(표시 원문 · 마스킹 반영). 청크 경계에 걸쳐 잘린 조각은 적중 아님 |
+| BM25 | 표준 라이브러리 구현. 문서 = 임베딩 본문(제목 경로 줄 + 본문). idf = log(1 + (N − df + 0.5) / (df + 0.5)), 점수 0 문서는 결과에서 뺀다 |
+| gold_removed | bm25는 정답 청크를 뺀 문서로 인덱스를 다시 만든다(df · 평균 길이 포함). dense는 넉넉히 받아 뺀 청크를 거른다(벡터 유사도는 다른 문서와 무관). 뺀 청크가 상위 `mrr_cutoff` 안에 나오면 실행 실패 |
+| random | 문항마다 `random.Random("<random_seed>:<qid>")` — 실행 순서와 무관하게 고정 |
+| 근거 유효 | 답한(거절 안 한) · 답 있는 문항만 센다(not_in_doc은 정답 조각이 없다) |
+| 토큰 | 답변 모델 인코딩(tiktoken, 동봉 캐시)으로 프롬프트 · 출력을 센다. 달러 환산은 가격 손잡이가 아직 없다 |
+
 ## 다음 PR
 
-- ② 평가기 · 대조군 · 평가셋 틀(평가셋 30문항은 결과를 보기 전에 커밋)
 - ③ 기준선 측정 · 오답 분류 · 실험 E1(취소선 폐기 표시) · E2(하이브리드 검색) · 로컬 모델(Ollama) 비교
 - ④(선택) MCP 서버
