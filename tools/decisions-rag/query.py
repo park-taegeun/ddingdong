@@ -77,6 +77,26 @@ def make_llm(cfg, key):
     return lambda prompt: llm.complete(prompt).text
 
 
+def open_index(persist, manifest):
+    """manifest의 임베더로 Chroma 인덱스를 연다 → (인덱스, OpenAI 키 또는 None). 키가 필요한데 없으면 종료."""
+    key = None
+    if manifest["embedder"] == "mock":
+        from llama_index.core.embeddings import MockEmbedding
+        embed_model = MockEmbedding(embed_dim=int(manifest["embed_model"].split("-")[1]))
+    else:
+        key = common.openai_key()
+        if not key:
+            common.fail("OPENAI_API_KEY가 없다 — tools/decisions-rag/.env에 넣을 것")
+        from llama_index.embeddings.openai import OpenAIEmbedding
+        embed_model = OpenAIEmbedding(model=manifest["embed_model"], api_key=key, max_retries=1)
+
+    from llama_index.core import VectorStoreIndex
+    from llama_index.vector_stores.chroma import ChromaVectorStore
+    col = common.chroma_client(persist).get_collection(common.COLLECTION, embedding_function=None)
+    index = VectorStoreIndex.from_vector_store(ChromaVectorStore(chroma_collection=col), embed_model=embed_model)
+    return index, key
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--persist-dir", required=True)
@@ -95,22 +115,8 @@ def main(argv=None):
     if a.k != cfg["top_k"]:
         print(f"주의: -k {a.k} ≠ 설정 top_k {cfg['top_k']} — 평가 조건과 다른 실행", file=sys.stderr)
 
-    key = None
-    if manifest["embedder"] == "mock":
-        from llama_index.core.embeddings import MockEmbedding
-        embed_model = MockEmbedding(embed_dim=int(manifest["embed_model"].split("-")[1]))
-    else:
-        key = common.openai_key()
-        if not key:
-            common.fail("OPENAI_API_KEY가 없다 — tools/decisions-rag/.env에 넣을 것")
-        from llama_index.embeddings.openai import OpenAIEmbedding
-        embed_model = OpenAIEmbedding(model=manifest["embed_model"], api_key=key, max_retries=1)
-
-    from llama_index.core import VectorStoreIndex
-    from llama_index.vector_stores.chroma import ChromaVectorStore
     t0 = time.monotonic()
-    col = common.chroma_client(persist).get_collection(common.COLLECTION, embedding_function=None)
-    index = VectorStoreIndex.from_vector_store(ChromaVectorStore(chroma_collection=col), embed_model=embed_model)
+    index, key = open_index(persist, manifest)
     hits = index.as_retriever(similarity_top_k=a.k).retrieve(a.question)
     print(f"질문: {a.question}  (인덱스 {manifest['commit'][:7]} · {manifest['config_name']} · "
           f"{manifest['embedder']} · {time.monotonic() - t0:.2f}초)")
