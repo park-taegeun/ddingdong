@@ -1,0 +1,4 @@
+# 이 폴더 전용 — 루트 .gitignore는 .env* · __pycache__/ 를 이미 막는다(.venv/는 안 막음).
+.venv/
+__pycache__/
+.env*
