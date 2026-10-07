@@ -74,6 +74,16 @@ class RealDocTest(unittest.TestCase):
             paths.setdefault(c.meta["section"], set()).add(c.meta["heading_path"])
         self.assertEqual({k: len(v) for k, v in paths.items() if len(v) > 1}, {})
 
+    def test_personal_info_counts_and_masked(self):
+        raw = common.read_doc_at(COMMIT)
+        found = common.scan_secrets(raw)
+        counts = {k: len(found[k]) for k in ("customs_id", "email", "aws_account_id", "mobile_phone")}
+        self.assertEqual(counts, {"customs_id": 1, "email": 3, "aws_account_id": 1, "mobile_phone": 0})
+        where = {k: sorted({s for n in found[k] for s in self.section_at(n)}) for k in counts}
+        self.assertEqual(where, {"customs_id": ["22.2"], "email": ["30.1", "30.4", "30.7"],
+                                 "aws_account_id": ["30.1"], "mobile_phone": []})
+        self.assertEqual({k: v for k, v in common.scan_secrets(self.text).items() if v}, {})   # 인덱스 본문엔 0
+
     def test_no_blocking_secrets(self):
         found = common.scan_secrets(common.read_doc_at(COMMIT))
         self.assertEqual([k for k in common.BLOCKING_SECRETS if found[k]], [])
@@ -89,12 +99,38 @@ class SecretTest(unittest.TestCase):
     def test_scan_counts_and_mask_hides(self):
         text = f"a {self.KEY}\nb {self.TOKEN}\nc {self.TUNNEL}\nmd5 {self.MD5} · Bearer Token 설명"
         found = common.scan_secrets(text)
-        self.assertEqual({k: v for k, v in found.items()}, {"openai_key": [1], "bearer_token": [2], "quick_tunnel": [3]})
+        self.assertEqual({k: v for k, v in found.items() if v}, {"openai_key": [1], "bearer_token": [2], "quick_tunnel": [3]})
         masked = common.mask_secrets(text)
         for secret in (self.KEY, "x9" * 15, "brave-lion-abc"):
             self.assertNotIn(secret, masked)
         self.assertIn(self.MD5, masked)                                 # 일반 16진 해시는 비밀값이 아니다
         self.assertIn("[MASKED:quick_tunnel]", masked)
+
+
+class PersonalInfoTest(unittest.TestCase):
+    # 실값 금지 — 형태만 같은 가짜 값을 실행 중에 조립한다.
+    CUSTOMS = "P" + "1234567890" + "12"
+    MAIL = "someone" + "@" + "example.com"
+    ACCOUNT = "Account ID `" + "123456789012" + "`"
+    PHONE = "010" + "-1234-" + "5678"
+    NOT_MAIL = ["platformio/espressif32@7.0.0", "framework@3.20017.241212", "pkg@1.2.3.tgz",
+                "lib@2.0.0-beta.zip", "`@app.route`", "medium.com/@name/post", "@ 기호만", "x@9,9kHz"]
+
+    def test_each_kind_counted_and_masked(self):
+        text = f"a {self.CUSTOMS}\nb {self.MAIL}\nc {self.ACCOUNT}\nd {self.PHONE}"
+        found = common.scan_secrets(text)
+        self.assertEqual({k: v for k, v in found.items() if v},
+                         {"customs_id": [1], "email": [2], "aws_account_id": [3], "mobile_phone": [4]})
+        masked = common.mask_secrets(text)
+        for value in (self.CUSTOMS, self.MAIL, "123456789012", self.PHONE):
+            self.assertNotIn(value, masked)
+        self.assertIn("Account ID `[MASKED:aws_account_id]`", masked)
+        self.assertEqual(common.BLOCKING_SECRETS, ("openai_key", "bearer_token"))   # 개인정보는 차단 대상 아님
+
+    def test_version_strings_are_not_mail(self):
+        for s in self.NOT_MAIL:
+            self.assertEqual(common.SECRET_PATTERNS["email"].findall(s), [], s)
+            self.assertEqual(common.mask_secrets(s), s, s)
 
 
 class ConfigTest(unittest.TestCase):
@@ -140,7 +176,7 @@ class MockIndexTest(unittest.TestCase):
             self.assertFalse(cache.exists())                            # 가짜 임베딩은 캐시를 쓰지 않는다
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                query.main(["--persist-dir", str(persist), "--config", str(CFG_PATH), "-k", "5", "heartbeat 주기"])
+                query.main(["--persist-dir", str(persist), "--config", str(CFG_PATH), "-k", "5", "핀 표"])
             self.assertEqual(sum(line.startswith("[") for line in out.getvalue().splitlines()), 5)
             with self.assertRaises(SystemExit):                         # 덮어쓰기 금지
                 with contextlib.redirect_stdout(io.StringIO()):

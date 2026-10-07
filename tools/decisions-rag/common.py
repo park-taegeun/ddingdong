@@ -14,11 +14,17 @@ CONFIG_KEYS = (
     "embed_model", "embed_price_usd_per_1m_tokens", "max_embed_tokens", "top_k", "answer_model",
 )
 
-# 비밀값 형태. md5 같은 일반 16진 해시는 여기에 걸리지 않는다(접두어 · 도메인이 필요).
+# 비밀값 · 개인정보 형태. md5 같은 일반 16진 해시는 여기에 걸리지 않는다(접두어 · 도메인이 필요).
 SECRET_PATTERNS = {
     "openai_key": re.compile(r"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}"),
     "bearer_token": re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{20,}"),
     "quick_tunnel": re.compile(r"\b[a-z0-9-]+\.trycloudflare\.com\b"),
+    # 개인정보 — 인덱싱은 막지 않고 인덱스 본문에서만 가린다.
+    "customs_id": re.compile(r"\bP\d{12}\b"),                      # 개인통관고유번호
+    # @ 뒤 첫 글자 = 영문: pkg@1.2.3.tgz 같은 패키지 버전 문자열을 메일로 보지 않는다.
+    "email": re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b"),
+    "aws_account_id": re.compile(r"(?<=Account ID `)\d{12}(?=`)"),
+    "mobile_phone": re.compile(r"\b01[016789]-\d{3,4}-\d{4}\b"),
 }
 # 이 종류가 나오면 인덱싱을 멈춘다(터널 주소는 마스킹만 하고 진행).
 BLOCKING_SECRETS = ("openai_key", "bearer_token")

@@ -89,7 +89,7 @@ def main(argv=None):
     def where(lines):
         return sorted({c.meta["section"] for c in chunks for n in lines
                        if c.meta["line_start"] <= n <= c.meta["line_end"]})
-    print("비밀값 점검(개수 · 위치=절):")
+    print("비밀값 · 개인정보 점검(개수 · 위치=절, 값 출력 없음):")
     for kind, lines in secrets.items():
         print(f"  {kind}: {len(lines)}" + (f" — {', '.join(where(lines))}" if lines else ""))
     blocking = [k for k in common.BLOCKING_SECRETS if secrets[k]]
