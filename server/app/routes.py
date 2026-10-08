@@ -29,6 +29,7 @@ from .auth import dashboard_auth, device_auth
 from .constants import (
     AUDIO_FILE_FIELD,
     AUDIO_MAX_BYTES,
+    CONFIDENCE_THRESHOLD,
     DEFAULT_PAGE_LIMIT,
     DEVICE_OFFLINE_AFTER,
     DEVICE_RATE_LIMIT_SECONDS,
@@ -158,6 +159,23 @@ def detect():
             confidence,
             infer_ms,
         )
+        # 33.6(e) 판정 무변경 계측 — 반올림 전 top 원점수는 임계 미만인데 2자리 반올림값이
+        # 게이트를 통과한 요청만 남긴다(클래스 무관, 판정은 위 반올림값 그대로). 판정에
+        # 영향이 있었는지는 같은 줄의 클래스 · 정책 판정으로 사후에 본다. 원점수는 repr —
+        # f32 이웃 값을 구분해야 한다. client_request_id 로 줄마다 달라 demo_up 의 「같은
+        # WARNING 1회」에 접히지 않는다. 33.6(e) 수정 여부가 결정될 때 이 계측도 함께 처분.
+        raw_top = float(scores[0].max())  # = scores_to_prediction 이 반올림한 row[argmax]
+        if raw_top < CONFIDENCE_THRESHOLD and not confidence < CONFIDENCE_THRESHOLD:
+            current_app.logger.warning(
+                "detect round gap: predicted_class=%s raw=%r rounded=%.2f client_request_id=%s "
+                "policy_primary_sent=%s policy_skip_reason=%s",
+                predicted_class,
+                raw_top,
+                confidence,
+                client_request_id,
+                pred["primary_sent"],
+                pred["skip_reason"],
+            )
     else:
         pred = mock_prediction(tof)
     request_id = new_request_id()
