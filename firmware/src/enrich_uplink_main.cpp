@@ -24,6 +24,8 @@
 // ★ 태스크 배치 = **신규 태스크 0**. POST 2회 모두 Arduino loop 태스크에서 돈다
 //   (6.3(m): 마이크 태스크 스택 4096 부족 위험 회피. loopTask 8192B 는 프로즌 upload_spike 가
 //    이미 실측 완주). 마이크 태스크가 하는 추가 일은 **memcpy 1회**뿐이다.
+//   ⚠️ 예외 = 기기 heartbeat: `/heartbeat` POST 는 별도 태스크(heartbeatTask)에서 돈다 — loop 의 자동 트리거
+//      수락 창을 망 지연에 묶지 않기 위해서다. /detect · /enrich 2종은 그대로 loop 태스크다.
 //
 // ★ 재시도 0. 404/409/타임아웃/SOI 불일치/파싱 실패 — 전부 **로그만** 남기고 그 이벤트를 버린다.
 //
@@ -109,6 +111,13 @@ static_assert(AUTO_TRIG_BUF_MS * MIC_SAMPLE_RATE_HZ == (uint32_t)MIC_DMA_BUF_LEN
 static_assert(AUTO_TRIG_WIN_BUFS == MIC_RING_SLOTS, "1차 창 = 링 32슬롯 = 65,536 B wire 계약");
 #endif
 
+// ── 마이크 진행 계수 (micEnrichTask → heartbeat 태스크) ─────────────────────
+// 적재 완료 슬롯 수. 쓰기 = 마이크 태스크 1곳(micRingAdvance 직후), 읽기 = heartbeat 태스크(32비트 정렬 읽기).
+// i2s 가 멈추거나 링 할당이 실패하면(slot == nullptr → continue) 오르지 않는다 → 보고가 끊겨 대시보드 「꺼짐」.
+// enrich_autotrig 의 g_slotSeq 와 별개로 두는 이유 = enrich_uplink 에도 필요하고, 자동 트리거 규율(마이크 태스크가
+// 쓰는 값 · 순서)을 건드리지 않기 위해서다.
+static volatile uint32_t g_micSlots = 0;
+
 // ── ToF 최신 판정 공유 (tofTask → loop) — mic_uplink_main.cpp 와 동형 ──────
 static portMUX_TYPE   g_tofMux       = portMUX_INITIALIZER_UNLOCKED;
 static TofFrameResult g_tofLatest    = {};
@@ -120,9 +129,11 @@ static TofFrameResult g_tofAtS      = {};
 static bool           g_tofAtSValid = false;
 
 // ── 세션 과금 상한 (§2-1 ⑧) ────────────────────────────────────────────────
-// loop 전용. 부팅마다 0 — "세션" = 1회 부팅이다(재부팅으로 리셋되는 것이 의도다: 부스 시연
+// 쓰기 = loop 전용(runEvent). 부팅마다 0 — "세션" = 1회 부팅이다(재부팅으로 리셋되는 것이 의도다: 부스 시연
 // 1회분 상한이지 기기 수명 상한이 아니다).
-static uint32_t g_enrichSent = 0;
+// 읽기 = loop + heartbeat 태스크(보고 필드 enrich_sent) → volatile. 32비트 정렬 읽기라 찢어지지 않고,
+// 보고가 몇 초 늦은 값을 싣는 것은 허용한다(다음 주기에 따라잡는다).
+static volatile uint32_t g_enrichSent = 0;
 
 // ── client_request_id (M5-d 와 동일 근거: millis 기반은 재부팅 시 멱등 replay 유발) ──
 static char     g_idNonce[9] = {0};
@@ -211,6 +222,7 @@ static void micEnrichTask(void* parameter) {
     }
     convertMicRawToInt16(audio_buffer.raw, slot, n);
     micRingAdvance(&ring);
+    g_micSlots++;  // heartbeat 「마이크 진행」 근거. Serial 0줄
 
     if (!g_ringFull && ring.slots_filled >= MIC_RING_SLOTS) {
       g_ringFull = true;
@@ -546,6 +558,52 @@ static void autoTrigAccept() {
 }
 #endif
 
+// ── heartbeat 태스크 (loop 와 별개 — 서버 · 망 지연이 loop 의 자동 트리거 수락 창을 먹지 않게) ──────
+// 자동 트리거는 발화 뒤 약 20버퍼(1.28초) 안에 loop 가 수락해야 late 를 피한다(auto_trig.h autoTrigDecide).
+// heartbeat POST 를 loop 에서 돌리면 그 창이 망 지연에 묶인다 → 별도 태스크. 재시도 0 · 판정은 서버.
+#ifdef ENRICH_AUTO_TRIGGER
+static const char* const HB_FW = HB_FW_ENRICH_AUTOTRIG;
+#else
+static const char* const HB_FW = HB_FW_ENRICH_UPLINK;
+#endif
+
+static void heartbeatTask(void* parameter) {
+  (void)parameter;
+  uint32_t   micLast = g_micSlots;
+  vTaskDelay(pdMS_TO_TICKS(HB_FIRST_DELAY_MS));
+  TickType_t wake = xTaskGetTickCount();
+
+  for (;;) {
+    const bool      up      = (WiFi.status() == WL_CONNECTED);
+    const int32_t   rssi    = up ? (int32_t)WiFi.RSSI() : 0;
+    const uint32_t  micNow  = g_micSlots;
+    const HbVerdict vd      = hbDecide(up, rssi, micNow, micLast);
+    micLast = micNow;
+
+    if (vd == HB_SEND) {
+      char json[HB_JSON_BUF_BYTES];
+      const uint32_t upS = (uint32_t)(esp_timer_get_time() / 1000000);
+      const size_t   len = hbBuildJson(json, sizeof(json), UPLINK_DEVICE_ID, rssi, upS, HB_FW,
+                                       g_enrichSent);
+      if (len == 0) {
+        // 기본값으로 채워 보내지 않는다 — 이번 주기는 보고 없음.
+        Serial.println("[hb] build=0");
+      } else {
+        const UplinkResult r = uplinkPostHeartbeat(SPIKE_SERVER_HOST, SPIKE_SERVER_PORT, json, len);
+        // stk ≤ 태스크 스택 크기(8192) → 4자리.
+        // "[hb] http=-9999 rtt=4294967295ms rssi=-127 up=4294967295 stk=8192" = 65B
+        Serial.printf("[hb] http=%d rtt=%ums rssi=%d up=%u stk=%u\n", r.httpStatus,
+                      (unsigned)r.roundTripMs, (int)rssi, (unsigned)upS,
+                      (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+      }
+    } else {
+      // "[hb] skip=wifi rssi=-128 mic=4294967295" = 39B
+      Serial.printf("[hb] skip=%s rssi=%d mic=%u\n", hbVerdictName(vd), (int)rssi, (unsigned)micNow);
+    }
+    vTaskDelayUntil(&wake, pdMS_TO_TICKS(HB_RUN_PERIOD_MS));
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(MIC_SERIAL_BOOT_DELAY_MS);
@@ -596,6 +654,26 @@ void setup() {
   } else {
     Serial.println("[BOOT] tof init 실패 — 4필드 미전송(서버 tof_absent 로 degrade)");
   }
+
+  // ── heartbeat 태스크 ─────────────────────────────────────────────────────
+  // 「켜짐」 = 기기가 실제로 알림을 낼 수 있다. 그래서 마이크 태스크가 떠 있고(위 조기 return 을 지나왔다)
+  // PSRAM 버퍼 4개가 다 있을 때만 만든다. 보고마다 WiFi · 마이크 진행을 다시 본다(heartbeat_wire.h hbDecide).
+  // 코어 · 우선순위 = loop 와 같다(ARDUINO_RUNNING_CORE · setup 이 도는 loopTask 의 우선순위) — 마이크(prio 4) ·
+  //   ToF(prio 3)가 있는 Core 0 을 피하고, loop 보다 높지 않게 해서 loop 를 선점하지 않는다.
+  // 스택 = loopTask 크기(CONFIG_ARDUINO_LOOP_STACK_SIZE = 8192) — 같은 HTTPClient 경로를 loopTask 가 실측 완주했다.
+  //   실사용은 [hb] 줄의 stk(여유 high-water)로 본다.
+  if (g_snap == nullptr || g_body == nullptr || g_rec == nullptr || g_ebody == nullptr) {
+    Serial.println("[BOOT] heartbeat 미기동 — PSRAM 버퍼 없음(대시보드 꺼짐 유지)");
+    return;
+  }
+  if (xTaskCreatePinnedToCore(heartbeatTask, "hbTask", CONFIG_ARDUINO_LOOP_STACK_SIZE, nullptr,
+                              uxTaskPriorityGet(nullptr), nullptr, ARDUINO_RUNNING_CORE) != pdPASS) {
+    Serial.println("[BOOT] heartbeat 태스크 생성 실패 — 보고 없음(재시도 없음)");
+    return;
+  }
+  // "[BOOT] heartbeat period=4294967295ms first=4294967295ms fw=enrich_autotrig" = 72B (상수 — 실제 61 ~ 63B)
+  Serial.printf("[BOOT] heartbeat period=%ums first=%ums fw=%s\n", (unsigned)HB_RUN_PERIOD_MS,
+                (unsigned)HB_FIRST_DELAY_MS, HB_FW);
 }
 
 void loop() {

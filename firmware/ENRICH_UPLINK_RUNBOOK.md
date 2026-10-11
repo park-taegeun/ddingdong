@@ -183,3 +183,80 @@ md5 가 갈린다(카테고리 20, 2026-09-18). **전처리 출력(`c++ -E`) md5
 - 기존 12개 env — 무수정(`platformio.ini` 는 추가 39줄 · 삭제 0줄)
 - 1차 `UPLINK_HTTP_TIMEOUT_MS = 10000` — 무변경
 - 6.3(n) 해결책 ①②③ · G29 pre:post 비율 · RMS 자동 트리거 — 전건 미판단
+
+---
+
+## 10. 기기 heartbeat — 보드가 30초마다 「살아 있음」을 보고 (env:enrich_uplink · env:enrich_autotrig 공통)
+
+> **무엇을 가르나**: 서버 `POST /api/v1/heartbeat` · 대시보드 실판정(PR #103)에 보드 쪽 보고를 붙였다. 컴파일 · 호스트 테스트 · 서버 계약(테스트 클라이언트 204 → `/stats` online)까지는 증명했고, **배선 · 동시성 · 메모리는 보드에서만** 드러난다.
+> 사용자 결정(권고 수용) 2026-10-06 — 보고 30초 · 서버 꺼짐 판정 90초(둘 다 잠정) · 보내는 값 = device_id · rssi · uptime_s · fw · enrich_sent.
+
+### 10-1. 무엇을 언제 보내나
+
+- 별도 태스크(`hbTask`, loop 와 같은 Core 1 · 같은 우선순위 · 스택 8192)에서 보낸다. loop 의 자동 트리거 수락 창(발화 뒤 약 20버퍼 = 1.28초)을 망 지연에 묶지 않기 위해서다.
+- 태스크는 **PSRAM 버퍼 4개 + 마이크 태스크가 다 떴을 때만** 생긴다(아니면 `[BOOT] heartbeat 미기동 …` 또는 mic init 실패의 조기 return → 대시보드는 계속 「꺼짐」 = 정상).
+- 매 주기 판정 순서 = **WiFi → RSSI(−127 ~ −1) → 마이크 진행(직전 보고 이후 슬롯 적재 수가 늘었나)**. 하나라도 아니면 보내지 않고 사유만 찍는다. 재시도 0.
+- device_id = `/detect` 와 같은 `UPLINK_DEVICE_ID`(서버 heartbeat 는 rate limit 을 부르지 않는다 — 초인종 429 유발 없음, PR #103 테스트로 고정).
+- 상수(전부 잠정 — `firmware/include/heartbeat_wire.h` 주석에 근거 · 재판정 트리거): 주기 30,000ms · 첫 보고 3,000ms · connect 3,000ms · 무응답 3,000ms(최악 총 경과 산술 18,200ms < 주기).
+
+### 10-2. 로그 줄 읽는 법 (`[hb]` 줄은 hbTask 가 낸다 — 마이크 태스크 Serial 0줄 유지)
+
+| 줄 | 뜻 | 최악 길이 |
+|---|---|---|
+| `[BOOT] heartbeat period=30000ms first=3000ms fw=enrich_autotrig` | 태스크 생성됨. **period 가 30000 이 아니면 테스트 훅 빌드**다 | 63B |
+| `[BOOT] heartbeat 미기동 — PSRAM 버퍼 없음(대시보드 꺼짐 유지)` | 버퍼 실패 → 보고 안 함 | — |
+| `[BOOT] heartbeat 태스크 생성 실패 — 보고 없음(재시도 없음)` | 내부 RAM 부족 의심 → 정지 · 보고 | — |
+| `[hb] http=204 rtt=12ms rssi=-55 up=123 stk=5120` | 보고 성공. `stk` = 태스크 스택 **여유** high-water(B) | 65B |
+| `[hb] http=-1 …` / `http=401` / `http=400` | 전송 실패 / 토큰 불일치 / 본문 계약 위반 → 400 은 정지 · 보고 | 65B |
+| `[hb] skip=wifi rssi=0 mic=…` | WiFi 끊김 — 보드는 재연결하지 않는다(기존 동작) | 39B |
+| `[hb] skip=rssi rssi=0 mic=…` | 연결 확인과 RSSI 읽기 사이에 끊김(0 = 「강함」 오표시 방지로 거름) | 39B |
+| `[hb] skip=mic rssi=-55 mic=…` | 30초 동안 마이크 슬롯 적재 0 = i2s 정지 → 정지 · 보고 | 39B |
+| `[hb] build=0` | 본문 조립 실패(도달 불가 가드) → 정지 · 보고 | — |
+
+### 10-3. ④런타임 판정 절차 (학부생 몫)
+
+| # | 절차 | 기대 |
+|---|---|---|
+| H1 | 부팅 → 약 3초 뒤 | 보드 `[hb] http=204`, 대시보드 「켜짐」(폴링 3초 이내) |
+| H2 | 5분 관찰 | `[hb] http=204` 줄 ≈ 10 · 서버 access log 의 `POST /api/v1/heartbeat … 204` 수와 일치 |
+| H3 | USB 뽑기 | 뽑은 뒤 약 **60 ~ 93초** 사이에 「꺼짐」. 산술: 마지막 보고 = 뽑기 0 ~ 30초 전 · 서버 판정 = 마지막 보고 + 90초 **초과** · 대시보드 폴링 3초 |
+| H4 | 대조 실험(loop 무간섭 확인) | 같은 자리 · 같은 소리로 **정상 빌드 ↔ 테스트 훅 빌드**(`HB_PERIOD_MS_TEST=2000`) 교대 블록, 자동 감지 노크 각 10회 → `[e2a] busy · drop · ring · late` 계수와 수락 수 비교. **훅 빌드에서 late · 놓침 증가 0**(증가 시 정지 · 보고). 블록 경계 = 학부생이 알린 시작 시각 + 서버 detect 수 |
+| H5 | 핫스팟 끄기 | `[hb] skip=wifi` 반복 + 90초 뒤 「꺼짐」 = 정상(그 자체가 「기기 연결 확인」 신호) |
+| H6 | 직접녹음 수신기(`server/tools/record_receiver.py`)와 쓸 때 | 수신기 창에 30초마다 heartbeat **404** 줄 = 정상(수신기는 `/detect` · `/enrich` 두 경로만 흉내 — 무수정) |
+| H7 | 내부 메모리 | 이벤트 때 `e2-pre-init` 메모리 진단 줄의 내부 RAM 여유가 이전 런 대비 태스크 스택(약 8KB)만큼 준 것 외 이상 없음 · 카메라 init 성공 |
+
+테스트 훅 빌드(ini 무변경 — 환경 변수로만 주입. 끝나면 반드시 플래그 없이 다시 빌드 · 플래시):
+
+```bash
+cd firmware
+PLATFORMIO_BUILD_FLAGS="-DHB_PERIOD_MS_TEST=2000" pio run -e enrich_autotrig -t upload   # [BOOT] period=2000ms 확인
+pio run -e enrich_autotrig -t upload                                                     # 정상 빌드로 복귀 — period=30000ms 확인
+```
+
+훅 값은 1000 이상만 컴파일된다(`HB_PERIOD_MS_TEST=500` → static_assert 실패로 빌드가 멈춘다 — 훅이 컴파일에 닿는다는 증명).
+
+### 10-4. 호스트 단위 검증 (repo 루트에서)
+
+```bash
+c++ -std=c++17 -Wall -I firmware/include -o /tmp/hbt firmware/tools/heartbeat_wire_test.cpp && /tmp/hbt
+```
+
+negative control — `heartbeat_wire.h` 를 아래처럼 바꾸면 **반드시 실패**해야 한다(되돌리면 통과):
+
+| 변형 | 깨지는 불변식 | 결함이 되는 조건 | 함정 |
+|---|---|---|---|
+| hbDecide 가 마이크 진행을 무시(항상 SEND) | 「모르면 정상」 금지 | i2s 가 멈춰도 「켜짐」 | WiFi 끊김 케이스만 보면 통과 |
+| hbBuildJson 이 잘려도 부분 길이 반환 | 부분 본문 금지 | 서버 400 · 깨진 본문 | cap 이 넉넉하면 안 드러남 → n · n+1 경계 |
+| 필드 이름 `uptime_s` → `uptime` | 서버 계약 | 서버 400 | 정확 바이트 케이스가 잡는다 |
+| `HB_PERIOD_MS` 31000 | 꺼짐 판정 ≥ 보고 3회분 | 연속 2회 유실 전에 헛 「꺼짐」 | 서버 constants.py 텍스트 대조가 잡는다 |
+| 판정 순서 뒤집기(마이크 먼저) | 사유 로그 = 가장 앞선 원인 | WiFi 끊김이 `skip=mic` 로 찍힘 | 단일 원인 케이스만 보면 통과 |
+| RSSI 범위 검사 제거 | RSSI 0 미전송 | 0 이 나가 대시보드 「강함」(서버 검증으론 못 잡음) | 정상 RSSI 만 보면 통과 |
+| RSSI 상한 −1 → 0 | 〃 | 〃 | 0 경계 1점이 잡는다 |
+| 위험 문자 검사 제거 | 이스케이프 발명 금지 | 따옴표 든 값이 JSON 을 깸 | — |
+
+### 10-5. 이 절이 바꾸지 않는 것
+
+- `platformio.ini` 0줄 · `server/` · `dashboard/` · `record_receiver.py` 무변경
+- `uplink_common.*` 기존 함수 6개 · 상수 — 무변경(끝에 `uplinkPostHeartbeat` 추가만)
+- loop · `micEnrichTask` · `tofEnrichTask` · `autoTrigAccept` · `runEvent` 본문 — 마이크 슬롯 계수 1줄 · `g_enrichSent` volatile 외 무변경
+- WiFi 자동 재연결 · 끊김 카톡 알림 — 범위 밖(별도 결정)
