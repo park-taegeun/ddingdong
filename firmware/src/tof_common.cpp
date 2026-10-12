@@ -56,6 +56,19 @@ bool initToF() {
 
   // ESP32-S3 GPIO 매핑 + I2C 클럭(TOF_I2C_FREQ_HZ = 400kHz, 2026-08-07 실측 정식 채택).
   // 정정: 구 "1MHz 워크어라운드" 주석은 8/07 브링업 실측(카테고리 9.1)으로 무효 — 상수 단일 출처 참조.
+  // [diag D1] Wire.begin 전 버스 선 상태(입력+풀업만 — 출력·쓰기 0). 직후 Wire.begin(i2cInit)이
+  //   두 핀을 I2C 오픈드레인으로 다시 설정하므로 I2C 동작엔 흔적이 남지 않는다.
+  pinMode(TOF_SDA_PIN, INPUT_PULLUP);
+  pinMode(TOF_SCL_PIN, INPUT_PULLUP);
+  unsigned sdaLow = 0, sclLow = 0;
+  for (int i = 0; i < TOF_DIAG_BUS_SAMPLES; i++) {
+    if (digitalRead(TOF_SDA_PIN) == LOW) sdaLow++;
+    if (digitalRead(TOF_SCL_PIN) == LOW) sclLow++;
+    delayMicroseconds(TOF_DIAG_BUS_SAMPLE_GAP_US);
+  }
+  Serial.printf("[tof] diag boot bus: SDA low %u/%d, SCL low %u/%d\n",
+                sdaLow, TOF_DIAG_BUS_SAMPLES, sclLow, TOF_DIAG_BUS_SAMPLES);
+
   Wire.begin(TOF_SDA_PIN, TOF_SCL_PIN);
   Wire.setClock(TOF_I2C_FREQ_HZ);
   Serial.printf("[tof] I2C ready (SDA=GPIO%d/SCL=GPIO%d, clock=%uHz)\n",
@@ -67,6 +80,7 @@ bool initToF() {
     if (attempt > 0) {
       Serial.printf("[tof] retry init (%d/%d)...\n", attempt + 1, TOF_INIT_RETRY_MAX);
     }
+    const unsigned long attemptStartMs = millis();  // [diag D2] 시도별 경과 ms
     if (tofImager.begin()) {
       // 8x8 mode (datasheet RESOLUTION_8X8 = 64).
       tofImager.setResolution(TOF_ZONE_COUNT);
@@ -81,6 +95,14 @@ bool initToF() {
       return true;
     }
     Serial.printf("[tof] init failed (attempt %d/%d)\n", attempt + 1, TOF_INIT_RETRY_MAX);
+    // [diag D2·D3] 기존 줄 뒤 별도 줄. code = SF_VL53L5CX_ERROR_TYPE 정수(3 = DEVICE_INITIALIZATION_ERROR
+    //   + value = ULD status, 4 = INVALID_DEVICE). ★ 주소 ping NACK 경로는 lastError를 채우지 않아
+    //   code=0 value=0으로 찍힌다(v1.0.3 begin(): clearErrorStruct 후 콜백만 호출) → 실패 줄의 code=0 = ping NACK.
+    //   SDA·SCL = digitalRead(gpio_get_level 읽기만 — 핀 설정 무변경)로 본 실패 직후 선 레벨.
+    Serial.printf("[tof] diag attempt %d: code=%u value=%lu %lums SDA=%d SCL=%d\n", attempt + 1,
+                  (unsigned)tofImager.lastError.lastErrorCode,
+                  (unsigned long)tofImager.lastError.lastErrorValue,
+                  millis() - attemptStartMs, digitalRead(TOF_SDA_PIN), digitalRead(TOF_SCL_PIN));
   }
 
   // OnlyFeet 진단 패턴: 실패 시 I2C scan으로 부품 부재/배선 오류 구분.
