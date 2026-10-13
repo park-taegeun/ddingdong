@@ -17,9 +17,13 @@
     타지 않는다 → constants 정정 PR 과 독립적으로 동작.
 
 실행:
-    cd server && python seed.py
+    cd server && venv/bin/python3 seed.py --confirm-delete-all
+  플래그가 없으면 대상 DB 파일 이름과 지울 알림 수만 보여 주고 끝난다(쓰기 0 · 종료 코드 2).
 """
 
+import argparse
+import os
+import sys
 from datetime import timedelta
 
 from app import create_app
@@ -200,9 +204,16 @@ def _build_notification(spec, now):
     )
 
 
-def seed():
-    app = create_app()
+def seed(app, confirm):
+    """confirm=False 면 지울 알림 수만 세고(읽기만) 2 반환. True 면 삭제 → 데모 5건 삽입 후 0."""
     with app.app_context():
+        if not confirm:
+            count = db.session.query(Notification).count()
+            db_name = os.path.basename(db.engine.url.database or "")
+            print(f"[seed] 대상 DB = {db_name} · 지울 알림 {count}건 — 아무것도 바꾸지 않았다.")
+            print("       삭제 → 데모 5건 삽입을 하려면 --confirm-delete-all 을 붙여 다시 실행.")
+            return 2
+
         # 데모 재현성: 기존 알림 전량 삭제 후 재삽입(재실행해도 중복 없음).
         # idempotency_keys 는 의도적으로 보존(멱등 캐시는 시드 대상 아님).
         deleted = db.session.query(Notification).delete()
@@ -216,7 +227,19 @@ def seed():
         for n in rows:
             print(f"       - {n.predicted_class:<11} conf={n.confidence} "
                   f"enrich={n.enrich_status} primary_sent={n.primary_sent}")
+        return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="데모 알림 5건 시드(기존 알림 전부 삭제)")
+    parser.add_argument(
+        "--confirm-delete-all",
+        action="store_true",
+        help="기존 알림을 전부 지우고 데모 5건을 넣는다. 없으면 지울 수만 보여 주고 끝난다.",
+    )
+    args = parser.parse_args(argv)
+    return seed(create_app(), args.confirm_delete_all)
 
 
 if __name__ == "__main__":
-    seed()
+    sys.exit(main())
