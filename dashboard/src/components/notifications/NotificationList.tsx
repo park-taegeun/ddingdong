@@ -2,6 +2,8 @@ import { BellOff, TriangleAlert } from "lucide-react"
 import type { ReactNode } from "react"
 import { EmptyState } from "@/components/feedback/EmptyState"
 import { LoadingSkeleton } from "@/components/feedback/LoadingSkeleton"
+import { StaleDataNotice } from "@/components/feedback/StaleDataNotice"
+import { useStale } from "@/hooks/useStale"
 import type { NotificationItem } from "@/types/notification"
 import { NotificationCard } from "./NotificationCard"
 
@@ -9,6 +11,8 @@ interface NotificationListProps {
   notifications: NotificationItem[]
   isLoading: boolean
   error: Error | null
+  // 마지막 성공 응답 시각 — 끊김 판정용(useNotifications 그대로 전달).
+  lastUpdated: Date | null
   // 지정 시 최신 N건만 노출 (홈 화면 요약용)
   limit?: number
   // 정상 빈 상태(0건, 에러 아님) 전용 대체 노출. 로딩/에러 분기는 무영향.
@@ -20,9 +24,12 @@ export function NotificationList({
   notifications,
   isLoading,
   error,
+  lastUpdated,
   limit,
   emptySlot,
 }: NotificationListProps) {
+  const stale = useStale(lastUpdated, error)
+
   if (isLoading && notifications.length === 0) {
     return <LoadingSkeleton variant="list" count={limit ?? 4} />
   }
@@ -53,6 +60,8 @@ export function NotificationList({
 
   return (
     <div className="space-y-3">
+      {/* 끊김이면 옛 목록 위에 안내 — 새 알림이 안 와도 모르는 상태를 막는다. */}
+      {stale && <StaleDataNotice lastUpdated={lastUpdated} />}
       {items.map((notification) => (
         <NotificationCard
           key={notification.request_id}

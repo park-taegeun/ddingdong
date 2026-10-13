@@ -25,6 +25,7 @@ export function NotificationsPage() {
         notifications={notifications}
         isLoading={isLoading}
         error={error}
+        lastUpdated={lastUpdated}
       />
     </div>
   )
