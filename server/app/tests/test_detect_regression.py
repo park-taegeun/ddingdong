@@ -35,6 +35,7 @@ import io
 import math
 import os
 import json
+import shutil
 import socket
 import struct
 import tempfile
@@ -277,6 +278,9 @@ class DetectRegressionTest(_NoNetworkTestCase):
         # 실 ddingdong.db 를 건드리지 않도록 임시 파일 DB 로 격리
         cls._db_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         cls._db_file.close()
+        # 실 캡처 폴더(기본 server/instance/captures = 방문자 사진)에 /enrich 테스트 사진이 섞이지
+        # 않게 임시 폴더로 격리한다 — 섞이면 cleanup_expired 테스트가 실 사진까지 지울 수 있다.
+        cls._capture_dir = tempfile.mkdtemp(prefix="ddingdong-captures-")
 
         from .. import create_app
         from ..config import Config
@@ -300,6 +304,7 @@ class DetectRegressionTest(_NoNetworkTestCase):
             # real 모드 케이스는 _FAKE_NCP_CREDS 를 patch.dict 로 덮으므로 영향 없다.
             NCP_CLIENT_ID = ""
             NCP_CLIENT_SECRET = ""
+            CAPTURE_STORE_DIR = cls._capture_dir
 
         cls.app = create_app(_TestConfig)
         cls.client = cls.app.test_client()
@@ -307,6 +312,7 @@ class DetectRegressionTest(_NoNetworkTestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
+        shutil.rmtree(cls._capture_dir, ignore_errors=True)
         os.unlink(cls._db_file.name)
 
     # ── 헬퍼 ─────────────────────────────────────────────────────────────
@@ -2049,6 +2055,28 @@ class DetectRegressionTest(_NoNetworkTestCase):
         self.assertTrue(st["secondary_sent"])
         self.assertIsNotNone(st["secondary_sent_at"])
         self.assertEqual(st["enrich_status"], "completed")
+
+    def test_enrich_photo_lands_in_temp_capture_dir(self) -> None:
+        """/enrich 사진은 클래스 임시 폴더에 저장되고 그 폴더에서 서빙된다(실 캡처 폴더 무접촉).
+
+        설정 단언이 /enrich 호출보다 먼저다 — 격리가 빠지면 실 폴더에 쓰기 전에 실패한다.
+        """
+        from ..config import Config
+
+        store = self.app.config["CAPTURE_STORE_DIR"]
+        self.assertEqual(store, self._capture_dir)
+        self.assertNotEqual(os.path.realpath(store), os.path.realpath(Config.CAPTURE_STORE_DIR))
+
+        before = set(os.listdir(store))
+        self._seed_pending("regr-sec-capdir")
+        self._run_enrich("regr-sec-capdir", "자막", self._result(True, True))
+        new = [f for f in set(os.listdir(store)) - before if f.endswith(".jpg")]
+        self.assertEqual(len(new), 1)
+
+        served = self.client.get("/captures/" + new[0][: -len(".jpg")])
+        self.assertEqual(served.status_code, 200)
+        self.assertEqual(served.data, self._JPEG)
+        served.close()
 
     def test_photo_ok_caption_failed_is_not_full_success(self) -> None:
         """S3 (2/4) — 사진O 자막X. 완전 성공과 반드시 달라야 한다.
