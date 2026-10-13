@@ -6,6 +6,7 @@
 - 출력은 **waveform(16kHz mono Int16) 유지** — 멜스펙트로그램/SpecAugment 변환은 학습 스크립트 몫(카테고리 4).
 - 분할은 **증강 이전, 원본(source) 단위 그룹 분할** — data leakage 방지(카테고리 5). train에만 증강, val/test는 원본만.
 - split 직전에 **디지털 무음 → AI Hub 앞머리 멘트 → 클래스 교차 → 내용(md5) 중복** 순서로 split 대상에서 제외한다(D1 · decisions.md 33.15(d) — 순서가 규칙의 일부). 멘트 = AI Hub `S_103` `fire_alarm` 조각 중 시작 9000ms 미만(녹음당 3조각), 사유 `aihub_intro_speech`. 제외 내역 = `manifests/dedup_manifest.csv`. **`02_preprocessed`의 파일은 지우지 않는다**(원본 보존).
+- D1 **뒤**에 **재학습 데이터 결정 목록** `ml/pipeline/retrain_data_decisions.csv`(804행)를 적용한다 — 2026-10-12 · 13 사용자 결정(decisions.md 등재 대기). 공개 데이터 3초 조각의 라벨 오염(10초 · 클립 단위 약한 라벨을 3초로 자름 + pretest knock mid 오기 = Frying)을 청취 + 원래 YAMNet 점수로 판정해 고정한 목록이다. `exclude`(475) = split 대상에서 제외 · `dedup_manifest.csv`에 목록 사유 / `relabel_other`(329, AudioSet 「노크」 = 실제 튀김 소리) = 클래스를 `other`로 바꿔 split · 증강 · 조립에 흐르게 하고 `relabel_manifest.csv`에 기록(02 파일 이동 0). 적용한 목록의 sha256 · 행 수 = `decisions_applied.json`. **파이프라인은 YAMNet을 돌리지 않는다** — 목록만 읽는다. 목록 형식이 틀리거나 목록의 (class, stem)이 D1 생존분에 없으면 즉시 실패(낡은 목록을 조용히 건너뛰지 않는다). 순서가 D1 뒤인 이유 = 목록은 D1 생존분으로 만들어졌다(앞에 두면 D1이 지울 중복 짝이 살아남을 수 있다).
 - source 배정은 **셔플이 아니라 그룹 키 해시 고정**(D2) — **새 source가 들어와도 기존 source 배정이 바뀌지 않는다**.
 - 향후 `04_direct_recording` 녹음이 `01_clips`로 유입돼도 **코드 수정 0**, 재실행만. 직접녹음은 **테이크가 아니라 유닛**이 한 그룹이다(D3).
 
@@ -22,7 +23,8 @@
   02_preprocessed/                             # ← 파이프라인 출력
   03_augmented/                                # ← 파이프라인 출력 (train 파생만)
   05_final_dataset/{train,val,test}/{class}/   # ← 최종 출력
-  manifests/split_manifest.csv, dedup_manifest.csv, final_manifest.csv
+  manifests/split_manifest.csv, dedup_manifest.csv, relabel_manifest.csv,
+            decisions_applied.json, final_manifest.csv
 ```
 
 파이프라인은 `00_source_raw` / `01_extracted` / `04_direct_recording`을 **건드리지 않음**.
@@ -34,13 +36,15 @@ repo 루트에서:
 ```bash
 # 실제 데이터 루트 지정 (경로에 공백·한글 → 반드시 따옴표)
 DDINGDONG_DATA_ROOT="~/ML 학습 데이터/ddingdong_dataset" \
-  python -m ml.pipeline.run_all
+  python -m ml.pipeline.run_all --decisions ml/pipeline/retrain_data_decisions.csv
 ```
+
+`--decisions`는 **필수**다(기본값 없음). 목록 없이 돌릴 땐 헤더만 있는 CSV(예: `ml/pipeline/tests/empty_decisions.csv`)를 명시한다 — 「돌렸고 0건」과 「안 돌렸다」를 가르기 위해서다.
 
 또는:
 
 ```bash
-python -m ml.pipeline.run_all --data-root "…/ddingdong_dataset"
+python -m ml.pipeline.run_all --data-root "…/ddingdong_dataset" --decisions ml/pipeline/retrain_data_decisions.csv
 ```
 
 실행 시 Step1~5가 순서대로 돌고 끝에 `05_final_dataset` split×class 개수 + 누수 가드 통과 요약이 출력됨.
@@ -99,7 +103,7 @@ pytest ml/pipeline/tests/
 | Step | 모듈 | 내용 |
 |---|---|---|
 | 1 | `preprocess.py` | 16k mono 검증(위반 스킵) + peak 정규화 → `02_preprocessed` |
-| 2 | `split.py` | 무음 · 멘트 · 교차 · 중복 제거 → 원본(source) 단위 해시 고정 배정(증강 前) → `split_manifest.csv` + `dedup_manifest.csv` |
+| 2 | `split.py` | 무음 · 멘트 · 교차 · 중복 제거 → 결정 목록(exclude · relabel_other) → 원본(source) 단위 해시 고정 배정(증강 前) → `split_manifest.csv` + `dedup_manifest.csv` + `relabel_manifest.csv` + `decisions_applied.json` |
 | 3 | `augment.py` | **train만** waveform 증강(time-stretch/BG noise SNR/volume/pitch) → `03_augmented` |
 | 4 | `assemble.py` | train=원본+증강 / val·test=원본만 → `05_final_dataset` + `final_manifest.csv` |
 | 5 | `guards.py` | 누수 가드 2층: ① train stem ∩ (val∪test) = ∅ ② 같은 내용 해시가 2개 이상 split에 존재하면 즉시 실패 |

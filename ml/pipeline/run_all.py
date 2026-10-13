@@ -1,7 +1,10 @@
 """전체 파이프라인 오케스트레이터.
 
-  DDINGDONG_DATA_ROOT="..." python -m ml.pipeline.run_all   # 정본 관용구(카테고리 5)
-  python -m ml.pipeline.run_all --data-root "..."
+  DDINGDONG_DATA_ROOT="..." python -m ml.pipeline.run_all --decisions ml/pipeline/retrain_data_decisions.csv
+  python -m ml.pipeline.run_all --data-root "..." --decisions <목록 CSV>
+
+--decisions = 재학습 데이터 결정 목록(필수 · 기본값 없음 — 2026-10-12 · 13 사용자 결정, decisions.md
+등재 대기). 목록 없이 돌릴 땐 헤더만 있는 CSV 를 명시한다.
 
 Step1 전처리 → Step2 분할(내용 중복 제거 포함) → Step3 증강(train) → Step4 조립
 → Step5 누수 가드(stem 층 + 내용 층).
@@ -12,6 +15,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from . import assemble, augment, config, preprocess, split
 from .config import Paths
@@ -33,7 +37,8 @@ def _print_summary(final_counts: dict[str, dict[str, int]], guard: dict[str, int
           f"val={content_guard['val']} test={content_guard['test']} (split 교차 0)")
 
 
-def run(paths: Paths, clean: bool = True, rule: str = config.PEAK_RULE) -> dict[str, dict[str, int]]:
+def run(paths: Paths, decisions: Path, clean: bool = True,
+        rule: str = config.PEAK_RULE) -> dict[str, dict[str, int]]:
     log = logging.getLogger("ml.pipeline")
     log.info("DATA_ROOT = %s", paths.root)
 
@@ -46,7 +51,7 @@ def run(paths: Paths, clean: bool = True, rule: str = config.PEAK_RULE) -> dict[
     # clean=True(기본): 각 스테이지가 write 전 자기 산출 폴더(02/03/05)를 비워 stale
     # 잔재를 제거. 특히 02 stale(가드 도입 전 빈 클립)이 05 로 부활하던 회귀 차단.
     preprocess.preprocess(paths, clean=clean, rule=rule)  # rule = 02 정규화 규칙(02 → 05 → 학습에 기록)
-    split.split_dataset(paths)
+    split.split_dataset(paths, decisions)  # D1 → 결정 목록 → 해시 배정
     augment.augment(paths, clean=clean)
     if clean:
         # 05 재생성 전 기존 train/val/test 를 비워 stale 중첩 방지(--no-clean 로 opt-out).
@@ -65,6 +70,10 @@ def main(argv: list[str] | None = None) -> int:
         "--data-root", default=None,
         help="데이터 루트(01_clips 상위). 미지정 시 DDINGDONG_DATA_ROOT env 필수(기본값 없음).",
     )
+    parser.add_argument(
+        "--decisions", required=True, type=Path,
+        help="재학습 데이터 결정 목록 CSV(필수 · 기본값 없음). 목록 없이 = 헤더만 있는 CSV 명시.",
+    )
     parser.add_argument("--quiet", action="store_true", help="INFO 로그 억제")
     parser.add_argument(
         "--no-clean", action="store_true",
@@ -76,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.WARNING if args.quiet else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
     )
-    run(config.resolve_paths(args.data_root), clean=not args.no_clean)
+    run(config.resolve_paths(args.data_root), args.decisions, clean=not args.no_clean)
     return 0
 
 

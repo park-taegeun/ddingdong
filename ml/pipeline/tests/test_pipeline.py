@@ -7,6 +7,8 @@ pytest 로도, 단독(`python -m ml.pipeline.tests.test_pipeline`)으로도 실�
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import tempfile
 from pathlib import Path
 
@@ -19,12 +21,14 @@ from .. import make_dummy
 from ..make_dummy import make_dummy_dataset
 
 PER_CLASS = 6
+# 헤더만 있는 결정 목록 — 「돌렸고 0건」(split_dataset · run_all 은 목록 경로가 필수다).
+EMPTY_DECISIONS = Path(__file__).parent / "empty_decisions.csv"
 
 
-def _run_pipeline(root: Path):
+def _run_pipeline(root: Path, decisions: Path = EMPTY_DECISIONS):
     paths = config.resolve_paths(root)
     preprocess.preprocess(paths)
-    split.split_dataset(paths)
+    split.split_dataset(paths, decisions)
     augment.augment(paths)
     final_counts = assemble.assemble(paths)
     final_rows = assemble.load_final_manifest(paths)
@@ -110,7 +114,7 @@ def test_empty_and_ultrashort_clips_skipped():
         assert len(stats["fire_alarm"]["skipped"]) == 2
 
         # 하류 관통 — 여기서 예전엔 augment np.fft.rfft(길이 0) 크래시했음.
-        split.split_dataset(paths)
+        split.split_dataset(paths, EMPTY_DECISIONS)
         augment.augment(paths)
         assemble.assemble(paths)
         guard = assert_no_leakage(assemble.load_final_manifest(paths))
@@ -165,7 +169,7 @@ def test_stale_preprocessed_empty_cleaned_before_write():
         assert "knock_STALE" not in {p.stem for p in iter_audio_files(paths.preprocessed / "knock")}
 
         # (4) 전관통 → 빈 stem 이 05·manifest 어디에도 도달 못함(부활 0)
-        split.split_dataset(paths)
+        split.split_dataset(paths, EMPTY_DECISIONS)
         augment.augment(paths)
         assemble.assemble(paths)
         guard = assert_no_leakage(assemble.load_final_manifest(paths))
@@ -297,11 +301,11 @@ def _put_pre(paths, cls: str, stem: str, y: np.ndarray) -> None:
     save_wav(paths.preprocessed / cls / f"{stem}.wav", y)
 
 
-def _split_only(tmp: Path, plant) -> tuple:
+def _split_only(tmp: Path, plant, decisions: Path = EMPTY_DECISIONS) -> tuple:
     """tempdir + 명시 인자로 split 단계만 실행. 반환: (paths, split rows, dedup rows)."""
     paths = config.resolve_paths(tmp)
     plant(paths)
-    split.split_dataset(paths)
+    split.split_dataset(paths, decisions)
     return paths, split.load_split_manifest(paths), split.load_dedup_manifest(paths)
 
 
@@ -684,6 +688,215 @@ def test_peak_clampmask_rule():
     return gain
 
 
+# --- 재학습 데이터 결정 목록 (2026-10-12 · 13 사용자 결정 — decisions.md 등재 대기) ---------------
+
+def _write_decisions(path: Path, rows: list[tuple[str, str, str, str]], newline: str = "\n") -> Path:
+    """rows = [(stem, current_class, action, reason)]. 나머지 열은 형식만 채운다."""
+    lines = [",".join(split.DECISIONS_FIELDS)]
+    lines += [f"{st},{cls},{act},{rsn},test,,,train,2026-10-13T00:00" for st, cls, act, rsn in rows]
+    path.write_bytes((newline.join(lines) + newline).encode("utf-8"))
+    return path
+
+
+def test_decisions_exclude_and_relabel_end_to_end():
+    """D-T1 — exclude 는 split 에서 빠지고 dedup 에 목록 사유로 남는다 · relabel 은 class other 로
+    split → 증강 → 05/{split}/other · final manifest 까지 흐른다 · 목록 밖 stem 배정은 불변."""
+    ex_stem = "doorbell_src00_30.0_40.0_0003000"           # 점 든 AudioSet 꼴 이름
+    rel_stems = [f"knock_src01_30.0_40.0_{i:07d}" for i in (0, 3000, 6000)]
+    with tempfile.TemporaryDirectory() as tmp:
+        base_root = _make_piece_dataset(Path(tmp) / "base")
+        base_paths, _, _ = _run_pipeline(base_root)
+        base = {(r["class"], r["stem"]): (r["split"], r["source_key"])
+                for r in split.load_split_manifest(base_paths)}
+
+        root = _make_piece_dataset(Path(tmp) / "dec")
+        dec = _write_decisions(Path(tmp) / "dec.csv", [
+            (ex_stem, "doorbell", "exclude", "audioset_doorbell_absent"),
+            *[(st, "knock", "relabel_other", "audioset_knock_frying") for st in rel_stems],
+        ])
+        paths, _, guard = _run_pipeline(root, dec)
+        rows = split.load_split_manifest(paths)
+        got = {(r["class"], r["stem"]): (r["split"], r["source_key"]) for r in rows}
+
+        # exclude: split 에 없음 · dedup 에 목록 사유 · md5 · kept_stem 빈칸 · 02 파일 보존
+        assert not any(st == ex_stem for _, st in got), "exclude stem 이 split 에 남음"
+        ex_path = paths.preprocessed / "doorbell" / f"{ex_stem}.wav"
+        drow = [r for r in split.load_dedup_manifest(paths) if r["stem"] == ex_stem]
+        assert len(drow) == 1 and drow[0]["reason"] == "audioset_doorbell_absent", drow
+        assert drow[0]["md5"] == split.file_md5(ex_path) and drow[0]["kept_stem"] == ""
+        assert ex_path.is_file(), "02 파일이 지워짐"
+
+        # relabel: split 은 other 로만 · filepath 는 02/knock 그대로 · 배정 = assign_split('other', key)
+        skey = config.source_key(rel_stems[0])
+        want_split = split.assign_split("other", skey)
+        for st in rel_stems:
+            assert ("knock", st) not in got, f"relabel stem 이 split 에 knock 으로 남음: {st}"
+            assert got.get(("other", st)) == (want_split, skey), f"relabel 배정 불일치: {st}"
+            assert (paths.preprocessed / "knock" / f"{st}.wav").is_file(), "02 파일이 옮겨짐"
+        fp = {r["stem"]: r["filepath"] for r in rows if r["class"] == "other"}
+        assert all(Path(fp[st]).parent.name == "knock" for st in rel_stems)
+        rel = split.load_relabel_manifest(paths)
+        assert sorted(r["stem"] for r in rel) == rel_stems
+        assert all(r["from_class"] == "knock" and r["to_class"] == "other" for r in rel)
+
+        # 05 · final manifest: other 폴더에만 · knock 폴더엔 없음
+        final = assemble.load_final_manifest(paths)
+        for st in rel_stems:
+            assert {r["class"] for r in final if r["source_stem"] == st} == {"other"}, \
+                f"final manifest 의 class 가 other 가 아님: {st}"
+            assert (paths.split_dir(want_split) / "other" / f"{st}.wav").is_file(), f"05 other 에 없음: {st}"
+            assert not (paths.split_dir(want_split) / "knock" / f"{st}.wav").exists(), \
+                f"05 knock 에 남음: {st}"
+        if want_split == "train":
+            assert any(augment.base_stem(a.name) in rel_stems
+                       for a in iter_audio_files(paths.augmented / "other"))
+
+        # 목록 밖 stem 의 배정 불변
+        touched = {("doorbell", ex_stem), *(("knock", st) for st in rel_stems)}
+        moved = [k for k, v in base.items() if k not in touched and got.get(k) != v]
+        assert not moved, f"목록 밖 배정 변화: {moved[:5]}"
+
+        rec = json.loads((paths.manifests / split.DECISIONS_APPLIED).read_text(encoding="utf-8"))
+        assert rec == {"file": "dec.csv", "sha256": hashlib.sha256(dec.read_bytes()).hexdigest(),
+                       "rows": 4, "exclude": 1, "relabel_other": 3}, rec
+        return len(rows), want_split, guard
+
+
+def test_decisions_empty_list_is_noop():
+    """D-T2 — 헤더만 있는 목록 = 결정 없는 결과와 같다(split 행 = D1 생존분의 해시 배정 그대로)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _make_piece_dataset(Path(tmp))
+        paths = config.resolve_paths(root)
+        preprocess.preprocess(paths)
+        split.split_dataset(paths, EMPTY_DECISIONS)
+        rows = split.load_split_manifest(paths)
+        by_class = {c: {p.stem: p for p in iter_audio_files(paths.preprocessed / c)}
+                    for c in config.CLASSES}
+        kept, dropped = split.select_clips(by_class)
+        want = sorted((c, st, split.assign_split(c, config.source_key(st)))
+                      for c, stems in kept.items() for st in stems)
+        assert sorted((r["class"], r["stem"], r["split"]) for r in rows) == want
+        assert split.load_dedup_manifest(paths) == dropped
+        assert split.load_relabel_manifest(paths) == []
+        rec = json.loads((paths.manifests / split.DECISIONS_APPLIED).read_text(encoding="utf-8"))
+        assert (rec["rows"], rec["exclude"], rec["relabel_other"]) == (0, 0, 0)
+        return len(rows)
+
+
+def test_decisions_after_d1_removes_whole_content():
+    """D-T3 — 순서: 목록 stem 의 같은 클래스 중복 짝은 D1 이 먼저 지우고, 목록이 생존분을 제외한다
+    → 그 내용이 하나도 남지 않는다. ★ 목록 stem 이 정렬상 앞이어야 D1 생존분이 목록 stem 이 된다."""
+    dup = _tone(31)
+    first, second = "AAAAAAAAAAA_10.0_20.0_0000000", "BBBBBBBBBBB_10.0_20.0_0000000"
+
+    def plant(paths):
+        _put_pre(paths, "knock", first, dup)
+        _put_pre(paths, "knock", second, dup)
+        _put_pre(paths, "knock", "CCCCCCCCCCC_10.0_20.0_0000000", _tone(32))
+        _put_pre(paths, "other", "o_0000000", _tone(33))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        dec = _write_decisions(Path(tmp) / "dec.csv",
+                               [(first, "knock", "exclude", "fsd50k_knock_absent")])
+        paths, rows, dropped = _split_only(Path(tmp) / "root", plant, dec)
+        dup_md5 = split.file_md5(paths.preprocessed / "knock" / f"{first}.wav")
+        alive_md5 = {split.file_md5(Path(r["filepath"])) for r in rows}
+        assert dup_md5 not in alive_md5, "목록이 지운 내용이 중복 짝으로 되살아남(적용 순서 위반)"
+        reason = {r["stem"]: (r["reason"], r["kept_stem"]) for r in dropped}
+        assert reason == {second: (split.REASON_SAME_CLASS_DUP, first),
+                          first: ("fsd50k_knock_absent", "")}, reason
+        return len(rows)
+
+
+def test_decisions_validation_fails_loudly():
+    """D-T4 — 목록 검증: 하나라도 어긋나면 DecisionsError(조용히 건너뛰기 금지)."""
+    ok = ("s_0000000", "knock", "exclude", "fsd50k_knock_absent")
+    bad_rows = {
+        "action 대소문자": [("s_0000000", "knock", "Exclude", "fsd50k_knock_absent")],
+        "reason 모름": [("s_0000000", "knock", "exclude", "nope")],
+        "class 모름": [("s_0000000", "Knock", "exclude", "fsd50k_knock_absent")],
+        "relabel other→other": [("s_0000000", "other", "relabel_other", "audioset_knock_frying")],
+        "키 중복": [ok, ok],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        hits = 0
+        for name, rws in bad_rows.items():
+            p = _write_decisions(Path(tmp) / "bad.csv", rws)
+            try:
+                split.load_decisions(p)
+            except split.DecisionsError:
+                hits += 1
+                continue
+            raise AssertionError(f"검증 누락: {name}")
+        cols = Path(tmp) / "cols.csv"
+        cols.write_text("stem,current_class,action,reason\n", encoding="utf-8")
+        try:
+            split.load_decisions(cols)
+            raise AssertionError("검증 누락: 열 이름")
+        except split.DecisionsError:
+            hits += 1
+
+        # 적용 시점: 생존분에 없음 · relabel 결과 other 에 같은 stem
+        kept = {c: {} for c in config.CLASSES}
+        kept["knock"]["k_0000000"] = Path("02/knock/k_0000000.wav")
+        kept["other"]["k_0000000"] = Path("02/other/k_0000000.wav")
+        for rws, name in (
+            ([{"stem": "gone_0000000", "current_class": "knock", "action": "exclude",
+               "reason": "fsd50k_knock_absent"}], "생존분에 없음"),
+            ([{"stem": "k_0000000", "current_class": "knock", "action": "relabel_other",
+               "reason": "audioset_knock_frying"}], "other 중복 stem"),
+        ):
+            try:
+                split.apply_decisions(kept, rws)
+                raise AssertionError(f"검증 누락: {name}")
+            except split.DecisionsError:
+                hits += 1
+        assert "k_0000000" in kept["knock"], "apply_decisions 가 입력을 바꿈(순수성 위반)"
+
+        # split_dataset 경로에서도 예외가 삼켜지지 않는다(낡은 목록)
+        stale = _write_decisions(Path(tmp) / "stale.csv",
+                                 [("gone_0000000", "knock", "exclude", "fsd50k_knock_absent")])
+        try:
+            _split_only(Path(tmp) / "root", lambda p: _put_pre(p, "knock", "k_0000000", _tone(41)),
+                        stale)
+            raise AssertionError("검증 누락: split_dataset 이 낡은 목록을 건너뜀")
+        except split.DecisionsError:
+            hits += 1
+        return hits
+
+
+def test_decisions_crlf_and_dotted_stem():
+    """D-T5 — CRLF 목록도 같은 값으로 읽힌다 · 점 든 stem 을 그대로 쓴다(Path(stem).stem 함정)."""
+    stem = "-9ek6eO0RtI_260.0_270.0_0000000"
+    with tempfile.TemporaryDirectory() as tmp:
+        lf = split.load_decisions(_write_decisions(
+            Path(tmp) / "lf.csv", [(stem, "doorbell", "exclude", "audioset_doorbell_absent")]))
+        crlf = split.load_decisions(_write_decisions(
+            Path(tmp) / "crlf.csv", [(stem, "doorbell", "exclude", "audioset_doorbell_absent")],
+            newline="\r\n"))
+        assert lf == crlf and lf[0]["stem"] == stem and lf[0]["decided"] == "2026-10-13T00:00"
+        assert len(split.load_decisions(EMPTY_DECISIONS)) == 0
+        return stem
+
+
+def test_repo_decisions_list_loads():
+    """D-T6 — repo 의 결정 목록 파일이 검증을 통과하고 reason별 행 수가 결정 표와 같다."""
+    from collections import Counter
+
+    path = Path(split.__file__).parent / "retrain_data_decisions.csv"
+    rows = split.load_decisions(path)
+    tally = Counter((r["reason"], r["action"]) for r in rows)
+    assert tally == {
+        ("audioset_knock_frying", "relabel_other"): 329,
+        ("audioset_fire_unlabeled", "exclude"): 211,
+        ("audioset_doorbell_absent", "exclude"): 129,
+        ("fsd50k_doorbell_absent", "exclude"): 112,
+        ("audioset_fire_absent", "exclude"): 19,
+        ("fsd50k_knock_absent", "exclude"): 4,
+    }, tally
+    return len(rows)
+
+
 def _main() -> int:
     counts, guard = test_pipeline_end_to_end()
     print("PASS — test_pipeline_end_to_end")
@@ -732,6 +945,13 @@ def _main() -> int:
     print(f"PASS — T13 test_class_order_server_contract ({test_class_order_server_contract()})")
     print(f"PASS — T14 test_dummy_class_freq_distinct ({test_dummy_class_freq_distinct()})")
     print(f"PASS — T15 test_peak_clampmask_rule (진짜 잘림 이득 {test_peak_clampmask_rule():.3f})")
+    n_rows, rel_split, _ = test_decisions_exclude_and_relabel_end_to_end()
+    print(f"PASS — D-T1 test_decisions_exclude_and_relabel_end_to_end ({n_rows} rows · relabel → other/{rel_split})")
+    print(f"PASS — D-T2 test_decisions_empty_list_is_noop ({test_decisions_empty_list_is_noop()} rows)")
+    print(f"PASS — D-T3 test_decisions_after_d1_removes_whole_content ({test_decisions_after_d1_removes_whole_content()} rows)")
+    print(f"PASS — D-T4 test_decisions_validation_fails_loudly (실패 {test_decisions_validation_fails_loudly()}건 전부 검출)")
+    print(f"PASS — D-T5 test_decisions_crlf_and_dotted_stem ({test_decisions_crlf_and_dotted_stem()})")
+    print(f"PASS — D-T6 test_repo_decisions_list_loads ({test_repo_decisions_list_loads()}행)")
     for split_name in ("train", "val", "test"):
         row = counts[split_name]
         print(f"  {split_name:<5} " + " ".join(f"{c}={row[c]}" for c in config.CLASSES)
