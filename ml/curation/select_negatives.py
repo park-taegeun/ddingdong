@@ -12,6 +12,13 @@
       --positive-clips "~/ML 학습 데이터/ddingdong_dataset/01_clips" \
       --out-dir        "~/ddingdong-측정결과/2026-09-21/negatives"
 
+추가 선별(boost) — 기존 후보는 그대로 두고, 지정 라벨만 같은 풀 정렬에서
+기존 후보 다음부터 N개씩 더 고른다(2026-10-13 사용자 결정, README 「추가 선별」 절):
+
+  python -m ml.curation.select_negatives <위 인자 전부> \
+      --existing-candidates "~/ddingdong-측정결과/2026-09-21/negatives/candidates.csv" \
+      --boost Walk_and_footsteps=20 --boost Slam=20 ...
+
 모든 경로는 인자로만 받는다(기본값 없음). 산출은 repo 밖 `--out-dir` 에만 쓴다.
 """
 
@@ -39,6 +46,7 @@ from .taxonomy import (
 TARGET_SIZE = 1_100          # §5 규모 시작값
 LISTEN_SAMPLE_SIZE = 30      # 청취 검수 표본
 MIN_CANDIDATES = 600         # 이보다 적으면 §9 정지
+NEGATIVE_CLASS_DIR = "other"  # 01_clips 아래 네거티브 폴더(slice_negatives.CLASS_DIR 와 같은 이름)
 SALT = "ddingdong-other-negatives-v1"  # sha256 salt. 내장 hash() 는 프로세스마다 달라져 쓰지 않는다.
 
 CANDIDATE_FIELDS = (
@@ -101,9 +109,15 @@ def load_clips(path: Path) -> list[Clip]:
 
 
 def load_positive_source_ids(clips_dir: Path) -> set[str]:
-    """01_clips 양성에 쓰인 FSD50K 유래 source ID(순수 숫자 stem)."""
+    """01_clips 양성에 쓰인 FSD50K 유래 source ID(순수 숫자 stem).
+
+    `other/` 는 양성이 아니다 — 1차 재학습부터 FSD50K 네거티브 조각(숫자 stem)이
+    들어 있어, 세면 기존 후보 1,100이 전부 「양성 중복」으로 빠진다.
+    """
     ids: set[str] = set()
     for wav in clips_dir.rglob("*.wav"):
+        if wav.relative_to(clips_dir).parts[0] == NEGATIVE_CLASS_DIR:
+            continue
         key = source_key(wav.stem)
         if key.isdigit():
             ids.add(key)
@@ -197,10 +211,9 @@ def _quota(sizes: dict[str, int], target: int) -> dict[str, int]:
     return quota
 
 
-def select(clips: list[Clip], positives: set[str],
-           ratings: dict, audio_root: Path, target_size: int = TARGET_SIZE,
-           min_duration: float = MIN_DURATION_SEC) -> tuple[list[dict], Rejections]:
-    rej = Rejections()
+def _build_pools(clips: list[Clip], positives: set[str], ratings: dict,
+                 audio_root: Path, rej: Rejections) -> dict[str, list[tuple]]:
+    """선택 라벨별 풀 — (PP 우선, stable_key) 순 정렬. select · select_boost 공용."""
     # 로컬 덤프에 0바이트 wav 가 섞여 있다(다부분 zip 해제 잔재로 보인다). 후보에
     # 넣으면 재학습이 그대로 깨지므로 먼저 걷어낸다.
     broken = {p.stem for p in audio_root.glob("*.wav") if p.stat().st_size == 0}
@@ -226,7 +239,30 @@ def select(clips: list[Clip], positives: set[str],
                              clip, grade, value))
     for pool in pools.values():
         pool.sort(key=lambda row: (row[0], row[1]))
+    return pools
 
+
+def _row(clip: Clip, label: str, audio_root: Path, seconds: float,
+         grade: str, value: str) -> dict:
+    return {
+        "fsd_id": clip.fsd_id,
+        "rel_path": f"{audio_root.name}/{clip.fsd_id}.wav",
+        "selected_label": label,
+        "all_labels": ",".join(clip.labels),
+        "category": ASSIGNMENT[label],
+        "split": clip.split,
+        "duration_sec": f"{seconds:.3f}",
+        "license": "",
+        "rating": grade,
+        "rating_value": value,
+    }
+
+
+def select(clips: list[Clip], positives: set[str],
+           ratings: dict, audio_root: Path, target_size: int = TARGET_SIZE,
+           min_duration: float = MIN_DURATION_SEC) -> tuple[list[dict], Rejections]:
+    rej = Rejections()
+    pools = _build_pools(clips, positives, ratings, audio_root, rej)
     quota = _quota({label: len(p) for label, p in pools.items()}, target_size)
     rows: list[dict] = []
     for label in sorted(pools):
@@ -242,18 +278,58 @@ def select(clips: list[Clip], positives: set[str],
             if seconds < min_duration:                      # 제외 ③ — 길이 미달
                 rej.too_short.append(clip.fsd_id)
                 continue
-            rows.append({
-                "fsd_id": clip.fsd_id,
-                "rel_path": f"{audio_root.name}/{clip.fsd_id}.wav",
-                "selected_label": label,
-                "all_labels": ",".join(clip.labels),
-                "category": ASSIGNMENT[label],
-                "split": clip.split,
-                "duration_sec": f"{seconds:.3f}",
-                "license": "",
-                "rating": grade,
-                "rating_value": value,
-            })
+            rows.append(_row(clip, label, audio_root, seconds, grade, value))
+            taken += 1
+    rows.sort(key=lambda r: stable_key(r["fsd_id"]))
+    return rows, rej
+
+
+def parse_boost(specs: list[str], vocab: dict[str, str]) -> dict[str, int]:
+    """`라벨=N` 목록 → {라벨: N}. 잘못된 지정은 즉시 실패(대소문자 구분 — 어휘 그대로)."""
+    out: dict[str, int] = {}
+    for spec in specs:
+        label, sep, raw = spec.partition("=")
+        try:
+            n = int(raw) if sep else None
+        except ValueError:
+            n = None
+        if n is None:
+            raise SystemExit(f"--boost 형식은 라벨=N 이다: {spec!r}")
+        if label not in vocab:
+            raise SystemExit(f"--boost 라벨이 FSD50K 어휘에 없다: {label!r}")
+        if ASSIGNMENT[label] not in CATEGORY_PRIORITY:
+            raise SystemExit(f"--boost 라벨 {label} 의 범주가 {ASSIGNMENT[label]} 다 — "
+                             "a·b·c·d 만 받는다(target·hold 배정 변경은 사용자 결정 사항).")
+        if label in out:
+            raise SystemExit(f"--boost 라벨 중복 지정: {label}")
+        if n <= 0:
+            raise SystemExit(f"--boost N 은 1 이상이어야 한다: {spec!r}")
+        out[label] = n
+    return out
+
+
+def select_boost(clips: list[Clip], positives: set[str], ratings: dict,
+                 audio_root: Path, existing: set[str], boost: dict[str, int],
+                 min_duration: float = MIN_DURATION_SEC) -> tuple[list[dict], Rejections]:
+    """지정 라벨 풀에서 기존 후보를 건너뛰고 N개씩 더 고른다. 풀이 모자라면 가진 만큼."""
+    rej = Rejections()
+    pools = _build_pools(clips, positives, ratings, audio_root, rej)
+    rows: list[dict] = []
+    for label in sorted(boost):
+        taken = 0
+        for _, _, clip, grade, value in pools.get(label, []):
+            if taken >= boost[label]:
+                break
+            if clip.fsd_id in existing:
+                continue
+            seconds = duration_sec(audio_root / f"{clip.fsd_id}.wav")
+            if seconds is None:
+                rej.unusable.append(clip.fsd_id)
+                continue
+            if seconds < min_duration:
+                rej.too_short.append(clip.fsd_id)
+                continue
+            rows.append(_row(clip, label, audio_root, seconds, grade, value))
             taken += 1
     rows.sort(key=lambda r: stable_key(r["fsd_id"]))
     return rows, rej
@@ -330,18 +406,91 @@ def summarize(rows: list[dict], rej: Rejections, total_clips: int) -> str:
     return "\n".join(out) + "\n"
 
 
+def summarize_boost(rows: list[dict], boost: dict[str, int], existing: list[dict],
+                    overlap: int) -> str:
+    got = Counter(r["selected_label"] for r in rows)
+    pp = Counter(r["selected_label"] for r in rows if r["rating"] == "PP")
+    before = Counter(r["selected_label"] for r in existing)
+    short = {label: n - got[label] for label, n in boost.items() if got[label] < n}
+    out = [
+        "# other 네거티브 추가 선별(boost) 집계",
+        "",
+        f"- 기존 후보: {len(existing)} 클립(무변경 — 이 산출은 추가분만)",
+        f"- 추가분: {len(rows)} 클립 / 요청 {sum(boost.values())}",
+        f"- 기존 후보와 겹침: {overlap}",
+        f"- 부족분: {sum(short.values())}"
+        + (" — " + ", ".join(f"{k} {v}" for k, v in sorted(short.items())) if short else ""),
+        "",
+        "## 라벨별",
+        "",
+        "| 라벨 | 범주 | 기존 | 요청 N | 선택 | 부족 | PP 비율 |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for label in sorted(boost):
+        n = got[label]
+        out.append(f"| {label} | {ASSIGNMENT[label]} | {before[label]} | {boost[label]} | {n} "
+                   f"| {boost[label] - n} | {pp[label] / max(n, 1):.1%} |")
+    for title, key in (("범주별", "category"), ("PP / PNP", "rating"),
+                       ("split(dev 내부)", "split"), ("라이선스별", "license")):
+        out += ["", f"## {title}", ""]
+        out += [f"- {k or '(빈 값)'}: {v}" for k, v in
+                sorted(Counter(r[key] for r in rows).items())]
+    return "\n".join(out) + "\n"
+
+
+def _fill_license(rows: list[dict], clips_info: Path | None) -> None:
+    if clips_info is None:
+        return
+    info = json.loads(clips_info.read_text(encoding="utf-8"))
+    for row in rows:
+        row["license"] = info.get(row["fsd_id"], {}).get("license", "")
+
+
+def run_boost(args: argparse.Namespace, vocab: dict[str, str], clips: list[Clip],
+              positives: set[str], ratings: dict) -> int:
+    if args.existing_candidates is None or args.clips_info is None:
+        raise SystemExit("--boost 에는 --existing-candidates 와 --clips-info 가 필요하다.")
+    boost = parse_boost(args.boost, vocab)
+    with args.existing_candidates.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        if tuple(reader.fieldnames or ()) != CANDIDATE_FIELDS:
+            raise SystemExit(f"--existing-candidates 열이 다르다: {reader.fieldnames}")
+        existing = list(reader)
+    existing_ids = {r["fsd_id"] for r in existing}
+    rows, _ = select_boost(clips, positives, ratings, args.audio_root, existing_ids, boost)
+    overlap = len({r["fsd_id"] for r in rows} & existing_ids)
+    assert overlap == 0, overlap
+    _fill_license(rows, args.clips_info)
+
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    _write_csv(args.out_dir / "candidates_boost.csv", CANDIDATE_FIELDS, rows)
+    (args.out_dir / "boost_summary.md").write_text(
+        summarize_boost(rows, boost, existing, overlap), encoding="utf-8")
+    (args.out_dir / "boost_args.json").write_text(json.dumps(
+        {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
+        ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    got = Counter(r["selected_label"] for r in rows)
+    print(f"추가분 {len(rows)} 클립 / 요청 {sum(boost.values())} → {args.out_dir}")
+    for label, n in sorted(boost.items()):
+        if got[label] < n:
+            print(f"⚠️ {label}: 요청 {n} · 선택 {got[label]} — 풀 부족 {n - got[label]}",
+                  file=sys.stderr)
+    return 0
+
+
 def run(args: argparse.Namespace) -> int:
-    load_vocabulary(args.vocabulary_csv)   # 배정표가 어휘 200건을 전건 덮는지 검증
+    vocab = load_vocabulary(args.vocabulary_csv)   # 배정표가 어휘 200건을 전건 덮는지 검증
+    if args.boost:   # 인자 검증은 데이터 읽기 전에 — 잘못된 지정은 즉시 실패
+        parse_boost(args.boost, vocab)
     clips = load_clips(args.dev_csv)
     positives = load_positive_source_ids(args.positive_clips)
     ratings = json.loads(args.pp_pnp.read_text(encoding="utf-8"))
+    if args.boost:
+        return run_boost(args, vocab, clips, positives, ratings)
     rows, rej = select(clips, positives, ratings, args.audio_root,
                        target_size=args.target_size)
-
-    if args.clips_info is not None:
-        info = json.loads(args.clips_info.read_text(encoding="utf-8"))
-        for row in rows:
-            row["license"] = info.get(row["fsd_id"], {}).get("license", "")
+    _fill_license(rows, args.clips_info)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     _write_csv(args.out_dir / "candidates.csv", CANDIDATE_FIELDS, rows)
@@ -376,6 +525,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="FSD50K.metadata/dev_clips_info_FSD50K.json (license 열)")
     parser.add_argument("--target-size", type=int, default=TARGET_SIZE,
                         help=f"후보 목표 규모 (기본 {TARGET_SIZE})")
+    parser.add_argument("--boost", action="append", metavar="라벨=N",
+                        help="추가 선별 — 지정 라벨만 기존 후보 다음부터 N개(여러 번)")
+    parser.add_argument("--existing-candidates", type=_path,
+                        help="--boost 의 기준 candidates.csv(무변경 · 읽기만)")
     return run(parser.parse_args(argv))
 
 
