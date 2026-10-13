@@ -37,7 +37,7 @@ python -m ml.curation.select_negatives \
 | # | 규칙 |
 | --- | --- |
 | ① | target 계열 라벨 — `Doorbell` · `Knock` · `Siren`, 그리고 「미분화 `Alarm`」 |
-| ② | `01_clips` 양성에 이미 쓴 FSD50K 원본 ID (순수 숫자 stem, 조각 suffix 제거 후) |
+| ② | `01_clips` 양성에 이미 쓴 FSD50K 원본 ID (순수 숫자 stem, 조각 suffix 제거 후). `01_clips/other/` 는 양성이 아니므로 세지 않는다 |
 | ③ | 길이 < `config.MIN_DURATION_SEC`, 그리고 0바이트·헤더 손상으로 열리지 않는 wav |
 
 **포함** — ⓐ 음성·대화 / ⓑ 방송·음악 / ⓒ 생활음 / ⓓ hard negative.
@@ -119,7 +119,42 @@ python -m ml.curation.tests.test_select_negatives
 
 가짜 메타데이터로 T1~T5(제외 ①②③ · 결정성 · 산출 형식)를 돌리고, 이어서
 네거티브 컨트롤 NC-1~NC-3 으로 **규칙을 망가뜨리면 해당 테스트가 실제로 깨지는지**
-확인한 뒤 `finally` 로 복원하고 전건 재통과를 다시 본다.
+확인한 뒤 `finally` 로 복원하고 전건 재통과를 다시 본다. 추가 선별은 B1~B8 과
+NC-4 · NC-5 가 같은 방식으로 검증한다.
+
+## 추가 선별 (boost — 노크와 헷갈리는 hard negative 몫 늘리기)
+
+근거 = **2026-10-13 16:33 사용자 결정 — decisions.md 등재 대기**. 서빙 모델 J 가
+발소리 · 노트북을 책상에 놓는 소리를 노크로 판정한 관찰(비공식)에 대해, 보드 녹음
+없이 FSD50K `other` 네거티브 중 노크와 헷갈리는 ⓓ 라벨의 몫을 늘린다. 33.14 의
+「ⓓ 13.0% 가중 조정은 하지 않는다 — E4 재학습 결과로 판단」에서 말한 그 판단이며,
+직접녹음 가중치는 하지 않는다(카테고리 5). `Tap` · `Thump_and_thud` · `Wood` 는 보류
+그대로다.
+
+🔴 **기존 후보 1,100(2026-09-21 `candidates.csv`)은 그대로 두고 추가분만 고른다.**
+지정 라벨의 풀(선택 라벨 기준 · PP 우선 → sha256 순 — 위 「선별 규칙」과 같은 풀)에서
+기존 후보를 건너뛰고 그 다음부터 N개를 고른다.
+
+```bash
+python -m ml.curation.select_negatives <위 「실행」 인자 전부 — --clips-info 필수> \
+  --existing-candidates "~/ddingdong-측정결과/2026-09-21/negatives/candidates.csv" \
+  --boost Walk_and_footsteps=20 --boost Slam=20 --boost Drawer_open_or_close=20 \
+  --boost Cupboard_open_or_close=20 --boost Typing=20 --boost Computer_keyboard=20 \
+  --boost Run=20 --boost Typewriter=20 \
+  --out-dir "~/ddingdong-측정결과/2026-10-13/negatives_boost"
+```
+
+- 산출 = `candidates_boost.csv`(추가분만, 열은 `candidates.csv` 와 같아
+  `slice_negatives --candidates` 로 그대로 조각낸다) · `boost_summary.md`(라벨별 요청 ·
+  선택 · 부족 · PP 비율 · 범주 · 라이선스 · 기존 후보와 겹침 수) · `boost_args.json`.
+- 즉시 실패 = 형식이 `라벨=N` 아님 · 어휘 밖 라벨(대소문자 구분) · 범주가 a·b·c·d
+  아님(target · hold · parent) · N ≤ 0 · 같은 라벨 중복 · `--existing-candidates`
+  또는 `--clips-info` 누락.
+- 풀이 N 보다 작으면 실패하지 않고 **가진 만큼** 고른 뒤 부족분을 summary 와 종료
+  출력(⚠️)에 남긴다.
+- 위 명령의 라벨 · N(묶음 A 6 + 같은 뜻 이웃 `Run` · `Typewriter`, 각 20)은 2026-10-13
+  사용자 결정이다. N=20 에서 시작해 재학습 뒤 3분 블록에서 헛판정이 남으면 40 으로
+  올린다.
 
 ## 3초 조각내기 (네거티브 모드)
 
