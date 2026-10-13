@@ -6,9 +6,12 @@
 //   비교이므로 마커가 끼면 비교 단위가 흔들린다.
 // ★ 픽스처 시각·수치는 전부 고정 주입이다 — 실 서버·실 시계 미호출(8.5(g) 동형).
 import { renderToStaticMarkup } from "react-dom/server"
+import { StaleDataNotice } from "@/components/feedback/StaleDataNotice"
 import { NotificationSTT } from "@/components/notifications/NotificationSTT"
 import { NotificationTof } from "@/components/notifications/NotificationTof"
 import { SystemHealthCard } from "@/components/stats/SystemHealthCard"
+import { deriveConnection, isStale } from "@/lib/connection"
+import { STALE_AFTER_MS } from "@/lib/constants"
 import type { NotificationStt, TofCheck } from "@/types/notification"
 import type { SystemHealth, TokenStatus } from "@/types/stats"
 
@@ -37,6 +40,13 @@ function stt(confidence: number | null): NotificationStt {
   }
 }
 
+// AU-07 끊김 판정 — 고정 시각 기준 경과 ms 로 판정 결과를 텍스트로 낸다.
+const LAST_OK = new Date("2026-10-13T12:00:00+09:00")
+const staleAt = (elapsedMs: number) =>
+  isStale(LAST_OK, false, LAST_OK.getTime() + elapsedMs, STALE_AFTER_MS) ? "끊김" : "정상"
+const connLabel = (isOnline: boolean, hasHealth: boolean, disconnected: boolean) =>
+  deriveConnection(isOnline, hasHealth, disconnected).label
+
 export const output: Record<string, string> = {
   // 8.5(f) 실렌더 대조 픽스처 (카카오 토큰 3상태 + 만료 경과 환산)
   token_valid: renderToStaticMarkup(<SystemHealthCard health={health("valid", 360)} />),
@@ -56,4 +66,27 @@ export const output: Record<string, string> = {
   // 8.4(d) STT 신뢰도 — 실측 0 과 값 부재(null)는 다르다
   stt_conf_zero: renderToStaticMarkup(<NotificationSTT stt={stt(0)} />),
   stt_conf_null: renderToStaticMarkup(<NotificationSTT stt={stt(null)} />),
+
+  // AU-07 끊김 안내 — 마지막 성공 12초 뒤(「방금 전」은 10초 미만이라 피함)
+  stale_notice: renderToStaticMarkup(
+    <StaleDataNotice lastUpdated={LAST_OK} now={new Date(LAST_OK.getTime() + 12_000)} />,
+  ),
+  // AU-07 I1 경계 · I2 첫 성공 전
+  stale_boundary: renderToStaticMarkup(
+    <ul>
+      <li>{`5999ms=${staleAt(5_999)}`}</li>
+      <li>{`6000ms=${staleAt(6_000)}`}</li>
+      <li>{`첫성공전오류=${isStale(null, true, LAST_OK.getTime(), STALE_AFTER_MS) ? "끊김" : "정상"}`}</li>
+      <li>{`첫성공전대기=${isStale(null, false, LAST_OK.getTime(), STALE_AFTER_MS) ? "끊김" : "정상"}`}</li>
+    </ul>,
+  ),
+  // AU-07 I5 헤더 4상태 (끊김 우선)
+  conn_labels: renderToStaticMarkup(
+    <ul>
+      <li>{`온라인+끊김=${connLabel(true, true, true)}`}</li>
+      <li>{`온라인=${connLabel(true, true, false)}`}</li>
+      <li>{`오프라인=${connLabel(false, true, false)}`}</li>
+      <li>{`확인중=${connLabel(false, false, false)}`}</li>
+    </ul>,
+  ),
 }

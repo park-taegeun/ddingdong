@@ -13,3 +13,9 @@ export const DEVICE_ID = "ddingdong-a3f2c1"
 // 재판정 = 벨 녹음 뒤 목표 개수 결정 · 리허설 동선 실측.
 export const REGISTRATION_TARGET_COUNT = 3
 export const REGISTRATION_EXPIRES_IN_SECONDS = 300
+
+// 서버 연결 끊김 판정 — 잠정.
+// 마지막 성공 응답 뒤 이 시간 동안 새 성공이 없으면 끊김(오류든 무응답이든).
+// 폴링 2회분 = 순간 실패 1회로 표시가 깜빡이지 않게 하는 최소 여유.
+// 재판정 = ① 부스 리허설에서 깜빡임 · 늦은 표시 관측 ② 폴링 간격 변경 ③ api 타임아웃 도입.
+export const STALE_AFTER_MS = POLLING_INTERVAL_MS * 2

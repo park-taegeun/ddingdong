@@ -8,7 +8,7 @@ import { useDevice } from "@/hooks/useDevice"
 import { useNotifications } from "@/hooks/useNotifications"
 
 export function HomePage() {
-  const { notifications, isLoading, error } = useNotifications()
+  const { notifications, isLoading, error, lastUpdated } = useNotifications()
   // 빈 상태(알림 0건, 정상)일 때 안심 카드로 대체. system_health = useDevice(stats 파생).
   // ※ 폴러 통합은 deferred(decisions.md 8.3) — 본 PR 비범위, 기존 useDevice 패턴 재사용.
   const { health } = useDevice()
@@ -47,6 +47,7 @@ export function HomePage() {
           notifications={notifications}
           isLoading={isLoading}
           error={error}
+          lastUpdated={lastUpdated}
           limit={3}
           emptySlot={
             health ? <SystemHealthSummaryCard health={health} /> : undefined

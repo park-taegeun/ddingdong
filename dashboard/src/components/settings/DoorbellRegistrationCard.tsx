@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useRegistration } from "@/hooks/useRegistration"
+import { STALE_NOTICE } from "@/lib/connection"
 import { formatClock } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { RegistrationState, RegistrationStatus } from "@/types/registration"
@@ -12,7 +13,7 @@ const COPY = {
   title: "우리집 초인종",
   loading: "등록 상태를 불러오는 중이에요.",
   loadError: "등록 상태를 불러오지 못했어요. 잠시 후 다시 시도합니다.",
-  staleError: "최근 상태를 불러오지 못해 마지막으로 받은 상태를 보여 드려요.",
+  staleError: STALE_NOTICE,
   actionError: "요청을 처리하지 못했어요.",
   none: "등록된 초인종 소리가 없어요.",
   collecting: (target: number | null) => `초인종을 ${target}번 눌러 주세요.`,

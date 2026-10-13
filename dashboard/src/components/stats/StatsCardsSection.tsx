@@ -1,6 +1,8 @@
 import { TriangleAlert } from "lucide-react"
 import { EmptyState } from "@/components/feedback/EmptyState"
 import { LoadingSkeleton } from "@/components/feedback/LoadingSkeleton"
+import { StaleDataNotice } from "@/components/feedback/StaleDataNotice"
+import { useStale } from "@/hooks/useStale"
 import { useStats } from "@/hooks/useStats"
 import { ClassDistributionCard } from "./ClassDistributionCard"
 import { SystemHealthCard } from "./SystemHealthCard"
@@ -9,7 +11,8 @@ import { TotalDetectionsCard } from "./TotalDetectionsCard"
 
 // HomePage + StatsPage 공통 통계 블록 (DRY 단일 출처).
 export function StatsCardsSection() {
-  const { stats, isLoading, error } = useStats()
+  const { stats, isLoading, error, lastUpdated } = useStats()
+  const stale = useStale(lastUpdated, error)
 
   if (isLoading && !stats) {
     return <LoadingSkeleton variant="stats" count={4} />
@@ -28,12 +31,16 @@ export function StatsCardsSection() {
 
   if (!stats) return null
 
+  // 끊김이어도 카드는 그대로 두고 위에 안내만 붙인다(마지막으로 받은 값).
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <TotalDetectionsCard summary={stats.summary} />
-      <ClassDistributionCard distribution={stats.class_distribution} />
-      <TimingMetricsCard metrics={stats.timing_metrics} />
-      <SystemHealthCard health={stats.system_health} />
-    </div>
+    <>
+      {stale && <StaleDataNotice lastUpdated={lastUpdated} />}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <TotalDetectionsCard summary={stats.summary} />
+        <ClassDistributionCard distribution={stats.class_distribution} />
+        <TimingMetricsCard metrics={stats.timing_metrics} />
+        <SystemHealthCard health={stats.system_health} />
+      </div>
+    </>
   )
 }
