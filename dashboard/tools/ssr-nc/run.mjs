@@ -33,6 +33,7 @@ const SRC = {
   health: "src/components/stats/SystemHealthCard.tsx",
   tof: "src/components/notifications/NotificationTof.tsx",
   format: "src/lib/format.ts",
+  connection: "src/lib/connection.ts",
 }
 
 /**
@@ -69,6 +70,27 @@ const CASES = [
     anchor: 'if (value === null) return "정보 없음"',
     patch: 'if (!value) return "정보 없음"',
   },
+  // AU-07 I1 — 정확히 STALE_AFTER_MS 경과면 끊김(≥). 결함 = > 로 바뀌면 경계 점에서 1틱 늦게
+  // 끊김이 된다. 함정: 경계 점(6000ms)을 단언하지 않으면 5999 · 6001 만으로는 못 잡는다 —
+  // 그래서 stale_boundary 는 바로 그 점을 렌더한다. 앵커는 >= 가 붙은 줄 전체(파일 안 1건).
+  {
+    id: "NC-a",
+    file: SRC.connection,
+    desc: "끊김 경계 ≥ → > — 정확히 6,000ms 가 '정상'으로 남는다 (AU-07 I1)",
+    anchor: "return nowMs - lastUpdated.getTime() >= staleAfterMs",
+    patch: "return nowMs - lastUpdated.getTime() > staleAfterMs",
+  },
+  // AU-07 I5 — 끊김은 온라인 · 오프라인보다 먼저 본다. 결함 = 끊김 분기를 지우면 서버가 죽어도
+  // 마지막 health 가 online 이라 「디바이스 온라인」이 남는다(AU-07 원래 증상). 함정: 끊김 단독
+  // 입력(online=false · health 없음)만 보면 「연결 확인 중」으로 떨어져도 라벨 차이를 못 볼 수
+  // 있다 — 온라인+끊김 입력을 단언한다. 앵커 = 분기 조건 한 줄(NC-a 앵커와 문자열 비포함).
+  {
+    id: "NC-b",
+    file: SRC.connection,
+    desc: "헤더 끊김 우선 제거 — 온라인+끊김에서 '디바이스 온라인' (AU-07 I5)",
+    anchor: "if (disconnected) {",
+    patch: "if (false) {",
+  },
 ]
 
 /**
@@ -95,6 +117,16 @@ const ASSERTIONS = [
   { fixture: "stt_conf_zero", kind: "has", text: "0%" },
   { fixture: "stt_conf_zero", kind: "lacks", text: "정보 없음" },
   { fixture: "stt_conf_null", kind: "has", text: "정보 없음" },
+  { fixture: "stale_notice", kind: "has", text: "최근 상태를 불러오지 못해 마지막으로 받은 상태를 보여 드려요." },
+  { fixture: "stale_notice", kind: "has", text: "마지막 확인 12초 전" },
+  { fixture: "stale_boundary", kind: "has", text: "5999ms=정상" },
+  { fixture: "stale_boundary", kind: "has", text: "6000ms=끊김" },
+  { fixture: "stale_boundary", kind: "has", text: "첫성공전오류=끊김" },
+  { fixture: "stale_boundary", kind: "has", text: "첫성공전대기=정상" },
+  { fixture: "conn_labels", kind: "has", text: "온라인+끊김=서버 연결 끊김" },
+  { fixture: "conn_labels", kind: "has", text: "온라인=디바이스 온라인" },
+  { fixture: "conn_labels", kind: "has", text: "오프라인=디바이스 오프라인" },
+  { fixture: "conn_labels", kind: "has", text: "확인중=연결 확인 중" },
 ]
 
 const abs = (file) => path.join(ROOT, file)
