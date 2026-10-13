@@ -21,6 +21,7 @@ from ml.pipeline import config as pipe
 from ml.pipeline import run_all
 from ml.pipeline.audio_io import iter_audio_files
 from ml.pipeline.make_dummy import make_dummy_dataset
+from ml.pipeline.tests.test_pipeline import EMPTY_DECISIONS  # 헤더만 있는 결정 목록(run_all 필수 인자)
 from ml.training import config, data, evaluate, export, model, train
 from ml.training.spec_augment import SpecAugment
 
@@ -58,12 +59,12 @@ def test_smoke_end_to_end(tmp_root: Path | None = None):
         # 0) 더미 01_clips → 파이프라인(clean 포함) → 05_final_dataset
         make_dummy_dataset(root, per_class=PER_CLASS, seed=1)
         paths = pipe.resolve_paths(root)
-        run_all.run(paths, clean=True)
+        run_all.run(paths, EMPTY_DECISIONS, clean=True)
         final_dir = paths.final
 
         # 1) clean 가드: 재실행해도 05 개수 불변(stale 중첩 없음)
         counts1 = _count_final(paths)
-        run_all.run(paths, clean=True)
+        run_all.run(paths, EMPTY_DECISIONS, clean=True)
         counts2 = _count_final(paths)
         assert counts1 == counts2, f"clean 가드 실패(stale 중첩): {counts1} → {counts2}"
         print(f"[clean 가드] 재실행 후 개수 불변 OK: {counts2}")
@@ -150,7 +151,7 @@ def test_four_class_dummy_through_export():
         root = Path(tmp)
         make_dummy_dataset(root, per_class=PER_CLASS, seed=1)
         paths = pipe.resolve_paths(root)
-        run_all.run(paths, clean=True)          # 전처리 → split → 증강 → 조립 → 누수 가드
+        run_all.run(paths, EMPTY_DECISIONS, clean=True)  # 전처리 → split → 증강 → 조립 → 누수 가드
         counts = _count_final(paths)
         for split in config.SPLITS:
             assert counts[split]["other"] >= 1, f"05 {split}/other 0개: {counts}"

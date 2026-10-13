@@ -21,6 +21,7 @@ import numpy as np
 from ml.pipeline import audio_io, preprocess, run_all
 from ml.pipeline import config as pipe
 from ml.pipeline.make_dummy import make_dummy_dataset
+from ml.pipeline.tests.test_pipeline import EMPTY_DECISIONS  # 헤더만 있는 결정 목록(run_all 필수 인자)
 from ml.training import config, data, evaluate, export, train
 from ml.training.tests.test_export_smoke import _load_dummy_yamnet
 from ml.training.tests.test_training_smoke import PER_CLASS, dummy_embed_fn
@@ -266,7 +267,7 @@ def test_peak_rule_lineage():
         y = audio_io.load_mono(src)
         y[len(y) // 2] = 1.0  # 저장하면 +32767 = 클램프
         audio_io.save_wav(src, y)
-        run_all.run(paths, clean=True, rule=other_rule)
+        run_all.run(paths, EMPTY_DECISIONS, clean=True, rule=other_rule)
 
         assert preprocess.read_norm_rule(paths.preprocessed) == other_rule
         assert preprocess.read_norm_rule(paths.final) == other_rule
