@@ -86,6 +86,8 @@ DEVICE_TOKEN=<TOKEN> DASHBOARD_TOKEN=<TOKEN> ./run_server.sh J 21_autosilence_J
 | `[e2a] k=<k> v1=<v1> ign=<사유> n=<그 사유 누적>` | 발화를 무시(사유 = `busy` · `ring` · `late` · `psram`) | 51B |
 | `[e2a] busy=<누적> drop=<누적> ring=<누적> late=<누적>` | 위 두 줄 바로 다음에 매번 | 70B |
 | `[e2a] k=<k> win=[<a>,<b>) want=<k−8>` | 자동 건 runEvent 안, `[e2] stk=` 다음 | 63B |
+| `[tof][e2] 멈춤 age_ms=<경과> — 4필드 미전송(서버 tof_absent)` | 트리거 시점에 마지막 ToF 프레임 뒤 경과 > 1,000ms (수동 `s` 도 같음, 12절) | 75B |
+| `[BOOT] 시험 빌드 — tof 멈춤 임계=<값>ms(정상 1000ms)` | `TOF_STALE_MS_TEST_OVERRIDE` 시험 빌드 부팅 때만(12절 (b)) | 70B |
 
 - 수락된 자동 건의 이후 흐름(`[tof][e2]` · `[e2] id=e2a-…` · `d http=` · `gate=` · `cam` · `e http=`)은 수동과 같은 줄이다.
 - **불응기에 막힌 버퍼는 로그를 남기지 않는다**(발화 자체가 없다). 「친 횟수 대비 `[e2a] k=` 줄 수」로만 보인다(6절).
@@ -194,3 +196,51 @@ c++ -std=c++17 -Wall -I firmware/include -o /tmp/att firmware/tools/auto_trig_te
 - wire 계약: 1차 65,536 B · 2차 163,840 B · `/detect` · `/enrich` 필드 · 응답 파싱(I7).
 - mic_common · uplink_common · enrich_wire.h · noise_stats.h · tof_common · camera_common · trig_line.h.
 - T · 앞 버퍼 수 · 세션 상한 12 값. 2차 녹음 시작 시점 · 길이.
+
+---
+
+## 12. ToF 멈춤 가드 보드 확인 (env:enrich_uplink · env:enrich_autotrig 공통 — 학부생 몫)
+
+무엇: ToF 센서가 동작 중에 멈추면 보드가 마지막 판정값(대개 「사람 없음」)을 계속 실어 초인종 · 노크가 서버에서
+`tof_rejected` 로 조용히 막힐 수 있다(감사 AU-01). 그래서 트리거 시점에 마지막 프레임 뒤 경과가 **1,000ms 초과**면
+「첫 프레임 전」과 같이 ToF 4필드를 빼고 보낸다(서버 `tof_absent` → fail-open, 카드 「검증 안 함」).
+판정 = `firmware/include/tof_fresh.h`, 배선 = `enrich_uplink_main.cpp` 의 `captureTofAtTrigger`.
+
+센서를 실제로 멈출 수 없으므로(재결선 금지) **시험 임계 빌드**로 배선만 확인한다. 서버 없이 시리얼만으로 판정한다
+(서버 absent 경로는 기존 테스트 · 6.4(e) 실측이 이미 증명). 빌드 · 모니터 명령은 2절과 같다(`cd firmware`).
+
+**(a) 정상 빌드** — 플래시 → 소리 3번(또는 `s` 3번)
+```
+~/.platformio/penv/bin/pio run -e enrich_autotrig -t clean
+~/.platformio/penv/bin/pio run -e enrich_autotrig -t upload
+```
+기대 = `[tof][e2] presence=` 줄 3개 · `[tof][e2] 멈춤` 줄 0 · `[BOOT] 시험 빌드` 줄 없음.
+
+**(b) 시험 임계 빌드(임계 1ms)** — clean 뒤 빌드 · 플래시
+```
+~/.platformio/penv/bin/pio run -e enrich_autotrig -t clean
+PLATFORMIO_BUILD_FLAGS="-DTOF_STALE_MS_TEST_OVERRIDE=1" ~/.platformio/penv/bin/pio run -e enrich_autotrig -t upload
+```
+기대 = 부팅 때 `[BOOT] 시험 빌드 — tof 멈춤 임계=1ms(정상 1000ms)` 1줄 → 소리 3번 → `[tof][e2] 멈춤 age_ms=<n> — 4필드 미전송(서버 tof_absent)` 줄이
+**대부분**(경과가 0 · 1ms 면 정상 판정이 나 `presence=` 줄이 찍힐 수 있다 — 결함 아님). 멈춤 줄이 한 번도 안 나오면 배선 결함 → 정지 · 보고.
+
+**(c) 정상 빌드로 되돌리기** — clean 뒤 (a)와 같은 명령으로 재플래시 → `[BOOT] 시험 빌드` 줄이 **없는지** 확인.
+⚠️ (b) 빌드를 현관에 두면 ToF 게이트가 사실상 꺼진다. (c)를 빼먹지 말 것.
+
+호스트 단위 검증(repo 루트에서):
+```
+c++ -std=c++17 -Wall -I firmware/include -o /tmp/tft firmware/tools/tof_fresh_test.cpp && /tmp/tft
+```
+기대 = `tof_fresh_test: 50 checks OK`. negative control — `tof_fresh.h` 를 아래처럼 바꾸면 **반드시 실패**해야 한다(되돌리면 통과):
+
+| NC | 변형 | 깨는 불변식 | 결함 조건 | 함정 |
+|---|---|---|---|---|
+| NC-1 | 멈춤 분기 제거 | 경과 > 임계면 미전송 | 멈춘 센서 값이 실린다 | 경계 한 점만 보면 다른 변형을 놓친다 |
+| NC-2 | `>` → `>=` | 경과 == 임계는 정상 | 경계 정의 위반 | 경계 단언이 없으면 미검출 |
+| NC-3 | 멈춤 검사를 「첫 프레임 전」 앞으로 | 첫 프레임 전은 첫 프레임 전으로 분류 | 부팅 직후 이벤트가 멈춤으로 기록 | 둘 다 미전송 → 분류값으로 단언해야 검출 |
+| NC-4 | 부호 있는 64비트 비교 | 49.7일 wrap 에서도 경과 정확 | wrap 직후 멈춤을 놓친다 | wrap 단언이 없으면 미검출 |
+| NC-5 | 기본 임계 1000 → 0 | 기본 빌드 임계 = 1,000 | 정상 프레임까지 미전송 | — |
+| — | `captureTofAtTrigger` 배선 제거 · 멈춤 로그 누락 | — | — | **도달 불가 — 보드 (b)** 가 유일한 검출자 |
+
+재판정 트리거(임계 1,000ms 잠정 — `tof_fresh.h`): ① 정상 동작 중 멈춤 줄 관측 ② 센서 · 보드 교체
+③ `TOF_RANGING_FREQ_HZ` · `TOF_PERIOD_MS` 변경 ④ age_ms 분포 재수집에서 수백 ms 반복.
