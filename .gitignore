@@ -31,7 +31,10 @@ build/
 .playwright-mcp/
 
 # === Claude Code 로컬 작업 부산물 (격리 워크트리·세션 설정 — public repo 노출 방지, push 금지) ===
-.claude/
+.claude/*
+# 팀 공유 대상: 프로젝트 설정 + hook 스크립트 (settings.local.json · worktrees 등은 계속 무시)
+!.claude/settings.json
+!.claude/hooks/
 
 # === macOS ===
 .DS_Store
