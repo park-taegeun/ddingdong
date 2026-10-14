@@ -63,6 +63,13 @@ constexpr uint32_t TOF_PERIOD_MS      = 1000 / TOF_RANGING_FREQ_HZ;  // ~67ms
 // === init retry (OnlyFeet 패턴: 2회 시도 후 실패 graceful) ===
 constexpr int TOF_INIT_RETRY_MAX = 2;
 
+// === init 진단(계측 전용 — 판정·반환·재시도 무변경, 로그 접두 "[tof] diag") ===
+// 2026-10-11·10-12 R 리셋 부팅의 init 실패 원인 가르기(가설 = 리셋 순간 센서가 SDA를 LOW로 붙잡음).
+// 32회 × 20µs ≈ 0.64ms: 마스터 리셋 뒤엔 SCL을 칠 주체가 없어 SDA는 고착(32/32) 또는 해제(0/32)로
+//   정지 상태 — 표본 여러 개는 단발 글리치 배제용. 부팅 지연 ≈ 0.7ms + 로그 1줄.
+constexpr int      TOF_DIAG_BUS_SAMPLES       = 32;
+constexpr uint32_t TOF_DIAG_BUS_SAMPLE_GAP_US = 20;
+
 // === Stage A 사람 존재 판정 (decisions.md 카테고리 9 Stage A) ===
 // SSoT 규정 = "1m 이내 ≥8 zone". 아래 두 값이 그 규정의 코드 표현.
 //

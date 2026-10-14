@@ -14,6 +14,7 @@ struct HostSerial {
   char     last[256] = {0};
   unsigned lines     = 0;
   bool     echo      = false;
+  void (*tap)(const char*) = nullptr;  // 줄 전체 캡처 훅(tof_initdiag_test) — 미설정이면 종전과 동일
   int printf(const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -21,9 +22,10 @@ struct HostSerial {
     va_end(ap);
     lines++;
     if (echo) fputs(last, stdout);
+    if (tap) tap(last);
     return n;
   }
-  void println(const char* s) { snprintf(last, sizeof(last), "%s\n", s); lines++; if (echo) fputs(last, stdout); }
+  void println(const char* s) { snprintf(last, sizeof(last), "%s\n", s); lines++; if (echo) fputs(last, stdout); if (tap) tap(last); }
   void begin(unsigned long) {}
 };
 extern HostSerial Serial;
@@ -35,3 +37,26 @@ struct HostEsp {
   uint32_t getMinFreeHeap() { return 0; }
 };
 extern HostEsp ESP;
+
+// ── GPIO · 시간 표면(initToF 진단 D1~D3) — 값은 Arduino-ESP32 2.0.17 esp32-hal-gpio.h 와 동일 ──
+// inline 변수(C++17)라 테스트마다 정의할 필요 없음 → 기존 tof_judge_test 무변경 링크.
+#define LOW               0x0
+#define HIGH              0x1
+#define INPUT             0x01
+#define OUTPUT            0x03
+#define PULLUP            0x04
+#define INPUT_PULLUP      0x05
+#define OPEN_DRAIN        0x10
+#define OUTPUT_OPEN_DRAIN 0x13
+inline uint8_t       hostPinMode[64]   = {0};   // 마지막 pinMode 값
+inline int           hostPinOutSets[64] = {0};  // OUTPUT 비트(0x02)가 선 pinMode 횟수
+inline int           hostPinWrites[64] = {0};   // digitalWrite 횟수
+inline int           hostPinLevel[64]  = {     // digitalRead 반환(기본 HIGH = 풀업 유휴)
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+inline unsigned long hostMillis = 0;
+inline void pinMode(uint8_t pin, uint8_t mode) { hostPinMode[pin] = mode; if (mode & 0x02) hostPinOutSets[pin]++; }
+inline void digitalWrite(uint8_t pin, uint8_t) { hostPinWrites[pin]++; }
+inline int  digitalRead(uint8_t pin) { return hostPinLevel[pin]; }
+inline void delayMicroseconds(uint32_t) {}
+inline unsigned long millis() { return hostMillis; }
