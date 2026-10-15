@@ -21,7 +21,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
 cp .env.example .env              # DEVICE_TOKEN / DASHBOARD_TOKEN — 사람이 직접 실행(훅이 차단함)
-python run.py                     # http://127.0.0.1:5000
+FLASK_APP=app venv/bin/flask run --host=0.0.0.0 --port=5000   # mock ML · 보드가 붙으려면 0.0.0.0 필수(run.py는 127.0.0.1로만 띄운다) · NCP 키가 설정돼 있으면 STT는 실호출(과금)
+DDINGDONG_MODEL_PATH="$HOME/ddingdong_runs/<run 폴더>/inference_savedmodel" FLASK_APP=app venv_real/bin/flask run --host=0.0.0.0 --port=5000   # 실모델(venv_real = Python 3.11 + TensorFlow)
 python3 -m unittest discover -s app/tests -t .          # 전체
 python3 -m unittest app.tests.test_detect_regression    # 단일 모듈
 python3 -m unittest inference.tests.test_inference_contract -v   # TF 없으면 predict 테스트 skip
@@ -38,9 +39,9 @@ npm run ssr-nc    # 테스트 러너 대신: 소스를 일시 변형 → SSR 렌
 
 ### firmware (`firmware/`, PlatformIO)
 ```bash
-pio run -e <env>                 # 빌드 (default_envs = poc)
-pio run -e <env> -t upload
-pio device monitor -b 115200
+~/.platformio/penv/bin/pio run -e <env>                 # 빌드 (default_envs = poc) · pio는 PATH에 없다
+~/.platformio/penv/bin/pio run -e <env> -t upload
+~/.platformio/penv/bin/pio device monitor -b 115200
 ```
 호스트 단위 테스트는 실제 헤더/소스를 그대로 include·링크해 `c++`로 빌드한다. 정확한 명령은 각 `firmware/tools/*_test.cpp` 상단 주석에 있다(repo 루트 기준). 예:
 ```bash
@@ -52,12 +53,12 @@ c++ -std=c++17 -Wall -I firmware/include -I firmware/tools/host_stubs \
 ### ml (repo 루트에서 `python -m ml.…`, Python 3.11/3.12)
 ```bash
 python -m ml.pipeline.run_all --data-root "<dataset>" --decisions ml/pipeline/retrain_data_decisions.csv
-python -m ml.training.train    --data-root "$DATA" --classes doorbell,knock,fire_alarm,other --out-dir "$RUN"
-python -m ml.training.evaluate --data-root "$DATA" --classes doorbell,knock,fire_alarm,other --out-dir "$RUN"
+DDINGDONG_YAMNET_HANDLE="$YAMNET" python -m ml.training.train    --data-root "$DATA" --classes doorbell,knock,fire_alarm,other --out-dir "$RUN"
+DDINGDONG_YAMNET_HANDLE="$YAMNET" python -m ml.training.evaluate --data-root "$DATA" --classes doorbell,knock,fire_alarm,other --out-dir "$RUN"
 python -m ml.pipeline.tests.test_pipeline        # 각 tests 모듈 단독 실행 가능
 python -m ml.curation.tests.test_slice_negatives # 일부 curation 테스트는 ffmpeg 필요
 ```
-데이터셋은 repo 밖에 있다(`--data-root`). `--classes`에는 기본값이 없다.
+데이터셋은 repo 밖에 있다(`--data-root`). `--classes`에는 기본값이 없다. `$YAMNET` = YAMNet 로컬 사본 폴더 — 빠지면 `ml/training/config.py` 기본값(tfhub URL)으로 가서 불완전 캐시에서 실패할 수 있다(decisions.md 33.34(c)). train · evaluate · export 명령마다 붙인다.
 
 ## 아키텍처
 
