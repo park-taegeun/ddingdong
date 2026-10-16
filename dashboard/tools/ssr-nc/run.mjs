@@ -171,7 +171,8 @@ const ASSERTIONS = [
   { fixture: "image_retry_delay", kind: "has", text: "실패0=오류" },
   { fixture: "image_retry_url", kind: "has", text: "/captures/abc?_retry=1" },
   { fixture: "image_retry_url", kind: "has", text: "https://x.example/captures/abc?_retry=2" },
-  { fixture: "image_retry_url", kind: "has", text: "/captures/abc?v=1&_retry=3" },
+  // segments() 는 HTML 엔티티를 풀지 않는다 — 렌더 출력의 & 는 &amp; 로 나온다.
+  { fixture: "image_retry_url", kind: "has", text: "/captures/abc?v=1&amp;_retry=3" },
   { fixture: "image_retry_url", kind: "has", text: "/captures/abc?_retry=4#top" },
   { fixture: "image_first_render", kind: "has", text: "크게 보기" },
   { fixture: "image_first_render", kind: "lacks", text: "사진을 불러올 수 없어요" },
