@@ -3066,5 +3066,131 @@ class TofStructureConstantsMatchFirmwareTest(_NoNetworkTestCase):
                 )
 
 
+
+class DashboardPageLimitMatchesServerTest(_NoNetworkTestCase):
+    """대시보드 「이전 알림 더 보기」 개수 단위 · 최대가 서버 목록 기본 · 상한과 같다 — 한쪽만 바뀌면 FAIL.
+
+    서버가 limit 을 MAX_PAGE_LIMIT 로 자르므로 대시보드 「최근 알림 N개까지」 문구가 사실이려면 같아야 한다.
+    서버 값 = constants 모듈 속성을 실행 시점에 읽는다(미리 바인딩하지 않는다).
+    대시보드 값 = constants.ts 를 글자로 읽어 export const 정의 줄을 찾는다(정확히 1건).
+    """
+
+    DASHBOARD_CONSTANTS = (
+        Path(__file__).resolve().parents[3] / "dashboard" / "src" / "lib" / "constants.ts"
+    )
+    PAIRS = (
+        ("NOTIFICATIONS_PAGE_STEP", "DEFAULT_PAGE_LIMIT"),
+        ("NOTIFICATIONS_PAGE_MAX", "MAX_PAGE_LIMIT"),
+    )
+
+    def test_dashboard_page_limits_equal_server(self) -> None:
+        from .. import constants
+
+        text = self.DASHBOARD_CONSTANTS.read_text(encoding="utf-8")
+        for dash_name, server_name in self.PAIRS:
+            with self.subTest(dash_name):
+                found = re.findall(rf"^export const {dash_name} = (\d+)$", text, re.M)
+                self.assertEqual(
+                    len(found), 1, f"constants.ts {dash_name} 정의 {len(found)}건 — 정확히 1건이어야 한다"
+                )
+                server = getattr(constants, server_name)
+                self.assertEqual(
+                    int(found[0]),
+                    server,
+                    f"대시보드 {dash_name}={found[0]} · 서버 {server_name}={server} — "
+                    "dashboard/src/lib/constants.ts 와 server/app/constants.py 를 같이 고친다",
+                )
+
+
+class NotificationsListContractTest(_NoNetworkTestCase):
+    """대시보드 「이전 알림 더 보기」가 기대는 GET /notifications 의 limit · has_more 계약.
+
+    자기 앱 · 빈 DB 를 쓴다 — DetectRegressionTest 공유 DB 엔 다른 케이스 행이 있어
+    「has_more 거짓」을 만들 수 없다. 행은 케이스마다 지우고 모델로 직접 넣는다.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._tmp_dir = tempfile.mkdtemp(prefix="ddingdong-list-contract-")
+
+        from .. import create_app
+        from ..config import Config
+
+        # DetectRegressionTest._TestConfig 와 같은 격리(카카오 · NCP 비움, 임시 DB · 캡처 폴더).
+        class _TestConfig(Config):
+            DEVICE_TOKEN = _DEVICE_TOKEN
+            DASHBOARD_TOKEN = _DASHBOARD_TOKEN
+            SQLALCHEMY_DATABASE_URI = f"sqlite:///{Path(cls._tmp_dir) / 'list.db'}"
+            MODEL_PATH = ""
+            KAKAO_REST_API_KEY = ""
+            KAKAO_CLIENT_SECRET = ""
+            KAKAO_ACCESS_TOKEN = ""
+            KAKAO_REFRESH_TOKEN = ""
+            NCP_CLIENT_ID = ""
+            NCP_CLIENT_SECRET = ""
+            CAPTURE_STORE_DIR = cls._tmp_dir
+
+        cls.app = create_app(_TestConfig)
+        cls.client = cls.app.test_client()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls._tmp_dir, ignore_errors=True)
+
+    def _seed(self, n: int) -> None:
+        from datetime import timedelta
+
+        from ..extensions import db
+        from ..models import Notification
+
+        with self.app.app_context():
+            db.session.query(Notification).delete()
+            db.session.add_all(
+                Notification(
+                    client_request_id=f"list-{i}",
+                    request_id=f"list-req-{i}",
+                    device_id="list-device",
+                    detected_at=datetime(2026, 10, 16, 4, 0, 0) + timedelta(seconds=i),
+                    predicted_class="doorbell",
+                    confidence=0.9,
+                    all_scores={},
+                    tof_applied=False,
+                    tof_passed=None,
+                    tof_reason="tof_absent",
+                    primary_sent=False,
+                    primary_sent_at=None,
+                    enrich_status="skipped",
+                    secondary_sent=False,
+                    secondary_sent_at=None,
+                    skip_reason=None,
+                )
+                for i in range(n)
+            )
+            db.session.commit()
+
+    def _list(self, query: str = ""):
+        r = self.client.get(
+            f"/api/v1/notifications{query}",
+            headers={"Authorization": f"Bearer {_DASHBOARD_TOKEN}"},
+        )
+        self.assertEqual(r.status_code, 200, r.data)
+        body = r.get_json()
+        return len(body["notifications"]), body["has_more"]
+
+    def test_fewer_rows_than_limit_reports_no_more(self) -> None:
+        self._seed(40)
+        self.assertEqual(self._list("?limit=40"), (40, False))  # ⑤ 행 수 == limit
+        self.assertEqual(self._list("?limit=60"), (40, False))  # ④ 행 수 < limit
+
+    def test_limit_default_and_clamp_with_more_rows(self) -> None:
+        from .. import constants
+
+        default, top = constants.DEFAULT_PAGE_LIMIT, constants.MAX_PAGE_LIMIT
+        self._seed(top * 2)
+        self.assertEqual(self._list(), (default, True))  # ① limit 없음 = 기본
+        self.assertEqual(self._list("?limit=40"), (40, True))  # ②
+        self.assertEqual(self._list(f"?limit={top + 50}"), (top, True))  # ③ 상한으로 자름
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,7 @@ const SRC = {
   connection: "src/lib/connection.ts",
   imageRetry: "src/lib/image-retry.ts",
   image: "src/components/notifications/NotificationImage.tsx",
+  loadMore: "src/lib/load-more.ts",
 }
 
 /**
@@ -129,6 +130,41 @@ const CASES = [
     anchor: "    url: src,",
     patch: "    url: null,",
   },
+  // 이전 알림 더 보기 ① — 요청 개수가 받은 limit보다 크면 불러오는 중. 결함 = 분기가 없으면 누른 직후
+  // 옛 응답(has_more 참)으로 버튼이 다시 살아나 연타된다. 함정: 요청 == 받은 픽스처만 보면 같다.
+  {
+    id: "NC-N1",
+    file: SRC.loadMore,
+    desc: "불러오는 중 분기 제거 — 요청 40 · 받은 20에서 '버튼' (더 보기 ①)",
+    anchor: 'if (requested > receivedLimit) return "loading"',
+    patch: 'if (false) return "loading"',
+  },
+  // 이전 알림 더 보기 ②③ — 끝을 최대치보다 먼저 본다. 결함 = 순서를 바꾸면 「100건 · 더 없음」이
+  // 최대치 문구가 된다. 함정: 「100 · 더 있음」 · 「20 · 더 없음」만 보면 순서와 무관하게 같다.
+  {
+    id: "NC-N2",
+    file: SRC.loadMore,
+    desc: "끝 · 최대치 판정 순서 뒤집기 — limit 100 · has_more 거짓이 '최대치' (더 보기 ②③)",
+    anchor: '  if (!hasMore) return "end"\n  if (receivedLimit >= max) return "max"',
+    patch: '  if (receivedLimit >= max) return "max"\n  if (!hasMore) return "end"',
+  },
+  // 이전 알림 더 보기 ⓐ — 다음 개수는 최대에서 멈춘다. 결함 = 상한이 없으면 120을 요청해 서버가 100으로
+  // 자르고 받은 limit(120) ≥ 최대라 최대치로 보이지만 개수 상태가 서버와 어긋난다. 함정: 20 · 80만 보면 같다.
+  {
+    id: "NC-N3",
+    file: SRC.loadMore,
+    desc: "다음 개수 상한(min) 제거 — 다음 90 · 100이 110 · 120 (더 보기 ⓐ)",
+    anchor: "return Math.min(current + step, max)",
+    patch: "return current + step",
+  },
+  // 이전 알림 더 보기 — 정의역 밖은 던진다. 결함 = 검사가 없으면 0 · 소수가 그대로 요청된다.
+  {
+    id: "NC-N4",
+    file: SRC.loadMore,
+    desc: "정의역 검사 제거 — 요청 0 · 다음 0 · 1.5가 던지지 않는다 (더 보기)",
+    anchor: "if (!Number.isInteger(value) || value < 1) {",
+    patch: "if (false) {",
+  },
 ]
 
 /**
@@ -174,6 +210,19 @@ const ASSERTIONS = [
   // segments() 는 HTML 엔티티를 풀지 않는다 — 렌더 출력의 & 는 &amp; 로 나온다.
   { fixture: "image_retry_url", kind: "has", text: "/captures/abc?v=1&amp;_retry=3" },
   { fixture: "image_retry_url", kind: "has", text: "/captures/abc?_retry=4#top" },
+  { fixture: "load_more_state", kind: "has", text: "요청40·받은20·더있음=불러오는 중" },
+  { fixture: "load_more_state", kind: "has", text: "요청20·받은20·더없음=끝" },
+  { fixture: "load_more_state", kind: "has", text: "요청100·받은100·더없음=끝" },
+  { fixture: "load_more_state", kind: "has", text: "요청100·받은100·더있음=최대치" },
+  { fixture: "load_more_state", kind: "has", text: "요청40·받은40·더있음=버튼" },
+  { fixture: "load_more_state", kind: "has", text: "요청0=오류" },
+  { fixture: "load_more_next", kind: "has", text: "다음20=40" },
+  { fixture: "load_more_next", kind: "has", text: "다음80=100" },
+  { fixture: "load_more_next", kind: "has", text: "다음90=100" },
+  { fixture: "load_more_next", kind: "has", text: "다음100=100" },
+  { fixture: "load_more_next", kind: "has", text: "다음0=오류" },
+  { fixture: "load_more_next", kind: "has", text: "다음1.5=오류" },
+  { fixture: "load_more_next", kind: "has", text: "최대작음=오류" },
   { fixture: "image_first_render", kind: "has", text: "크게 보기" },
   { fixture: "image_first_render", kind: "lacks", text: "사진을 불러올 수 없어요" },
 ]

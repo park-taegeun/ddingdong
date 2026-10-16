@@ -13,8 +13,15 @@ import { NotificationTof } from "@/components/notifications/NotificationTof"
 import { SystemHealthCard } from "@/components/stats/SystemHealthCard"
 import { SettingsProvider } from "@/contexts/SettingsContext"
 import { deriveConnection, isStale } from "@/lib/connection"
-import { IMAGE_RETRY_INTERVAL_MS, IMAGE_RETRY_MAX, STALE_AFTER_MS } from "@/lib/constants"
+import {
+  IMAGE_RETRY_INTERVAL_MS,
+  IMAGE_RETRY_MAX,
+  NOTIFICATIONS_PAGE_MAX,
+  NOTIFICATIONS_PAGE_STEP,
+  STALE_AFTER_MS,
+} from "@/lib/constants"
 import { nextRetryDelay, retryUrl } from "@/lib/image-retry"
+import { loadMoreState, nextLimit } from "@/lib/load-more"
 import type { NotificationStt, TofCheck } from "@/types/notification"
 import type { SystemHealth, TokenStatus } from "@/types/stats"
 
@@ -55,6 +62,23 @@ const retryAt = (failures: number) => {
   try {
     const d = nextRetryDelay(failures, IMAGE_RETRY_MAX, IMAGE_RETRY_INTERVAL_MS)
     return d === null ? "중단" : `${d}ms`
+  } catch {
+    return "오류"
+  }
+}
+
+// 이전 알림 더 보기 — 버튼 영역 상태 · 다음 개수. 정의역 밖은 던진다(텍스트 「오류」).
+const LOAD_LABEL = { loading: "불러오는 중", end: "끝", max: "최대치", button: "버튼" } as const
+const loadAt = (requested: number, receivedLimit: number, hasMore: boolean) => {
+  try {
+    return LOAD_LABEL[loadMoreState(requested, receivedLimit, hasMore, NOTIFICATIONS_PAGE_MAX)]
+  } catch {
+    return "오류"
+  }
+}
+const nextAt = (current: number, step = NOTIFICATIONS_PAGE_STEP, max = NOTIFICATIONS_PAGE_MAX) => {
+  try {
+    return String(nextLimit(current, step, max))
   } catch {
     return "오류"
   }
@@ -118,6 +142,29 @@ export const output: Record<string, string> = {
       <li>{retryUrl("https://x.example/captures/abc", 2)}</li>
       <li>{retryUrl("/captures/abc?v=1", 3)}</li>
       <li>{retryUrl("/captures/abc#top", 4)}</li>
+    </ul>,
+  ),
+  // 이전 알림 더 보기 — 상태 4종(판정 순서 ①~④) · 정의역 밖
+  load_more_state: renderToStaticMarkup(
+    <ul>
+      <li>{`요청40·받은20·더있음=${loadAt(40, 20, true)}`}</li>
+      <li>{`요청20·받은20·더없음=${loadAt(20, 20, false)}`}</li>
+      <li>{`요청100·받은100·더없음=${loadAt(100, 100, false)}`}</li>
+      <li>{`요청100·받은100·더있음=${loadAt(100, 100, true)}`}</li>
+      <li>{`요청40·받은40·더있음=${loadAt(40, 40, true)}`}</li>
+      <li>{`요청0=${loadAt(0, 20, true)}`}</li>
+    </ul>,
+  ),
+  // 이전 알림 더 보기 — 다음 개수 경계(최대에서 멈춤) · 정의역 밖
+  load_more_next: renderToStaticMarkup(
+    <ul>
+      <li>{`다음20=${nextAt(20)}`}</li>
+      <li>{`다음80=${nextAt(80)}`}</li>
+      <li>{`다음90=${nextAt(90)}`}</li>
+      <li>{`다음100=${nextAt(100)}`}</li>
+      <li>{`다음0=${nextAt(0)}`}</li>
+      <li>{`다음1.5=${nextAt(1.5)}`}</li>
+      <li>{`최대작음=${nextAt(20, 20, 10)}`}</li>
     </ul>,
   ),
   // AU-18 I1 첫 렌더 — 사진 + 「크게 보기」, 실패 문구 없음(ImageLightbox가 설정 컨텍스트를 쓴다)

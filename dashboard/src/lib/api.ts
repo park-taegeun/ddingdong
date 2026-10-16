@@ -30,6 +30,19 @@ export async function fetchNotifications(): Promise<NotificationItem[]> {
   return json.notifications
 }
 
+// 알림 화면 전용 — 개수를 지정해 받고 has_more 와 「그 요청의 limit」을 함께 돌려준다
+// (버튼 영역 상태 판정용). 스크린리더 안내 · 홈은 위 fetchNotifications 를 그대로 쓴다.
+export interface NotificationsPageResult {
+  notifications: NotificationItem[]
+  hasMore: boolean
+  limit: number
+}
+
+export async function fetchNotificationsPage(limit: number): Promise<NotificationsPageResult> {
+  const json = await apiGet<NotificationsApiResponse>(`/notifications?limit=${limit}`)
+  return { notifications: json.notifications, hasMore: json.has_more, limit }
+}
+
 export function fetchStats(): Promise<StatsResponse> {
   return apiGet<StatsResponse>("/stats")
 }
