@@ -4,7 +4,7 @@
   일어난다(lazy). 라이브 서버가 이 모듈을 실수로 import 해도 TF(수백 MB)가 로드되지
   않도록 하기 위함(§2 데모 보호). model_path 주입식 — 더미/실모델 교체 가능.
 
-시그니처(카테고리 33.2): 입력 waveform (1, None) float32 → 출력 (1, 3) float32.
+시그니처(카테고리 33.2): 입력 waveform (1, None) float32 → 출력 (1, NUM_CLASSES) float32(현재 4 — inference/constants.py).
 라벨 순서 = CLASSES 상속(doorbell=0 / knock=1 / fire_alarm=2).
 """
 
@@ -18,7 +18,7 @@ from .constants import NUM_CLASSES
 
 
 class ModelRunner:
-    """SavedModel 을 lazy-load 하여 waveform → (1, 3) 확률을 반환하는 러너."""
+    """SavedModel 을 lazy-load 하여 waveform → (1, NUM_CLASSES) 확률을 반환하는 러너."""
 
     def __init__(self, model_path: str) -> None:
         # ── lazy import: 이 줄이 실행되는 시점(인스턴스화)에만 TF 로드 ──
@@ -41,10 +41,10 @@ class ModelRunner:
         self._input_key: str = next(iter(structured_inputs.keys()))
 
     def predict(self, waveform: np.ndarray) -> np.ndarray:
-        """waveform (1, N) float32 → (1, 3) float32 확률(softmax, sum≈1).
+        """waveform (1, N) float32 → (1, NUM_CLASSES) float32 확률(softmax, sum≈1).
 
         Raises:
-            ValueError: 출력 shape 가 계약 (1, 3) 이 아닐 때(시그니처 계약 위반).
+            ValueError: 출력 shape 가 계약 (1, NUM_CLASSES) 이 아닐 때(시그니처 계약 위반).
         """
         tf = self._tf
         x = tf.convert_to_tensor(waveform, dtype=tf.float32)
