@@ -68,7 +68,7 @@ venv/bin/python3 tools/demo_up.py --mode dry \
     --log-dir "$HOME/ddingdong-측정결과/$(date +%F)/enrich_autotrig/21_autosilence_J" --port 5000
 ```
 - 끝낼 때 = 그 창에서 Ctrl+C 한 번 → `CLEAN` 확인. 그 창에 다른 명령을 붙이지 않는다(`server/tools/demo_up.py` 머리 주석 사용법).
-- `--log-dir`는 repo 밖만 허용되고, 그 안에 `run-*` 실행 폴더가 생긴다. 토큰은 서버 설정 파일 값을 그대로 쓴다(셸에 붙여 넣지 않는다).
+- `--log-dir`는 repo 밖만 허용되고, 그 안에 `run-*` 실행 폴더가 생긴다. 토큰은 셸에 같은 이름 변수가 있으면 그 값, 없으면 서버 설정 파일 값을 쓴다. 어느 쪽인지는 demo_up 요약 표의 토큰 행에 나온다. 보드가 401이면 그 행의 출처부터 확인한다. 셸에 토큰을 붙여 넣지 않는다.
 
 | 항목 | 실물 | 이 런북에서 |
 |---|---|---|
