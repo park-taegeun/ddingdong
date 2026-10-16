@@ -45,6 +45,7 @@
 #include "probe_stats.h"   // probeIsJpegSoi — SOI 2바이트 검사(6.6 자산 재사용, 복제 0)
 #include "secrets.h"
 #include "tof_common.h"
+#include "tof_fresh.h"  // tofFreshJudge — 트리거 시점 ToF 값 멈춤 가드
 #include "uplink_common.h"
 #ifdef ENRICH_AUTO_TRIGGER
 #include "auto_trig.h"
@@ -130,6 +131,12 @@ static_assert(AUTO_TRIG_WIN_BUFS == MIC_RING_SLOTS, "1차 창 = 링 32슬롯 = 6
 static volatile uint32_t g_micSlots = 0;
 
 // ── ToF 최신 판정 공유 (tofTask → loop) — mic_uplink_main.cpp 와 동형 ──────
+// ★ 단, 이 env 는 g_tofLatestMs 를 관측만이 아니라 멈춤 가드에도 쓴다(mic_uplink 와 다른 점).
+//   결정(2026-10-15, 감사 AU-01): 마지막 프레임 뒤 경과 > TOF_RUN_STALE_MS(기본 1,000ms)면 「첫 프레임 전」과
+//   같이 4필드를 빼고 보낸다(서버 tof_absent → fail-open, 6.4(c)). 센서가 동작 중 멈춰 마지막 「사람 없음」이
+//   계속 실리면 초인종 · 노크가 tof_rejected 로 조용히 막히기 때문이다.
+//   근거: 지난 보드 로그 age_ms 882건 최대 103ms(1000ms 초과 0) · 정상 간격 TOF_PERIOD_MS ≈ 67ms.
+//   재판정 트리거 · 임계 상수 = tof_fresh.h. 판정은 크리티컬 섹션 밖에서 한다(점유 무변경).
 static portMUX_TYPE   g_tofMux       = portMUX_INITIALIZER_UNLOCKED;
 static TofFrameResult g_tofLatest    = {};
 static uint32_t       g_tofLatestMs  = 0;
@@ -348,8 +355,14 @@ static void captureTofAtTrigger() {
   g_tofAtS = g_tofLatest;
   ms       = g_tofLatestMs;
   taskEXIT_CRITICAL(&g_tofMux);
-  if (ms == 0) {
+  const TofFresh fresh = tofFreshJudge(g_tofAvailable, ms, millis());
+  if (fresh == TOF_FRESH_NO_FRAME) {
     Serial.println("[tof][e2] 첫 프레임 전 — 4필드 미전송(서버 tof_absent)");
+    return;
+  }
+  if (fresh != TOF_FRESH_SEND) {  // TOF_FRESH_STALE — 그 밖 값도 미전송 쪽(「모르면 보낸다」 금지)
+    // "[tof][e2] 멈춤 age_ms=4294967295 — 4필드 미전송(서버 tof_absent)" = 75B
+    Serial.printf("[tof][e2] 멈춤 age_ms=%u — 4필드 미전송(서버 tof_absent)\n", (unsigned)(millis() - ms));
     return;
   }
   g_tofAtSValid = true;
@@ -626,6 +639,11 @@ void setup() {
                 (int)AUTO_TRIG_MASK_HALF, (int)AUTO_TRIG_MAX_RUN);
 #else
   Serial.println("\n[BOOT] ddingdong enrich uplink (PR-B, 수동 's' 트리거)");
+#endif
+#ifdef TOF_STALE_MS_TEST_OVERRIDE
+  // 시험 빌드 표식(ENRICH_AUTOTRIG_RUNBOOK.md 12절 (b)). "[BOOT] 시험 빌드 — tof 멈춤 임계=4294967295ms(정상 1000ms)" = 70B
+  Serial.printf("[BOOT] 시험 빌드 — tof 멈춤 임계=%ums(정상 %ums)\n", (unsigned)TOF_RUN_STALE_MS,
+                (unsigned)TOF_STALE_MS);
 #endif
 
   // ★ 버퍼를 먼저 잡는다 — WiFi/I2S/카메라가 PSRAM 을 갉기 전에 실패를 드러내기 위함.

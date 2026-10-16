@@ -116,6 +116,7 @@ pio device monitor -e enrich_uplink            # 115200
 | `[e2] e http=-1` | 타임아웃·소켓 실패 | 15초를 넘겼다 → rtt 값을 기록. 확정값(2026-09-23)의 **재판정 트리거와 대조**(`uplink_common.h` 주석) |
 | `[e2] rec 미완 filled=N/163840` | i2s_read 가 멈췄다 | `gaps` 와 함께 보고. 6.3(n) 축과 대조 |
 | `[e2] 세션 상한 도달` | 12건을 이미 보냈다 | 정상. 더 필요하면 재부팅(= 새 세션) |
+| `[tof][e2] 멈춤 age_ms=…` | 마지막 ToF 프레임 뒤 1,000ms 초과 → 4필드 미전송(서버 `tof_absent`) | 정상 동작 중 나오면 보고. 보드 확인 절차 = `ENRICH_AUTOTRIG_RUNBOOK.md` 12절 |
 
 ---
 
