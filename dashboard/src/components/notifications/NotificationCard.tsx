@@ -92,6 +92,7 @@ export function NotificationCard({
           {notification.media.image_url && (
             <div className="mt-3">
               <NotificationImage
+                key={notification.media.image_url}
                 src={notification.media.image_url}
                 alt={`${meta.label} 감지 사진`}
               />

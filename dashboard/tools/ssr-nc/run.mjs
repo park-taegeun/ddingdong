@@ -34,6 +34,8 @@ const SRC = {
   tof: "src/components/notifications/NotificationTof.tsx",
   format: "src/lib/format.ts",
   connection: "src/lib/connection.ts",
+  imageRetry: "src/lib/image-retry.ts",
+  image: "src/components/notifications/NotificationImage.tsx",
 }
 
 /**
@@ -91,6 +93,42 @@ const CASES = [
     anchor: "if (disconnected) {",
     patch: "if (false) {",
   },
+  // AU-18 I2 — 재시도는 실패 1 ~ 6번째 뒤(요청 최대 7). 결함 = > 가 >= 로 바뀌면 마지막 재시도 1회가
+  // 사라진다. 함정: 실패 7(중단)만 단언하면 못 잡는다 — 경계 점 실패 6을 단언한다.
+  {
+    id: "NC-c",
+    file: SRC.imageRetry,
+    desc: "재시도 상한 off-by-one > → >= — 실패 6 뒤 재시도가 '중단' (AU-18 I2)",
+    anchor: "const exhausted = failures > max",
+    patch: "const exhausted = failures >= max",
+  },
+  // AU-18 I2 — 상한이 없으면 만료 · mock · 옛 주소 사진에 무한 재시도. 함정: 실패 1 · 6만 보면
+  // 정상과 같다 — 실패 7을 단언한다. 앵커 = 중단 분기 한 줄(NC-c 앵커와 문자열 비포함).
+  {
+    id: "NC-d",
+    file: SRC.imageRetry,
+    desc: "재시도 상한 제거 — 실패 7 뒤에도 재시도 (AU-18 I2)",
+    anchor: "if (exhausted) return null",
+    patch: "if (false) return null",
+  },
+  // AU-18 I7 — 시도 번호 쿼리는 덧붙이기만 한다. 결함 = 기존 쿼리를 버리면 서명 · 버전 쿼리가 붙은
+  // 주소에서 재시도가 다른 리소스를 받는다. 함정: 쿼리 없는 픽스처만 보면 결과가 같다.
+  {
+    id: "NC-e",
+    file: SRC.imageRetry,
+    desc: "재시도 URL이 기존 쿼리를 덮어씀 (AU-18 I7)",
+    anchor: "const base = hashAt === -1 ? src : src.slice(0, hashAt)",
+    patch: 'const base = (hashAt === -1 ? src : src.slice(0, hashAt)).split("?")[0]',
+  },
+  // AU-18 I1 — 첫 렌더는 지금과 같은 사진. 결함 = 초기 상태가 실패면 서버가 멀쩡해도 실패 문구가
+  // 먼저 보인다. 함정: 실패 문구 부재만 보면 빈 렌더도 통과 — 「크게 보기」 존재도 함께 단언한다.
+  {
+    id: "NC-f",
+    file: SRC.image,
+    desc: "초기 상태를 실패로 — 첫 렌더에 '사진을 불러올 수 없어요' (AU-18 I1)",
+    anchor: "    url: src,",
+    patch: "    url: null,",
+  },
 ]
 
 /**
@@ -127,6 +165,16 @@ const ASSERTIONS = [
   { fixture: "conn_labels", kind: "has", text: "온라인=디바이스 온라인" },
   { fixture: "conn_labels", kind: "has", text: "오프라인=디바이스 오프라인" },
   { fixture: "conn_labels", kind: "has", text: "확인중=연결 확인 중" },
+  { fixture: "image_retry_delay", kind: "has", text: "실패1=10000ms" },
+  { fixture: "image_retry_delay", kind: "has", text: "실패6=10000ms" },
+  { fixture: "image_retry_delay", kind: "has", text: "실패7=중단" },
+  { fixture: "image_retry_delay", kind: "has", text: "실패0=오류" },
+  { fixture: "image_retry_url", kind: "has", text: "/captures/abc?_retry=1" },
+  { fixture: "image_retry_url", kind: "has", text: "https://x.example/captures/abc?_retry=2" },
+  { fixture: "image_retry_url", kind: "has", text: "/captures/abc?v=1&_retry=3" },
+  { fixture: "image_retry_url", kind: "has", text: "/captures/abc?_retry=4#top" },
+  { fixture: "image_first_render", kind: "has", text: "크게 보기" },
+  { fixture: "image_first_render", kind: "lacks", text: "사진을 불러올 수 없어요" },
 ]
 
 const abs = (file) => path.join(ROOT, file)

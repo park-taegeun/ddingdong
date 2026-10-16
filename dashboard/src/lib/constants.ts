@@ -19,3 +19,13 @@ export const REGISTRATION_EXPIRES_IN_SECONDS = 300
 // 폴링 2회분 = 순간 실패 1회로 표시가 깜빡이지 않게 하는 최소 여유.
 // 재판정 = ① 부스 리허설에서 깜빡임 · 늦은 표시 관측 ② 폴링 간격 변경 ③ api 타임아웃 도입.
 export const STALE_AFTER_MS = POLLING_INTERVAL_MS * 2
+
+// 알림 사진 자동 재시도 — 잠정(2026-10-16 10:03 KST 결정).
+// 실패 직후부터 10초 간격 · 최대 6회 = 첫 요청 포함 카드 하나당 최대 7요청, 약 1분 창.
+// 1분 = 터널 순간 끊김이 돌아오기를 기다리는 창. 상한이 필요한 이유 = 영영 안 뜨는 사진이 있다 —
+// ① 보관 기한(서버 CAPTURE_TTL 72시간)이 지난 사진은 404 ② mock 경로(/static/captures/…)는 404
+// ③ 터널 재기동 전 옛 주소로 저장된 사진(26.11(d) — 추정).
+// 백그라운드 탭에선 브라우저가 타이머를 늦춰 창이 1분보다 길어질 수 있다(결함 아님).
+// 재판정 = ① 부스 리허설에서 터널 복구 시간 · 깜빡임 관측 ② 사용자 불편 보고 ③ 사진 서빙 경로 변경.
+export const IMAGE_RETRY_INTERVAL_MS = 10_000
+export const IMAGE_RETRY_MAX = 6
