@@ -11,7 +11,7 @@ export function NotificationsPage() {
         <div>
           <h1 className="text-h1 font-bold">알림</h1>
           <p className="mt-1 text-body text-foreground-secondary">
-            감지된 모든 소리를 최신순으로 보여드려요.
+            최근 감지된 소리를 최신순으로 보여드려요.
           </p>
         </div>
         {lastUpdated && (
