@@ -2,7 +2,7 @@
 // 대시보드의 모든 서버 호출은 이 파일의 두 헬퍼(apiGet 조회 / apiSend 쓰기)를 통해서만 나간다.
 // 호출 URL = `${VITE_API_BASE_URL}${path}` = 상대경로 `/api/v1/...` → dev 는 vite proxy 가
 // Flask(5000)로 포워딩(CORS 우회). 반드시 상대경로여야 proxy 를 타므로 full URL 금지.
-// (Phase 1 mock 은 mock-data.ts 에 참고용으로 보존 — 런타임 토글은 두지 않음(YAGNI).)
+// (Phase 1 mock 데이터 파일은 참조 0이라 삭제 — 이력은 git. 런타임 토글은 두지 않음(YAGNI).)
 
 import type { NotificationItem } from "@/types/notification"
 import type { NotificationsApiResponse } from "@/types/api"
