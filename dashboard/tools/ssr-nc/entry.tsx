@@ -7,11 +7,14 @@
 // ★ 픽스처 시각·수치는 전부 고정 주입이다 — 실 서버·실 시계 미호출(8.5(g) 동형).
 import { renderToStaticMarkup } from "react-dom/server"
 import { StaleDataNotice } from "@/components/feedback/StaleDataNotice"
+import { NotificationImage } from "@/components/notifications/NotificationImage"
 import { NotificationSTT } from "@/components/notifications/NotificationSTT"
 import { NotificationTof } from "@/components/notifications/NotificationTof"
 import { SystemHealthCard } from "@/components/stats/SystemHealthCard"
+import { SettingsProvider } from "@/contexts/SettingsContext"
 import { deriveConnection, isStale } from "@/lib/connection"
-import { STALE_AFTER_MS } from "@/lib/constants"
+import { IMAGE_RETRY_INTERVAL_MS, IMAGE_RETRY_MAX, STALE_AFTER_MS } from "@/lib/constants"
+import { nextRetryDelay, retryUrl } from "@/lib/image-retry"
 import type { NotificationStt, TofCheck } from "@/types/notification"
 import type { SystemHealth, TokenStatus } from "@/types/stats"
 
@@ -46,6 +49,16 @@ const staleAt = (elapsedMs: number) =>
   isStale(LAST_OK, false, LAST_OK.getTime() + elapsedMs, STALE_AFTER_MS) ? "끊김" : "정상"
 const connLabel = (isOnline: boolean, hasHealth: boolean, disconnected: boolean) =>
   deriveConnection(isOnline, hasHealth, disconnected).label
+
+// AU-18 사진 재시도 — 실패 횟수 → 다음 지연(ms) | 중단, 정의역 밖은 던진다(텍스트 「오류」).
+const retryAt = (failures: number) => {
+  try {
+    const d = nextRetryDelay(failures, IMAGE_RETRY_MAX, IMAGE_RETRY_INTERVAL_MS)
+    return d === null ? "중단" : `${d}ms`
+  } catch {
+    return "오류"
+  }
+}
 
 export const output: Record<string, string> = {
   // 8.5(f) 실렌더 대조 픽스처 (카카오 토큰 3상태 + 만료 경과 환산)
@@ -88,5 +101,29 @@ export const output: Record<string, string> = {
       <li>{`오프라인=${connLabel(false, true, false)}`}</li>
       <li>{`확인중=${connLabel(false, false, false)}`}</li>
     </ul>,
+  ),
+  // AU-18 I2 재시도 상한 — 경계 점(실패 6 = 마지막 재시도 · 실패 7 = 중단) · 정의역 밖(실패 0)
+  image_retry_delay: renderToStaticMarkup(
+    <ul>
+      <li>{`실패1=${retryAt(1)}`}</li>
+      <li>{`실패6=${retryAt(6)}`}</li>
+      <li>{`실패7=${retryAt(7)}`}</li>
+      <li>{`실패0=${retryAt(0)}`}</li>
+    </ul>,
+  ),
+  // AU-18 I7 재시도 URL — 상대 · 절대 · 기존 쿼리 · 해시
+  image_retry_url: renderToStaticMarkup(
+    <ul>
+      <li>{retryUrl("/captures/abc", 1)}</li>
+      <li>{retryUrl("https://x.example/captures/abc", 2)}</li>
+      <li>{retryUrl("/captures/abc?v=1", 3)}</li>
+      <li>{retryUrl("/captures/abc#top", 4)}</li>
+    </ul>,
+  ),
+  // AU-18 I1 첫 렌더 — 사진 + 「크게 보기」, 실패 문구 없음(ImageLightbox가 설정 컨텍스트를 쓴다)
+  image_first_render: renderToStaticMarkup(
+    <SettingsProvider>
+      <NotificationImage src="/captures/abc" alt="노크 감지 사진" />
+    </SettingsProvider>,
   ),
 }
