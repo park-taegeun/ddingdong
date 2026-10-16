@@ -70,10 +70,12 @@ static uint8_t* g_ebody = nullptr;  // 676,864B 2차 multipart
 //   g_recFilled 는 RECORDING 구간에서만 task 가 쓴다. loop 가 g_recFilled 를 쓰는 유일한 지점은
 //   recReq 를 올리기 **직전**(= task 가 손대지 않는 구간)이다.
 //   ⚠️ 여기에 "녹음 중 재트리거"를 허용하면 이 논증이 깨진다. loop 가드(busy)가 그것을 막는다.
-//   ⚠️ 수용된 위험(2026-10-16 11:26 KST 사용자 결정 — 코드 무변경): task 가 마지막 슬롯을 담고
-//   recReq=false 를 쓴 뒤 recReady=true 를 쓰기 직전(수 µs)에 loop 의 discardRecording() 이 겹치면
+//   ⚠️ 수용된 위험(2026-10-16 11:26 KST 사용자 결정 — 코드 무변경): task 가 2차 녹음 적재 블록에서
+//   마지막 슬롯의 `if (g_recReq …)` 확인을 통과한 뒤(그 슬롯 memcpy · g_recFilled 갱신 · recReq=false ·
+//   __sync_synchronize 포함) recReady=true 를 쓰기 전까지 loop 의 discardRecording() 이 끼면(구간 길이 미측정)
 //   g_recReady 가 true 로 남는다. 그것을 내리는 곳은 runEvent 안 discardRecording() 뿐이고 runEvent 는
-//   새 이벤트(snapReq)로만 돌며 새 이벤트는 busy 로 막힌다 → 리셋 전까지 's' · 자동 트리거가 「처리 중」
+//   loop 가 g_snapReady 를 볼 때만 돌며(새 이벤트 = snapReq → task → snapReady) 새 이벤트는 busy 로
+//   막힌다 → 리셋 전까지 's' · 자동 트리거가 「처리 중」
 //   으로 무시된다(리셋으로 복구). 관측 0.
 //   재판정 트리거 = 「처리 중(busy)」 무시가 리셋 전까지 계속되는 관측 → discard 를 task 쪽으로 넘기는
 //   수정 검토(보드 ④런타임 필요).

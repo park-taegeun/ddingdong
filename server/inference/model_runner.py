@@ -5,7 +5,7 @@
   않도록 하기 위함(§2 데모 보호). model_path 주입식 — 더미/실모델 교체 가능.
 
 시그니처(카테고리 33.2): 입력 waveform (1, None) float32 → 출력 (1, NUM_CLASSES) float32(현재 4 — inference/constants.py).
-라벨 순서 = CLASSES 상속(doorbell=0 / knock=1 / fire_alarm=2).
+라벨 순서 = CLASSES 상속(doorbell=0 / knock=1 / fire_alarm=2 / other=3).
 """
 
 from __future__ import annotations
