@@ -35,6 +35,7 @@ import io
 import math
 import os
 import json
+import re
 import shutil
 import socket
 import struct
@@ -2851,6 +2852,41 @@ class DetectRegressionTest(_NoNetworkTestCase):
                     self.assertIsNone(by_rounded["skip_reason"])
                 else:
                     self.assertEqual(by_raw["skip_reason"], by_rounded["skip_reason"])
+
+
+class TofStructureConstantsMatchFirmwareTest(_NoNetworkTestCase):
+    """ToF 구조 상한(zone 64 / aggregate 16)이 펌웨어 헤더 정의와 같다 — 한쪽만 바뀌면 FAIL.
+
+    서버 값 = constants 모듈 속성을 실행 시점에 읽는다(미리 바인딩하지 않는다).
+    펌웨어 값 = tof_common.h 를 글자로 읽어 constexpr 정의 줄을 찾는다(정확히 1건).
+    근거 = decisions.md 9.2 · 9.3(constants.py 주석).
+    """
+
+    TOF_HEADER = Path(__file__).resolve().parents[3] / "firmware" / "include" / "tof_common.h"
+    PAIRS = (
+        ("TOF_ZONE_COUNT", "TOF_ZONE_TOTAL"),
+        ("TOF_MOTION_AGG_COUNT_8X8", "TOF_MOTION_AGGREGATE_TOTAL"),
+    )
+
+    def test_server_bounds_equal_firmware_header(self) -> None:
+        from .. import constants
+
+        text = self.TOF_HEADER.read_text(encoding="utf-8")
+        for fw_name, server_name in self.PAIRS:
+            with self.subTest(fw_name):
+                found = re.findall(
+                    rf"^\s*constexpr\s+\w+\s+{fw_name}\s*=\s*(\d+)\s*;", text, re.M
+                )
+                self.assertEqual(
+                    len(found), 1, f"tof_common.h {fw_name} 정의 {len(found)}건 — 정확히 1건이어야 한다"
+                )
+                server = getattr(constants, server_name)
+                self.assertEqual(
+                    int(found[0]),
+                    server,
+                    f"펌웨어 {fw_name}={found[0]} · 서버 {server_name}={server} — "
+                    "firmware/include/tof_common.h 와 server/app/constants.py 를 같이 고친다",
+                )
 
 
 if __name__ == "__main__":
