@@ -5,18 +5,22 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import csv
 import hashlib
 import io
 import math
+import re
 import tempfile
 import unittest
 import wave
 from array import array
 from pathlib import Path
 
+from ...pipeline import config
 from ...pipeline.config import SAMPLE_RATE, source_key
+from .. import slice_boardbg as sb
 from .. import slice_direct as sd
 from ..slice_negatives import REPO_ROOT
 
@@ -292,6 +296,83 @@ class SliceDirectTest(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 sd.main(full[:i] + full[i + 2:])
         self.assertFalse((self.root / "y").exists())
+
+
+RECEIVER = REPO_ROOT / "server" / "tools" / "record_receiver.py"
+
+
+def receiver_name_rules() -> tuple[tuple[str, ...], str, ast.FunctionDef]:
+    """수신기 원문(import 안 함)에서 (LABELS, UNIT_RE 패턴, take_name 정의). 각각 정확히 1곳이 아니면 AssertionError."""
+    tree = ast.parse(RECEIVER.read_text(encoding="utf-8"))
+    assigns = {name: [n.value for n in tree.body if isinstance(n, ast.Assign)
+                      and [getattr(t, "id", None) for t in n.targets] == [name]]
+               for name in ("LABELS", "UNIT_RE")}
+    funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "take_name"]
+    for name, found in (*assigns.items(), ("take_name", funcs)):
+        assert len(found) == 1, f"record_receiver.py {name} 정의 {len(found)}건 — 정확히 1건이어야 한다"
+    labels = ast.literal_eval(assigns["LABELS"][0])
+    call = assigns["UNIT_RE"][0]
+    assert (isinstance(call, ast.Call) and ast.unparse(call.func) == "re.compile" and call.args
+            and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)), \
+        f"record_receiver.py UNIT_RE 해석 불가: {ast.unparse(call)}"
+    return labels, call.args[0].value, funcs[0]
+
+
+def receiver_take_name(fn: ast.FunctionDef):
+    """take_name 의 반환 f-string 을 그대로 평가하는 함수 — 형식을 손으로 다시 쓰지 않는다."""
+    args = [a.arg for a in fn.args.args]
+    body = fn.body
+    assert (len(args) == 3 and len(body) == 1 and isinstance(body[0], ast.Return)
+            and isinstance(body[0].value, ast.JoinedStr)), \
+        f"record_receiver.py take_name 구조 해석 불가: {ast.unparse(fn)}"
+    code = compile(ast.Expression(body[0].value), str(RECEIVER), "eval")
+    return lambda label, unit, take: eval(code, {"__builtins__": {}}, dict(zip(args, (label, unit, take))))
+
+
+class ReceiverNameContractTest(unittest.TestCase):
+    """녹음 수신기 파일 이름 규칙 ↔ ML 규칙(slice_direct.NAME_RE · slice_boardbg.UNIT_RE · source_key) 대조.
+
+    한쪽만 바뀌면 FAIL. ML 쪽은 모듈 속성을 실행 시점에 읽는다. 근거 = decisions.md 5.3 · 33.12 · 33.16(e)(g).
+    """
+
+    UNITS = ("a", "A", "B2", "7", "1234567", "aB3")   # 소문자 · 대문자 · 숫자만 · 섞임 · 7자리 숫자
+    TAKES = (1, 9, 10, 99, 100)
+    PIECE_MS = (0, 1000, 2120)                         # post 5.12초 안 3초 조각 시작점
+
+    def setUp(self) -> None:
+        self.labels, self.unit_pat, fn = receiver_name_rules()
+        self.take_name = receiver_take_name(fn)
+
+    def test_unit_re_matches_boardbg_copy(self) -> None:
+        self.assertEqual(self.unit_pat, sb.UNIT_RE.pattern,
+                         "수신기 UNIT_RE ≠ slice_boardbg.UNIT_RE — server/tools/record_receiver.py 와 같이 고친다")
+
+    def test_labels_are_ml_classes(self) -> None:
+        self.assertLessEqual(set(self.labels), set(config.CLASSES),
+                             f"수신기 LABELS {self.labels} ⊄ ml CLASSES {config.CLASSES}")
+
+    def test_receiver_names_parse_back_in_ml(self) -> None:
+        unit_re = re.compile(self.unit_pat)
+        for label in self.labels:
+            for unit in self.UNITS:
+                self.assertTrue(unit_re.match(unit), f"수신기 UNIT_RE 가 유닛 {unit!r} 을 거부 — 이 표를 다시 본다")
+                for take in self.TAKES:
+                    name = self.take_name(label, unit, take)
+                    with self.subTest(name=name):
+                        self.assertTrue(name.endswith(".wav"), f"수신기 이름 {name} 이 .wav 가 아니다")
+                        stem = name[:-len(".wav")]
+                        m = sd.NAME_RE.match(stem)
+                        self.assertIsNotNone(m, f"slice_direct.NAME_RE 가 수신기 이름 {stem} 을 못 읽는다")
+                        self.assertEqual((m.group(1), m.group(2), int(m.group(3))), (label, unit, take),
+                                         f"slice_direct.NAME_RE 가 {stem} 을 다르게 읽는다")
+                        key = f"direct_{label}_{unit}"
+                        for s in (stem, *(f"{stem}_{ms:07d}" for ms in self.PIECE_MS)):
+                            self.assertEqual(config.source_key(s), key, f"source_key({s}) ≠ {key}")
+
+    def test_underscore_unit_is_rejected_because_name_re_misreads_it(self) -> None:
+        self.assertIsNone(re.match(self.unit_pat, "a_1"), "수신기 UNIT_RE 가 밑줄 유닛을 허용한다")
+        m = sd.NAME_RE.match(self.take_name("knock", "a_1", 1)[:-len(".wav")])
+        self.assertTrue(m is None or (m.group(1), m.group(2)) != ("knock", "a_1"))   # 라벨이 knock_a 로 읽힌다
 
 
 if __name__ == "__main__":
