@@ -32,7 +32,9 @@
   3 터널(live)         cloudflared quick tunnel → 출력에서 주소 추출
   4 서버               venv_real/bin/flask run → /api/v1/notifications 무인증 401 = 준비
   5 실모델 확인        서버 PID 의 RSS · tensorflow 라이브러리 매핑 수(mock 방지)
-  6 serving_level      기동 로그의 serving_level: 줄을 그대로 표시(peak rule=peak_plain_v1 기대)
+  6 serving_level      기동 로그의 serving_level: 줄을 그대로 표시. 기대 = peak + --model-path 의 run 폴더
+                      train_config.json peak_rule(서버 resolve_rule 과 같은 판정 — 없음 = 옛 모델 plain,
+                      모르는 값 · 깨진 파일 = 기대값 계산 불가 ⚠️)
   7 터널 관통(live)    https://<터널>/api/v1/notifications → 401
   8 상태(읽기 전용)    /api/v1/stats system_health · /api/v1/registration (DASHBOARD_TOKEN 은 메모리로만)
   9 대시보드(선택)     --dashboard 면 dashboard/ 에서 npm run dev → Local: 주소
@@ -103,7 +105,11 @@ ENV_MODEL_PATH = "DDINGDONG_MODEL_PATH"                              # config.py
 TOKEN_KEYS = ("DEVICE_TOKEN", "DASHBOARD_TOKEN")                     # config.py · auth.py
 CAPTURE_ROUTE = "/captures"                                          # captures.py 라우트 · config.py 기본값
 SERVING_LEVEL_MARK = "serving_level: /detect 추론 입력 = "          # app/__init__.py 기동 WARNING
-SERVING_LEVEL_EXPECTED = "peak rule=peak_plain_v1"                   # J = 4클래스 peak · 규칙 plain
+SERVING_LEVEL_MODE = "peak"                                          # serving_level.LEVEL_PEAK = 4클래스 모델 계약
+TRAIN_CONFIG_NAME = "train_config.json"                              # serving_level.resolve_rule 위치 · 키 · 규칙 이름
+RULE_KEY = "peak_rule"
+RULE_PLAIN = "peak_plain_v1"
+RULE_CLAMPMASK32 = "peak_clampmask32_v1"
 HEALTH_KEYS = ("device_status", "kakao_token_status", "kakao_token_expires_in_minutes", "clova_api_status")  # routes.py
 KAKAO_ROW_ABSENT = ("expired", 0)    # routes._kakao_token_health: 행 부재 → ("expired", 0)
 CLOVA_MOCK = "degraded"              # routes system_health: stt.is_real_mode() False
@@ -251,6 +257,30 @@ def server_line_shown(line):
     """서버 로그 한 줄을 화면에 보일까. 대시보드 폴링 GET 은 숨긴다(전체는 파일에)."""
     s = strip_ansi(line)
     return '"POST /api/v1/' in s or "Traceback" in s or re.search(r"\b(WARNING|ERROR|CRITICAL)\b", s) is not None
+
+
+def expected_rule(model_path):
+    """서버 serving_level.resolve_rule 과 같은 위치 · 같은 분기 → (기대 규칙 | None, 출처 · 사유).
+    None = 기대값 계산 불가(서버도 그 값이면 기동 실패한다) — 모르는 값을 plain 으로 치지 않는다."""
+    path = Path(model_path).parent / TRAIN_CONFIG_NAME
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        if RULE_KEY not in cfg:
+            return RULE_PLAIN, f"{TRAIN_CONFIG_NAME} {'에 ' + RULE_KEY + ' ' if path.is_file() else ''}없음 → 옛 모델"
+        rule = cfg[RULE_KEY]
+    except (OSError, ValueError, TypeError) as exc:
+        return None, f"{TRAIN_CONFIG_NAME} 판독 불가({type(exc).__name__}) — 서버도 기동 실패"
+    if isinstance(rule, str) and rule in (RULE_PLAIN, RULE_CLAMPMASK32):
+        return rule, TRAIN_CONFIG_NAME
+    return None, f"{TRAIN_CONFIG_NAME} {RULE_KEY}={rule!r} = 서버가 모르는 규칙 — 서버도 기동 실패"
+
+
+def judge_serving_level(sl_val, rule, source):
+    """6번 행. 기대 = peak 모드(4클래스 모델 계약) + 모델 run 폴더 규칙. 표시만 — 종료하지 않는다."""
+    if rule is None:
+        return ("⚠️", "serving_level", f"{sl_val} — 기대값 계산 불가: {source}")
+    want = f"{SERVING_LEVEL_MODE} rule={rule}"
+    return ("✅" if sl_val.startswith(want + " ") else "⚠️", "serving_level", f"{sl_val} — 기대 {want} ({source})")
 
 
 def judge_health(mode, health, reg):
@@ -478,7 +508,7 @@ def boot_and_watch(args, model_path, st):
     log_text = strip_ansi(s.log_path.read_text(encoding="utf-8", errors="replace"))
     sl = [ln for ln in log_text.splitlines() if SERVING_LEVEL_MARK in ln]
     sl_val = sl[-1].split(SERVING_LEVEL_MARK, 1)[1] if sl else "(줄 없음)"
-    rows.append(("✅" if sl_val.startswith(SERVING_LEVEL_EXPECTED + " ") else "⚠️", "serving_level", sl_val))
+    rows.append(judge_serving_level(sl_val, *expected_rule(model_path)))
 
     # 7 터널 관통
     if live:
@@ -579,6 +609,13 @@ def constant_checks():
     ok &= _check("image_store base 결합", has("server/app/image_store.py", '.rstrip("/")')
                  and has("server/app/image_store.py", 'f"{base}/{opaque_id}"'), "rstrip + /id")
     ok &= _check("__init__ serving_level 문구", has("server/app/__init__.py", f'"{SERVING_LEVEL_MARK}%s rule=%s'), "")
+    sl = "server/app/serving_level.py"
+    for line in (f'LEVEL_PEAK = "{SERVING_LEVEL_MODE}"', f'TRAIN_CONFIG_NAME = "{TRAIN_CONFIG_NAME}"',
+                 f'RULE_KEY = "{RULE_KEY}"', f'RULE_PLAIN = "{RULE_PLAIN}"', f'RULE_CLAMPMASK32 = "{RULE_CLAMPMASK32}"',
+                 "RULES = {RULE_PLAIN: peak_normalize, RULE_CLAMPMASK32: peak_normalize_clampmask}",
+                 "Path(model_path).parent / TRAIN_CONFIG_NAME",
+                 "if RULE_KEY not in cfg:\n        return RULE_PLAIN, True"):
+        ok &= _check(f"serving_level {line.split(chr(10))[0][:28]}", has(sl, line), "")
     for k in HEALTH_KEYS:
         ok &= _check(f"routes system_health {k}", has("server/app/routes.py", f'"{k}":'), "")
     ok &= _check("routes 행 부재 = expired · 0", has("server/app/routes.py", 'return "expired", 0'), "")
@@ -707,6 +744,26 @@ def _body_checks(tmp, secret):
     ok &= _check("dry 토큰 행 있음 = 실패", not judge_health("dry", dict(h, kakao_token_status="valid", kakao_token_expires_in_minutes=300), reg)[1], "")
     ok &= _check("dry Clova ok = 실패", not judge_health("dry", dict(h, clova_api_status="ok"), reg)[1], "")
     ok &= _check("live 만료 = ⚠️(멈추지 않음)", judge_health("live", h, reg)[1], "")
+
+    print("\n[serving_level 기대값]")
+    run_cases = (("파일 없음", None, RULE_PLAIN), ("키 없음", {"x": 1}, RULE_PLAIN),
+                 ("plain", {RULE_KEY: RULE_PLAIN}, RULE_PLAIN), ("clampmask32", {RULE_KEY: RULE_CLAMPMASK32}, RULE_CLAMPMASK32),
+                 ("null", {RULE_KEY: None}, None), ("빈 문자열", {RULE_KEY: ""}, None),
+                 ("모르는 이름", {RULE_KEY: "peak_mystery_v9"}, None), ("JSON 깨짐", "{broken", None))
+    for i, (name, cfg, want) in enumerate(run_cases):
+        rd = tmp / f"rule{i}"
+        (rd / "inference_savedmodel").mkdir(parents=True)
+        if cfg is not None:
+            (rd / TRAIN_CONFIG_NAME).write_text(cfg if isinstance(cfg, str) else json.dumps(cfg), encoding="utf-8")
+        got, src = expected_rule(rd / "inference_savedmodel")
+        ok &= _check(f"규칙 {name}", got == want, f"{got} · {src}")
+    cm = (RULE_CLAMPMASK32, TRAIN_CONFIG_NAME)
+    for name, line, want in (("기대 cm32 · 서버 cm32 = ✅", f"peak rule={RULE_CLAMPMASK32} (classes=x)", "✅"),
+                             ("기대 cm32 · 서버 plain = ⚠️", f"peak rule={RULE_PLAIN} (classes=x)", "⚠️"),
+                             ("서버 raw = ⚠️(모드 고정)", "raw rule=None (classes=x)", "⚠️")):
+        ok &= _check(name, judge_serving_level(line, *cm)[0] == want, "")
+    ok &= _check("기대 plain · 서버 plain = ✅", judge_serving_level(f"peak rule={RULE_PLAIN} (c)", RULE_PLAIN, "x")[0] == "✅", "")
+    ok &= _check("계산 불가 = ⚠️", judge_serving_level(f"peak rule={RULE_PLAIN} (c)", None, "x")[0] == "⚠️", "")
 
     print("\n[요약 파일]")
     summary = tmp / "summary.txt"
