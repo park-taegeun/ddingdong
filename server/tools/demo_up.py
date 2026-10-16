@@ -51,7 +51,7 @@
 
 ⚠️ 실행 폴더(<log-dir>/run-YYYYmmdd-HHMMSS/) = 공유 금지 — 터널 로그에 터널 주소, dry 캡처에 방문자
 사진이 남는다. 그래서 --log-dir 는 repo 밖만 허용한다.
-⚠️ 대시보드 dev 프록시는 localhost:5000 고정(dashboard/vite.config.ts) — --port 가 5000 이 아니면 대시보드가
+⚠️ 대시보드 dev 프록시(/api · /captures)는 localhost:5000 고정(dashboard/vite.config.ts) — --port 가 5000 이 아니면 대시보드가
 서버에 못 붙는다(요약에 ⚠️).
 
 --------------------------------------------------------------------------------
@@ -590,6 +590,7 @@ def constant_checks():
                  'return bool(current_app.config.get("NCP_CLIENT_ID")) and bool('), "")
     ok &= _check("auth Bearer 접두", has("server/app/auth.py", 'prefix = "Bearer "'), "")
     ok &= _check("vite 프록시 대상", has("dashboard/vite.config.ts", f'target: "{VITE_PROXY_TARGET}"'), "")
+    ok &= _check("vite 사진 프록시 키", has("dashboard/vite.config.ts", f'"{CAPTURE_ROUTE}": {{'), CAPTURE_ROUTE)
     dm = sorted((SERVER_DIR / "venv_real" / "lib").glob("python*/site-packages/dotenv/main.py"))
     dtext = dm[0].read_text(encoding="utf-8") if dm else ""
     ok &= _check("venv_real dotenv override 기본 False", "override: bool = False" in dtext
