@@ -41,7 +41,8 @@ FIXED_DURATION_SEC: float | None = None  # None = 원본 길이 유지
 #   peak_plain_v1       = audio_io.peak_normalize(창 전체 최대 |x|). #10 부터 이 PR 전까지의 유일한 규칙.
 #   peak_clampmask32_v1 = audio_io.peak_normalize_clampmask(결정 A — 클램프 ±CLAMP_GUARD_SAMPLES 제외).
 #   ★ 3차 재학습 후보 초안의 기본값 = peak_clampmask32_v1. onset 마스크(slice_direct ·
-#     slice_boardbg 의 mask_glitch_clamps = 고립 1샘플만, 33.21(d))와는 별개 규칙이다.
+#     slice_boardbg 의 mask_glitch_clamps = 길이 ≤ ml/curation/slice_direct.GLITCH_MAX_RUN 클램프 런만,
+#     33.21(d))와는 별개 규칙이다.
 PEAK_RULE_PLAIN = "peak_plain_v1"
 PEAK_RULE_CLAMPMASK32 = "peak_clampmask32_v1"
 PEAK_RULE: str = PEAK_RULE_CLAMPMASK32

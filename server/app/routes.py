@@ -366,9 +366,10 @@ def enrich():
     #   세션에 있으면 그것까지 함께 커밋된다. /detect 의 발송→기록 순서와 동형이며
     #   kakao._assert_commit_is_safe() 가 실행 시점에 강제한다(위반 시 RuntimeError).
     # ★ 동기 발송(§2-F): 2차 예산 15초에 대해 정상 p95 ≈1초(7.3 × 2건, 6.5%), 최악
-    #   ≈7.5초(토큰 1 + 사진 2 + 자막 2 회 × 타임아웃 1.5s). ESP32 측 /enrich 호출부는
-    #   아직 없고(firmware grep 0건), 기존 하네스 상한 HTTP_TIMEOUT_MS=10000(main.cpp)
-    #   보다 최악값이 작다. ⚠️ 펌웨어 2차 클라이언트를 만들 때 이 최악값을 덮는지 재확인.
+    #   ≈7.5초(토큰 1 + 사진 2 + 자막 2 회 × 타임아웃 1.5s). ESP32 측 /enrich 호출부 =
+    #   firmware/src/enrich_uplink_main.cpp sendEnrich, 보드 2차 타임아웃 =
+    #   firmware/include/uplink_common.h UPLINK_ENRICH_HTTP_TIMEOUT_MS(확정, 7.7(l)).
+    #   STT 를 더한 현재 최악 예산 = constants.py STT_HTTP_TIMEOUT_SECONDS 역산 주석.
     send = kakao.send_secondary(
         notif.predicted_class, image_url, caption, notif.detected_at
     )

@@ -13,7 +13,7 @@
   - 사진은 dashboard/public/static/captures/*.svg (vite public 루트 서빙,
     프록시·서버 정적 라우트 0줄 변경). 직접 생성한 더미라 저작권·초상권 무관.
   - confidence 발송건은 전부 ≥ 0.7 (신뢰도 임계값 SSoT, 카테고리 6.1 계열),
-    미발송건만 0.52. 필드를 명시 세팅하므로 /detect 임계값 로직(constants 0.6)은
+    미발송건만 0.52. 필드를 명시 세팅하므로 /detect 임계값 로직(constants.CONFIDENCE_THRESHOLD, 현재 0.7)은
     타지 않는다 → constants 정정 PR 과 독립적으로 동작.
 
 실행:
