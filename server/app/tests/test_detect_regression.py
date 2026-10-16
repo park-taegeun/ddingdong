@@ -2853,6 +2853,183 @@ class DetectRegressionTest(_NoNetworkTestCase):
                 else:
                     self.assertEqual(by_raw["skip_reason"], by_rounded["skip_reason"])
 
+    # ── /detect 응답 크기 예산(보드 응답 버퍼) ─────────────────────────────
+    # 보드는 /detect 응답을 strlcpy 로 앞 UPLINK_RESP_BUF_BYTES − 1(NUL) 바이트만 보관하고
+    # 그 안에서 "enrich_status": 를 strstr 로 찾는다(uplink_common.cpp · enrich_wire.h
+    # enrichPeekJson). 못 찾으면 parsefail = 2차(사진 · 자막) 미발송. 근거 = decisions.md
+    # 33.16(i)(최악 크기 기록) · 6.7(2차 게이트). 펌웨어 값은 파일 이름을 지정해 글자로 읽는다.
+    _FIRMWARE_DIR = Path(__file__).resolve().parents[3] / "firmware"
+    _UPLINK_HEADER = _FIRMWARE_DIR / "include" / "uplink_common.h"
+    _ENRICH_MAIN = _FIRMWARE_DIR / "src" / "enrich_uplink_main.cpp"
+
+    @staticmethod
+    def _serialize_like_jsonify(app, obj) -> bytes:
+        """jsonify 와 같은 provider 경로(app.json.response) — 키 정렬 · compact · 끝 줄바꿈까지 같다."""
+        return app.json.response(obj).get_data()
+
+    def _one_definition(self, text, pattern, name):
+        found = re.findall(pattern, text, re.M | re.S)
+        self.assertEqual(len(found), 1, f"{name} 정의 {len(found)}건 — 정확히 1건이어야 한다")
+        return found[0]
+
+    def _worst_detect_body(self):
+        """보드 값 영역의 보수 최악 /detect 응답 → (바이트, 예산, 필드별 직렬화 길이).
+
+        도달 가능 여부를 따지지 않고 필드마다 최장값을 한 응답에 합친다(PR #100 「보수 상한」
+        방식) — 이게 예산 안이면 보드가 실제로 만들 수 있는 어떤 응답도 예산 안이다.
+
+        | 필드                     | 값                                         | 출처                                    |
+        | client_request_id        | makeClientRequestId 형식 중 최장(순번 uint32 최댓값) | enrich_uplink_main.cpp 글자            |
+        | device_id                | UPLINK_DEVICE_ID                           | uplink_common.h 글자                    |
+        | request_id · detected_at | 서버 실제 생성값(고정 길이)                  | utils.new_request_id · to_kst_iso       |
+        | predicted_class          | PREDICTED_CLASSES 최장                     | constants                               |
+        | confidence · all_scores  | 2자리 반올림 float 중 직렬화 최장(합 1 무시) | scores_to_prediction 과 같은 round(·, 2) |
+        | tof_check.reason         | 보드 값 영역 극값 조합의 실제 reason 최장     | parse_tof_meta → _tof_decision          |
+        | tof applied · passed     | false(true · null 보다 김)                  | 보수                                    |
+        | primary_sent · _at       | false + 시각 문자열(도달 불가 조합)           | 보수                                    |
+        | enrich_status            | 정책 출력 값 영역 최장                       | _apply_prediction_policy 실행           |
+        | skip_reason              | /stats skip_reasons 키 최장                 | routes._build_stats 실행                |
+        | secondary_* · media · stt | /detect 시점 값(null)                      | routes.detect 생성자와 같음              |
+        """
+        from .. import routes
+        from ..constants import (
+            PREDICTED_CLASSES,
+            TOF_CENTER_MM_FIELD,
+            TOF_MOTION_AGGREGATE_TOTAL,
+            TOF_MOTION_NDET_FIELD,
+            TOF_NEAR_COUNT_FIELD,
+            TOF_PRESENCE_FIELD,
+            TOF_ZONE_TOTAL,
+        )
+        from ..models import Notification
+        from ..tof_meta import parse_tof_meta
+        from ..utils import _apply_prediction_policy, _tof_decision, new_request_id, utc_now
+
+        header = self._UPLINK_HEADER.read_text(encoding="utf-8")
+        budget = int(self._one_definition(
+            header, r"^\s*constexpr\s+\w+\s+UPLINK_RESP_BUF_BYTES\s*=\s*(\d+)\s*;", "UPLINK_RESP_BUF_BYTES"
+        )) - 1  # strlcpy 가 NUL 1 B 를 남긴다
+        device_id = self._one_definition(
+            header, r'^\s*constexpr\s+const\s+char\*\s+UPLINK_DEVICE_ID\s*=\s*"([^"]*)"\s*;', "UPLINK_DEVICE_ID"
+        )
+
+        main = self._ENRICH_MAIN.read_text(encoding="utf-8")
+        make_id = self._one_definition(
+            main, r"^static void makeClientRequestId\(.*?^\}", "makeClientRequestId"
+        )
+        id_formats = re.findall(r'snprintf\(out,\s*cap,\s*"([^"]+)"', make_id)
+        self.assertTrue(id_formats, "makeClientRequestId 안 snprintf 형식 0건")
+        nonce = self._one_definition(
+            main, r'snprintf\(g_idNonce,\s*sizeof\(g_idNonce\),\s*"([^"]+)"', "g_idNonce 형식"
+        ) % 0xFFFFFFFF  # esp_random() = uint32
+        # 순번 = (unsigned)(++g_idSeq) — ESP32 unsigned 는 32bit
+        client_request_id = max((f % (nonce, 0xFFFFFFFF) for f in id_formats), key=len)
+
+        # 보드 값 영역: presence true/false 항상 · near 0~64 · center uint16(무효면 파트 생략) ·
+        # ndet uint8(서버 상한 16 초과 = invalid). 길이는 자릿수만 보므로 각 축의 극값이면 충분하다.
+        forms = [{}]  # 부재(ToF 없는 보드 env)
+        for presence in ("true", "false"):
+            for center in (None, str(0xFFFF)):
+                for ndet in (str(TOF_MOTION_AGGREGATE_TOTAL), str(0xFF)):
+                    form = {
+                        TOF_PRESENCE_FIELD: presence,
+                        TOF_NEAR_COUNT_FIELD: str(TOF_ZONE_TOTAL),
+                        TOF_MOTION_NDET_FIELD: ndet,
+                    }
+                    if center is not None:
+                        form[TOF_CENTER_MM_FIELD] = center
+                    forms.append(form)
+        metas = [parse_tof_meta(f) for f in forms]
+        reason = max(
+            (_tof_decision(c, m)["reason"] for c in PREDICTED_CLASSES for m in metas), key=len
+        )
+        # /detect 시점 enrich_status 는 정책 출력뿐이다(등록 차단 · 억제도 같은 "skipped").
+        enrich_status = max(
+            sorted(
+                _apply_prediction_policy(c, conf, {}, m)["enrich_status"]
+                for c in PREDICTED_CLASSES
+                for conf in (0.0, 1.0)
+                for m in metas
+            ),
+            key=len,
+        )
+        now = datetime.now()
+        with self.app.app_context():  # _build_stats 가 토큰 · heartbeat 행을 읽기만 한다
+            skip_reason = max(routes._build_stats([], now, now)["skip_reasons"], key=len)
+        score = max(
+            (round(i / 1000, 2) for i in range(1001)), key=lambda v: len(self.app.json.dumps(v))
+        )
+
+        detected = utc_now()
+        body = Notification(
+            client_request_id=client_request_id,
+            request_id=new_request_id(),
+            device_id=device_id,
+            detected_at=detected,
+            predicted_class=max(PREDICTED_CLASSES, key=len),
+            confidence=score,
+            all_scores={c: score for c in PREDICTED_CLASSES},
+            tof_applied=False,
+            tof_passed=False,
+            tof_reason=reason,
+            primary_sent=False,
+            primary_sent_at=detected,
+            enrich_status=enrich_status,
+            secondary_sent=False,
+            secondary_sent_at=None,
+            skip_reason=skip_reason,
+            image_url=None,
+            image_thumbnail_url=None,
+            audio_url=None,
+            stt=None,
+        ).to_dict()
+        widths = sorted(
+            ((len(self.app.json.dumps(v)), k) for k, v in body.items()), reverse=True
+        )
+        return self._serialize_like_jsonify(self.app, body), budget, widths
+
+    def test_detect_body_conservative_worst_fits_board_buffer(self) -> None:
+        body, budget, widths = self._worst_detect_body()
+        top3 = ", ".join(f"{k}={n} B" for n, k in widths[:3])
+        self.assertLessEqual(
+            len(body),
+            budget,
+            f"측정 {len(body)} B · 예산 {budget} B · 긴 필드 상위 3 = {top3} — 이 값은 도달 불가 "
+            "조합을 포함한 보수 상한이다. 넘으면 도달 가능 조합으로 다시 평가하고, 응답 필드를 "
+            "줄이거나 UPLINK_RESP_BUF_BYTES 를 늘린다(decisions.md 33.16(i))",
+        )
+
+    def test_detect_body_enrich_status_ends_inside_board_buffer(self) -> None:
+        body, budget, _ = self._worst_detect_body()
+        found = list(re.finditer(rb'"enrich_status"\s*:\s*"[^"]*"', body))
+        self.assertEqual(len(found), 1, body)
+        self.assertLessEqual(
+            found[0].end(),
+            budget,
+            f"enrich_status 값 끝 {found[0].end()} B > 예산 {budget} B — 보드 게이트가 parsefail(2차 미발송)",
+        )
+
+    def test_budget_serialization_matches_real_detect_response(self) -> None:
+        """위 두 단언의 직렬화가 실제 /detect 응답과 같은 경로임을 증명한다."""
+        from ..constants import (
+            TOF_CENTER_MM_FIELD,
+            TOF_MOTION_NDET_FIELD,
+            TOF_NEAR_COUNT_FIELD,
+            TOF_PRESENCE_FIELD,
+        )
+
+        tof = {
+            TOF_PRESENCE_FIELD: "true",
+            TOF_NEAR_COUNT_FIELD: "13",
+            TOF_CENTER_MM_FIELD: "1015",
+            TOF_MOTION_NDET_FIELD: "1",
+        }
+        r = self._detect("budget-method-1", "budget-device", tof=tof)
+        self.assertEqual(r.status_code, 201, r.data)
+        with self.app.app_context():
+            expected = self._serialize_like_jsonify(self.app, self._row("budget-method-1").to_dict())
+        self.assertEqual(r.data, expected)
+
 
 class TofStructureConstantsMatchFirmwareTest(_NoNetworkTestCase):
     """ToF 구조 상한(zone 64 / aggregate 16)이 펌웨어 헤더 정의와 같다 — 한쪽만 바뀌면 FAIL.
