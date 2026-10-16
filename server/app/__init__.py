@@ -64,6 +64,23 @@ def create_app(config_class=Config):
         app.config.get("SERVING_LEVEL"),
     )
 
+    # 라벨 순서 가드(2026-10-16) — run 폴더 labels.json ↔ 서빙 라벨 순서, 모델 로드 앞에서. 불일치 = 기동 실패.
+    # 비교 대상 = model_serving.PREDICTED_CLASSES(scores_to_prediction 이 실제로 쓰는 import 시점 바인딩).
+    # mock(MODEL_PATH 미설정)은 검사 · 로그 없음.
+    from . import model_labels, model_serving
+
+    if app.config.get("MODEL_PATH"):
+        classes, legacy = model_labels.resolve_labels(app.config["MODEL_PATH"], model_serving.PREDICTED_CLASSES)
+        if legacy:
+            app.logger.warning(
+                "model_labels: 모델 run 폴더에 %s 없음 → 라벨 순서 검사 생략(이 파일 이전 학습)",
+                model_labels.LABELS_NAME,
+            )
+        else:
+            app.logger.warning(
+                "model_labels: run 폴더 %s = 서빙 라벨 순서 일치 (%s)", model_labels.LABELS_NAME, ", ".join(classes)
+            )
+
     # 실추론 모델 싱글턴 로드 + warmup (카테고리 6.2, env 게이트 DDINGDONG_MODEL_PATH)
     from .model_serving import init_app as init_model_serving
 
