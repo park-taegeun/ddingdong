@@ -60,14 +60,25 @@ static uint8_t* g_rec   = nullptr;  // 163,840B 2차 녹음(별도 버퍼 — �
 static uint8_t* g_ebody = nullptr;  // 676,864B 2차 multipart
 
 // ── 태스크 ↔ loop 핸드셰이크 ───────────────────────────────────────────────
-// ★ 락 없음의 근거는 mic_uplink_main.cpp 와 같다 — 각 플래그의 set 주체가 유일하고 상태가
-//   한 방향으로만 돈다. 2차 녹음 플래그도 같은 규율을 따른다:
+// ★ 락 없음의 근거는 mic_uplink_main.cpp 와 같다 — true 로 올리는(set) 주체가 플래그마다 하나다
+//   (recReq = loop, recReady = task). 2차 녹음 플래그의 정상 흐름:
 //     IDLE ──loop: filled=0 후 recReq=true──▶ RECORDING
 //     RECORDING ──task: 버퍼가 다 차면 recReq=false, recReady=true──▶ DONE
-//     DONE ──loop: 소비 후 recReady=false──▶ IDLE
-//   g_recFilled 는 RECORDING 구간에서만 task 가 쓴다. loop 가 쓰는 유일한 지점은 recReq 를
-//   올리기 **직전**(= task 가 손대지 않는 구간)이다.
-//   ⚠️ 여기에 "녹음 중 재트리거"를 허용하면 이 논증이 깨진다. loop 가드가 그것을 막는다.
+//     DONE ──loop: 소비 후 discardRecording() = recReq·recReady=false──▶ IDLE
+//   예외(중단 경로): runEvent 의 게이트 skip · 실패 경로는 RECORDING 중에도 discardRecording() 으로
+//   g_recReq · g_recReady 를 false 로 쓴다 → 두 플래그를 false 로 쓰는 주체는 loop · task 둘이다.
+//   g_recFilled 는 RECORDING 구간에서만 task 가 쓴다. loop 가 g_recFilled 를 쓰는 유일한 지점은
+//   recReq 를 올리기 **직전**(= task 가 손대지 않는 구간)이다.
+//   ⚠️ 여기에 "녹음 중 재트리거"를 허용하면 이 논증이 깨진다. loop 가드(busy)가 그것을 막는다.
+//   ⚠️ 수용된 위험(2026-10-16 11:26 KST 사용자 결정 — 코드 무변경): task 가 2차 녹음 적재 블록에서
+//   마지막 슬롯의 `if (g_recReq …)` 확인을 통과한 뒤(그 슬롯 memcpy · g_recFilled 갱신 · recReq=false ·
+//   __sync_synchronize 포함) recReady=true 를 쓰기 전까지 loop 의 discardRecording() 이 끼면(구간 길이 미측정)
+//   g_recReady 가 true 로 남는다. 그것을 내리는 곳은 runEvent 안 discardRecording() 뿐이고 runEvent 는
+//   loop 가 g_snapReady 를 볼 때만 돌며(새 이벤트 = snapReq → task → snapReady) 새 이벤트는 busy 로
+//   막힌다 → 리셋 전까지 's' · 자동 트리거가 「처리 중」
+//   으로 무시된다(리셋으로 복구). 관측 0.
+//   재판정 트리거 = 「처리 중(busy)」 무시가 리셋 전까지 계속되는 관측 → discard 를 task 쪽으로 넘기는
+//   수정 검토(보드 ④런타임 필요).
 static volatile bool g_snapReq   = false;
 static volatile bool g_snapReady = false;
 static volatile bool g_ringFull  = false;
@@ -84,7 +95,7 @@ static volatile uint32_t g_ringGaps      = 0;
 #ifdef ENRICH_AUTO_TRIGGER
 // ── 자동 트리거 핸드셰이크 (enrich_autotrig 전용) ───────────────────────────
 // ★ 마이크 태스크는 g_recReq · g_snapReq 를 올리지 않는다(I3). 「요청」만 올리고 수락은 loop 가 한다
-//   → 위 2차 녹음 논증(set 주체 유일)이 그대로 산다. 새 플래그도 같은 규율:
+//   → 위 2차 녹음 논증(true 로 올리는 주체가 플래그마다 하나 · 수용된 위험 포함)이 그대로 산다. 새 플래그도 같은 규율:
 //     IDLE ──task: 발화 && !trigReq → trigK·trigV1 기록, sync, trigReq=true──▶ PENDING
 //     PENDING ──task: 또 발화 → trigDrops++ (trigK 덮어쓰기 없음)──▶ PENDING
 //     PENDING ──loop: trigK 읽고 수락(snapAt, sync, recReq·snapReq) 또는 무시(사유 계수) 후 trigReq=false──▶ IDLE

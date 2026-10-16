@@ -58,23 +58,29 @@ script -a -F ~/ddingdong-측정결과/$(date +%F)/enrich_autotrig/autotrig_runti
 
 ---
 
-## 3. 서버 — runtime5 `run_server.sh` 재사용 범위 (실물 확인 2026-10-01)
+## 3. 서버 — `demo_up --mode dry` (카톡 0 · CSR 0, decisions.md 26.12)
 
-`~/ddingdong-측정결과/2026-10-01/runtime5/run_server.sh`와 `summarize.py`를 읽고 확인한 사실:
+조건(런)마다 demo_up을 새로 띄운다. 실행 폴더 이름은 시각(`run-YYYYmmdd-HHMMSS`)이라 조건을 담지 못하므로, 조건 · 모델 구분은 `--log-dir` 경로 끝 칸(`<순번>_<조건>_<모델>`)에 남긴다.
+```
+cd server
+venv/bin/python3 tools/demo_up.py --mode dry \
+    --model-path "$HOME/ddingdong_runs/<J run 폴더>/inference_savedmodel" \
+    --log-dir "$HOME/ddingdong-측정결과/$(date +%F)/enrich_autotrig/21_autosilence_J" --port 5000
+```
+- 끝낼 때 = 그 창에서 Ctrl+C 한 번 → `CLEAN` 확인. 그 창에 다른 명령을 붙이지 않는다(`server/tools/demo_up.py` 머리 주석 사용법).
+- `--log-dir`는 repo 밖만 허용되고, 그 안에 `run-*` 실행 폴더가 생긴다. 토큰은 셸에 같은 이름 변수가 있으면 그 값, 없으면 서버 설정 파일 값을 쓴다. 어느 쪽인지는 demo_up 요약 표의 토큰 행에 나온다. 보드가 401이면 그 행의 출처부터 확인한다. 셸에 토큰을 붙여 넣지 않는다.
 
 | 항목 | 실물 | 이 런북에서 |
 |---|---|---|
-| 런 이름 | `^[A-Za-z0-9_-]+$` · 규칙 `<순번>_<조건>_<모델>`(PROTOCOL.md) · 기존 폴더면 거부 | 그대로 따른다. 예: `21_autosilence_J` · `22_autoknock_J` · `23_autobellspi_J` · `24_autobellphone_J` · `25_manual_J` |
-| 조건 · 모델 해석 | summarize.py = `name.split("_")`에서 조건 = `[1]`, 모델 = `[-1]`(`J` / `3rd`), 머리 줄 모델과 다르면 거부 | 조건 칸에 `_`를 넣지 않는다(`autobellspi` 처럼 붙여 쓴다) |
-| 모델 | `J` 또는 `3rd` | **`J`**(오프라인 T · P 근거가 모델 J 기준) |
-| 자동 · 수동 구분 | summarize.py가 `client_request_id` 열을 낸다 | 자동 = `e2a-`, 수동 = `e2-` 접두로 가른다 |
-| 2차 자막 | run_server.sh가 카카오 · NCP 자격을 `env -u`로 제거 → 발송 0 · STT(CSR) 0 | **7절 자막 관찰은 이 서버로 할 수 없다** → `ENRICH_UPLINK_RUNBOOK.md` 1절 서버(실 STT · 실과금)를 쓴다 |
+| 런 이름 | `--log-dir` 끝 칸 `<순번>_<조건>_<모델>` | 예: `21_autosilence_J` · `22_autoknock_J` · `23_autobellspi_J` · `24_autobellphone_J` · `25_manual_J`. 조건 칸에 `_`를 넣지 않는다(`autobellspi`처럼 붙여 쓴다) |
+| 모델 | `--model-path` = J run 폴더의 `inference_savedmodel` | **`J`**(오프라인 T · P 근거가 모델 J 기준) |
+| 판정상 발송만 | dry가 카카오 4키 · NCP 2키를 서버 자식 환경에서 빈 값으로 덮는다 → 카톡 0 · STT(CSR) 0(mock) | 옛 runtime5 `run_server.sh`의 `env -u`와 같은 효과 |
+| 집계 | 실행 폴더의 `server.log` · `ddingdong.db` · `summary.txt`(demo_up 종료 때 써진다) | repo 밖 `~/ddingdong-측정결과/2026-10-12/booth_summarize/summarize_demo.py`(26.12) — 사용법 · 거부 조건은 그 파일 머리 주석 |
+| 자동 · 수동 구분 | DB `notifications.client_request_id` | 자동 = `e2a-`, 수동 = `e2-` 접두로 가른다 |
+| 2차 자막 | dry도 NCP를 비우므로 자막이 생성되지 않는다 | **7절 자막 관찰은 이 서버로 할 수 없다** → `ENRICH_UPLINK_RUNBOOK.md` 1절 서버(실 STT · 실과금)를 쓴다 |
 
-실행 형식(토큰은 셸 앞 변수로만, PROTOCOL.md 2절):
-```
-DEVICE_TOKEN=<TOKEN> DASHBOARD_TOKEN=<TOKEN> ./run_server.sh J 21_autosilence_J
-```
-런마다 서버를 새로 띄운다. 조건이 바뀌면 런 이름도 바꾼다.
+- ⚠️ 실행 폴더는 공유하지 않는다 — dry 캡처에 방문자 사진이 남는다(26.12).
+- 이력: 이 절은 처음에 repo 밖 runtime5 `run_server.sh` · `summarize.py`(2026-10-01)를 썼다. 그 서버는 코드 `a195702` 고정이라 등록 판정(PR #100) · heartbeat(PR #103) · 라벨 가드(PR #123)가 없어 현재 서버 측정이 아니다 → 2026-10-16 demo_up dry로 바꿨다.
 
 ---
 
@@ -141,7 +147,7 @@ DEVICE_TOKEN=<TOKEN> DASHBOARD_TOKEN=<TOKEN> ./run_server.sh J 21_autosilence_J
 
 **논증**: 자동 건의 2차 녹음은 loop가 수락한 직후의 슬롯부터 담긴다. 수락 시점은 판정 직후이므로 슬롯은 대략 k+2부터이고, 트리거 버퍼 k가 시작된 뒤 약 128ms다(pre 0 유지). 그래서 **초인종 · 노크 소리 자체가 녹음 앞부분을 차지**한다. 수동은 「소리가 끝난 뒤 `s`」 순서라 녹음이 말부터 시작했다. 같은 5.120초 안에 방문자 말이 담기는 시간은 자동이 더 짧을 수 있다.
 
-- 서버: run_server.sh는 NCP를 제거하므로 **자막이 생성되지 않는다**(3절). `ENRICH_UPLINK_RUNBOOK.md` 1절 서버(실 STT · 실과금 · 세션 상한 12)를 쓴다.
+- 서버: demo_up dry는 NCP를 비우므로 **자막이 생성되지 않는다**(3절). `ENRICH_UPLINK_RUNBOOK.md` 1절 서버(실 STT · 실과금 · 세션 상한 12)를 쓴다.
 - 방법: 벨(또는 노크) 직후 바로 한 문장을 말한다(예: 「택배 문 앞에 두고 갑니다」). 자동 5회, 수동 5회(소리 끝 → `s` → 말).
 - 기록: 회차마다 자막 원문(개인정보가 없는 문장만)과 「문장 앞부분이 잘렸는가 Y/N」.
 - **녹음 시작 시점 · 길이 변경은 이 PR 범위 밖이다**(별도 결정, 이 PR의 코드 변경 0).

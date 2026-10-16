@@ -69,12 +69,12 @@ def is_real_mode():
 
 
 def predict(waveform):
-    """(1, N) float32 waveform → (1, 3) float32 확률(softmax, sum≈1). real 모드에서만 호출."""
+    """(1, N) float32 waveform → (1, NUM_CLASSES) float32 확률(softmax, sum≈1). real 모드에서만 호출."""
     return _runner.predict(waveform)
 
 
 def scores_to_prediction(scores):
-    """(1, 3) 확률 → (predicted_class, confidence, all_scores). mock_prediction 출력과 동형 키.
+    """(1, NUM_CLASSES) 확률 → (predicted_class, confidence, all_scores). mock_prediction 출력과 동형 키.
 
     라벨 순서 = PREDICTED_CLASSES(app.constants) — inference.constants.CLASSES 와 동일 순서
     상속(카테고리 33.2).
