@@ -26,3 +26,12 @@ export const STALE_AFTER_MS = POLLING_INTERVAL_MS * 2
 // 재판정 = ① 부스 리허설에서 터널 복구 시간 · 깜빡임 관측 ② 사용자 불편 보고 ③ 사진 서빙 경로 변경.
 export const IMAGE_RETRY_INTERVAL_MS = 10_000
 export const IMAGE_RETRY_MAX = 6
+
+// 알림 화면 「이전 알림 더 보기」 — 잠정(2026-10-16 13:05 KST 결정).
+// 누를 때마다 알림 화면이 폴링으로 받는 개수를 단위만큼 늘린다(최대까지). 이어 붙이지 않고
+// 매 폴링이 서버 목록 그대로다. 두 값은 서버 server/app/constants.py 의 DEFAULT_PAGE_LIMIT ·
+// MAX_PAGE_LIMIT 를 그대로 따른다 — 서버가 최대로 자르므로 「최근 알림 N개까지」 문구가 사실이려면
+// 같아야 한다. 대조 가드 = server/app/tests/test_detect_regression.py DashboardPageLimitMatchesServerTest.
+// 재판정 = ① 서버 상한 변경 ② 최대 개수 폴링 응답 크기 부담 ③ 사용자 불편 보고.
+export const NOTIFICATIONS_PAGE_STEP = 20
+export const NOTIFICATIONS_PAGE_MAX = 100
