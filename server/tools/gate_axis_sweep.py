@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""게이트 축 전수 스윕 하네스 — held-out test 424건 재현(이력) · 현재 기준 J × 725건 (계측 계층, 제품 동작 불변).
+"""게이트 축 전수 스윕 하네스 — held-out test 424건 재현(이력) · 현재 기준 p15 × 703건 (계측 계층, 제품 동작 불변).
 
 **성격 = 방법론 자산**(8.4(f) SSR NC 하네스 · 6.3(o) `env:mic_noiseprobe` 계열).
 33.6(b)(d)가 일회성 스크립트로 측정하고 repo에 남기지 않은 축
@@ -21,9 +21,11 @@
 아니다.** 본 하네스는 두 기준을 **동시에** 산출하고 일치 여부를 스스로 단언한다. 불일치는
 실패가 아니라 **결과**이며 종료 코드로 구분된다(EXIT_GATE_DIVERGENCE).
 
-**기준값 현재**(2026-10-02 갱신, 33.28 결정 3): 서빙 J(`2026-09-29_2nd_4cls_p6`) × 데이터셋 3차 상태
-test 725건(4클래스, 정답 629). exit 0 조건 = 이 모델 · 이 split으로 돌려 전 칸이 상수 주석의 실측과
-같을 것. 위의 「424건」 서술은 신설 시점(3클래스) 이력이다.
+**기준값 현재**(2026-10-17 갱신, 서빙 J → p15 교체 — 사용자 결정 2026-10-17 20:58 KST): 서빙
+p15(`2026-10-13_4th_4cls_p15`) × 데이터셋 4차 상태 test 703건(4클래스, 정답 644). 재현 대조 통과 조건 =
+이 모델 · 이 split으로 돌려 전 칸이 상수 주석의 실측과 같을 것. 이 조합은 raw↔rounded 갈림이 1건
+(true `knock` · raw 0.6952 → blocked / rounded 0.70 → pass_ok)이라 종료 코드는 0이 아니라 2다(결과이지
+실패 아님). 이전 기준 J × 3차 상태 725건(정답 629)과 위의 「424건」 서술은 이력이다.
 
 --------------------------------------------------------------------------------
 ④런타임 절차서 (학부생 몫 — MCP 미수행)
@@ -42,11 +44,11 @@ test 725건(4클래스, 정답 629). exit 0 조건 = 이 모델 · 이 split으�
      DDINGDONG_DATA_ROOT="$HOME/ML 학습 데이터/ddingdong_dataset" \
      venv_real/bin/python3 tools/gate_axis_sweep.py --dry-run
 
-3) 전수 스윕(현재 725건 · 이력 424건, 수 초. `.env` 무변경 — **셸 앞 변수만** 쓴다. 33.6(c) 관용구):
+3) 전수 스윕(현재 703건 · 이력 725건 · 424건, 수 초. `.env` 무변경 — **셸 앞 변수만** 쓴다. 33.6(c) 관용구):
 
      DDINGDONG_DATA_ROOT="$HOME/ML 학습 데이터/ddingdong_dataset" \
-     DDINGDONG_MODEL_PATH="$HOME/ddingdong_runs/2026-09-29_2nd_4cls_p6/inference_savedmodel" \
-     DDINGDONG_MODEL_DIR="$HOME/ddingdong_runs/2026-09-29_2nd_4cls_p6" \
+     DDINGDONG_MODEL_PATH="$HOME/ddingdong_runs/2026-10-13_4th_4cls_p15/inference_savedmodel" \
+     DDINGDONG_MODEL_DIR="$HOME/ddingdong_runs/2026-10-13_4th_4cls_p15" \
      venv_real/bin/python3 tools/gate_axis_sweep.py
 
    옛 3클래스 경로(`<repo>/ml/models/yamnet`)는 #83 뒤 labels.json 순서 대조에서 exit 4로 끝난다.
@@ -107,27 +109,29 @@ AXIS_NOT_TARGET = "not_target"  # predicted == "other" → 1차·2차 skip, 신�
 AXES = (AXIS_OK, AXIS_NG, AXIS_BLOCKED, AXIS_NOT_TARGET)
 
 # ── 재현 대조 기준값 ────────────────────────────────────────────────────────
-# 출처 = 실측 2026-10-02 · main c0dc156 코드 · J(`2026-09-29_2nd_4cls_p6`) · 데이터셋 3차 상태
-#   (norm_rule peak_clampmask32_v1) · test 725 · repo 밖 원본 = ~/ddingdong-측정결과/2026-10-02/baseline_j/
+# 출처 = 실측 2026-10-17 · main 69bea7c · p15(`2026-10-13_4th_4cls_p15`) · 데이터셋 4차 상태
+#   (norm_rule peak_clampmask32_v1) · test 703 · repo 밖 원본 = ~/ddingdong-측정결과/2026-10-17/baseline_p15/
 #   · SSoT 등재 = 다음 Set 1 대기. 계수 단위 = **클립 수(파일 수)**, 게이트 축 = raw 열.
 # 이력: 이전 기준값 = 3클래스 424건(376 정답) — 33.6(b)(d), 사용자 결정 33.28 결정 3에 따라 1회 갱신.
+# 이력: 이전 기준값 = J(`2026-09-29_2nd_4cls_p6`) × 3차 상태 725건(629 정답) — 2026-10-02 실측(PR #99),
+#   서빙 J → p15 교체(사용자 결정 2026-10-17 20:58 KST)에 따라 1회 갱신.
 BASELINE_AXIS: dict[str, dict[str, int]] = {
-    "doorbell":   {"n": 58,  AXIS_OK: 39,  AXIS_NG: 1,  AXIS_BLOCKED: 8,  AXIS_NOT_TARGET: 10},
-    "knock":      {"n": 93,  AXIS_OK: 62,  AXIS_NG: 1,  AXIS_BLOCKED: 13, AXIS_NOT_TARGET: 17},
-    "fire_alarm": {"n": 178, AXIS_OK: 160, AXIS_NG: 2,  AXIS_BLOCKED: 7,  AXIS_NOT_TARGET: 9},
-    "other":      {"n": 396, AXIS_OK: 0,   AXIS_NG: 26, AXIS_BLOCKED: 21, AXIS_NOT_TARGET: 349},
+    "doorbell":   {"n": 24,  AXIS_OK: 24,  AXIS_NG: 0,  AXIS_BLOCKED: 0,  AXIS_NOT_TARGET: 0},
+    "knock":      {"n": 47,  AXIS_OK: 25,  AXIS_NG: 0,  AXIS_BLOCKED: 4,  AXIS_NOT_TARGET: 18},
+    "fire_alarm": {"n": 153, AXIS_OK: 151, AXIS_NG: 0,  AXIS_BLOCKED: 2,  AXIS_NOT_TARGET: 0},
+    "other":      {"n": 479, AXIS_OK: 0,   AXIS_NG: 24, AXIS_BLOCKED: 16, AXIS_NOT_TARGET: 439},
 }
-# 출처 = 위와 같은 실측(2026-10-02). `pass_NG` 30건의 (true, predicted) → 클립 수.
+# 출처 = 위와 같은 실측(2026-10-17). `pass_NG` 24건의 (true, predicted) → 클립 수.
 # 이력: 이전 기준값 = 33.6(d) 「`pass_NG` 27건의 오분류 대상 내역」(3클래스) — 33.28 결정 3에 따라 1회 갱신.
+# 이력: 이전 기준값 = J × 725건 `pass_NG` 30건(PR #99) — 서빙 J → p15 교체에 따라 1회 갱신.
 BASELINE_NG_CONFUSION: dict[tuple[str, str], int] = {
-    ("doorbell", "knock"): 1,      ("knock", "doorbell"): 1,
-    ("fire_alarm", "doorbell"): 2,
-    ("other", "doorbell"): 13,     ("other", "knock"): 9,      ("other", "fire_alarm"): 4,
+    ("other", "doorbell"): 7,      ("other", "knock"): 15,     ("other", "fire_alarm"): 2,
 }
-# 출처 = 위와 같은 실측(2026-10-02). 629/725, 게이트와 무관한 순수 예측 정확도다.
+# 출처 = 위와 같은 실측(2026-10-17). 644/703, 게이트와 무관한 순수 예측 정확도다.
 # 이력: 이전 기준값 = 33.6(b) 376/424(3클래스) — 33.28 결정 3에 따라 1회 갱신.
-BASELINE_CORRECT = 629
-BASELINE_TOTAL = 725
+# 이력: 이전 기준값 = J × 725건 629/725(PR #99) — 서빙 J → p15 교체에 따라 1회 갱신.
+BASELINE_CORRECT = 644
+BASELINE_TOTAL = 703
 
 # 실모델 확증 3축 ① RSS. 33.6(a) 475,920KB / 33.6(d) 461,280KB — **자릿수(6자리)만** 본다.
 # 기기·TF 빌드마다 다르므로 정확 일치를 요구하면 그 자체가 거짓 실패가 된다.
