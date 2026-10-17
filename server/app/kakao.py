@@ -244,7 +244,9 @@ def get_access_token():
 def _build_message(predicted_class):
     """클래스별 1차 알림 본문. 분할·축약 없이 상수 원문 그대로 돌려준다.
 
-    PREDICTED_CLASSES 는 닫힌 3종 enum(카테고리 4)이라 키 부재는 발송 실패가 아니라
+    여기 도달하는 클래스는 닫힌 3종(doorbell · knock · fire_alarm)이다 — PREDICTED_CLASSES
+    (카테고리 4)는 4종이지만 other 는 _apply_prediction_policy 가 not_target 으로 막아
+    send_primary_text 를 타지 않는다(33.13(a)). 그래서 키 부재는 발송 실패가 아니라
     코딩 오류다 → get 폴백으로 임의 문구를 지어내지 않고 KeyError 로 시끄럽게 터뜨린다.
     잘못된 본문을 화재 상황에 보내는 것보다 낫다.
     """

@@ -222,8 +222,11 @@ KAKAO_FEED_BUTTON_TITLE = "사진 보기"
 # fire_alarm 키는 현행 정책상 도달 불가다(카테고리 7 "화재경보 = 1차 알림만, 2차 사진
 # + 자막 미발송" → _apply_prediction_policy 가 enrich_status="skipped" 로 막고 /enrich
 # 가 409 를 낸다). 그럼에도 키를 비우지 않는 이유 = PRIMARY_MESSAGES 와 동형으로
-# 닫힌 3종 enum 을 채워, 정책이 바뀌어 도달하게 되는 날 KeyError 로 시끄럽게 터지도록
+# 알림 대상 3종을 채워, 정책이 바뀌어 도달하게 되는 날 KeyError 로 시끄럽게 터지도록
 # 두기 위함이다(임의 폴백 문구를 지어내는 것보다 낫다).
+# ※ PREDICTED_CLASSES 는 4종이지만 other 키는 두지 않는다(PRIMARY_MESSAGES 도 같다) —
+#   _apply_prediction_policy 가 게이트 맨 앞에서 not_target(primary_sent False ·
+#   enrich_status "skipped")으로 막아 1차 발송도 /enrich(409)도 타지 않는다(33.13(a)).
 SECONDARY_FEED_TITLES = {
     "doorbell": "🔔[띵동] 초인종 — 방문자 사진",
     "knock": "🔔[띵동] 노크 — 방문자 사진",
