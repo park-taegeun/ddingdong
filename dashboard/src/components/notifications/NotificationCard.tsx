@@ -99,7 +99,7 @@ export function NotificationCard({
             </div>
           )}
 
-          {/* 화재경보 정부 지정 대응 수칙 3종 */}
+          {/* 화재경보 정부 지정 대응 수칙 4단계 — FIRE_ALARM_GUIDELINES(decisions.md 7.1 확정 카피 ①) */}
           {isFire && (
             <div className="mt-3 rounded-xl bg-danger/10 p-3">
               <p className="mb-2 flex items-center gap-1.5 text-body font-bold text-danger-deep">

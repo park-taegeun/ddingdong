@@ -1,4 +1,4 @@
-// 알림 클래스 3종 메타데이터 — 초인종/노크/화재경보 분기 DRY 단일 출처.
+// 알림 클래스 4종(알림 대상 3종 + other) 메타데이터 — 초인종/노크/화재경보/기타 소리 분기 DRY 단일 출처.
 // NotificationCard / ClassDistributionCard / 차트 등에서 공통 참조.
 
 import { AudioLines, Bell, Flame, Hand } from "lucide-react"
