@@ -5,6 +5,9 @@
 --confirm-delete-all 이 없으면 쓰기 0 · 종료 코드 2, 있으면 기존 동작(삭제 → 데모 5건).
 행 수는 출력이 아니라 sqlite3 로 임시 DB 파일을 다시 열어 센다(출력만 보면 삭제가 일어나도 통과).
 
+SeedSpecContractTest = 데모 명세 all_scores ↔ 서버 클래스 단일 출처 대조(DB 무관).
+비교 대상 = model_serving.PREDICTED_CLASSES(33.17(f)③ 단일 출처) — seed 쪽에 목록을 두지 않는다.
+
 외부 연결 가드: test_registration 선례대로 test_detect_regression 의 가드 함수와
 _NoNetworkTestCase 를 import 하고 자기 setUpModule 로 가드를 설치한다.
 """
@@ -167,6 +170,30 @@ class SeedGuardTest(_NoNetworkTestCase):
             code = seed.main(["--confirm-delete-all"])
         self.assertEqual(code, 0)
         self.assertEqual(len(self._rows("notifications")), len(seed._SEED_SPECS))
+
+
+
+class SeedSpecContractTest(_NoNetworkTestCase):
+    """_SEED_SPECS all_scores 가 AllScores(notification.ts) 4키 계약과 맞는지 — 명세만 읽는다."""
+
+    def test_all_scores_keys_match_predicted_classes(self):
+        from .. import model_serving
+
+        expected = set(model_serving.PREDICTED_CLASSES)  # 호출 시점에 읽는다(패치 대조 가능)
+        for spec in seed._SEED_SPECS:
+            with self.subTest(spec["client_request_id"]):
+                self.assertEqual(set(spec["all_scores"]), expected)
+
+    def test_all_scores_sum_to_one(self):
+        # 명세 값은 전부 소수 2자리 → 부동소수 합 오차만 허용.
+        for spec in seed._SEED_SPECS:
+            with self.subTest(spec["client_request_id"]):
+                self.assertAlmostEqual(sum(spec["all_scores"].values()), 1.0, places=9)
+
+    def test_confidence_is_predicted_class_score(self):
+        for spec in seed._SEED_SPECS:
+            with self.subTest(spec["client_request_id"]):
+                self.assertEqual(spec["confidence"], spec["all_scores"][spec["predicted_class"]])
 
 
 if __name__ == "__main__":
