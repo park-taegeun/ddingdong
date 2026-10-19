@@ -146,12 +146,18 @@ MicI16Stats convertMicRawToInt16(const int32_t* src, int16_t* dst, size_t count)
 //   - transport 계약 A안 = multipart/form-data + int16 PCM raw bytes (decisions.md 6.2)
 //
 // ★ 근거유형 = 논증 (④런타임 미검증). PSRAM 할당 성공 여부·실 가용 용량은 M5-b 실측 소관.
+//   [해소 2026-10-19 — 근거 = decisions.md 6.3(h) · 6.4(g)] ④런타임 관측(2026-09-03 랩실 1세션):
+//   ring=on · PSRAM 8,386,231 → 8,320,559(Δ 65,672 = 링버퍼 65,536 + 헤더 136).
+//   ToF 동시 구동(2026-09-11, 6분 38초)에서도 psram 안정.
 //
 // ★ 재조정 방법
 //   G29는 B안(하이브리드 = pre-roll 일부 + post 일부)으로 확정됐으나 pre/post 비율은
 //   미확정이다(M5-b 실측 → M5-c에서 어택 길이·트리거 지연 측정 후 산출). 링버퍼는
 //   "최근 N슬롯을 항상 보유하는" 구조라 비율과 무관하게 성립하므로, 비율이 확정되면
 //   필요 슬롯 수를 재산출해 본 상수만 갱신한다.
+//   [현재값 2026-10-19 — 근거 = decisions.md 6.2 G29 현재값 · 6.3(s)] M5-c ⓑ 자동 트리거
+//   (env:enrich_autotrig, PR #98 ebec285) 건의 1차 창 = 슬롯 [k−8, k+24) — P = 8 잠정.
+//   수동 's' 건은 지금도 직전 32버퍼 그대로다. 본 상수 MIC_RING_SLOTS = 32 무변경.
 //   ⚠️ 본 계층은 pre/post 비율 상수를 신설하지 않는다 — 실측 전에 박으면 죽은 상수가
 //      되고, 되돌릴 때 적재 코드까지 흔들려 원인 분리가 불가해진다(카테고리 20 근거).
 constexpr uint32_t MIC_RING_SLOTS = 32;
