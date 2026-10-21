@@ -33,6 +33,9 @@
   --foreground: #F7F8FA;
   --foreground-secondary: #9CA3AF;
   --border: #3A3D42;
+  /* 화재 글자용 보정분의 다크 값 = 아래 랜딩 다크 빨강과 같은 값(새 색 아님).
+     라이트 값을 그대로 쓰면 다크 배경 위 2.93:1 → 이 값 6.21:1. */
+  --danger-deep: #FF6B6B;
 }
 
 @theme inline {
