@@ -116,3 +116,11 @@ export const KAKAO_FAILURE_REASONS: ReadonlySet<SkipReason> = new Set<SkipReason
   "token_expired",
   "kakao_api_error",
 ])
+
+// 감지 후 windowMs 이내인가 — 경계 포함(경과 == windowMs 면 이내). 지금보다 뒤 시각(시계 어긋남)도 이내.
+// 원값(ms) 비교만 한다 — 표시용 시각 문자열 · 반올림을 쓰지 않는다. 잘못된 시각은 이내가 아니다.
+export function isWithinWindow(iso: string, nowMs: number, windowMs: number): boolean {
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return false
+  return nowMs - t <= windowMs
+}

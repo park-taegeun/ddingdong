@@ -1,9 +1,12 @@
+import { useEffect, useState } from "react"
 import { TriangleAlert } from "lucide-react"
 import { useSettings } from "@/contexts/SettingsContext"
+import { FIRE_MOTION_WINDOW_MS } from "@/lib/constants"
 import { formatConfidence, formatDetectedAt } from "@/lib/format"
 import {
   CLASS_META,
   FIRE_ALARM_GUIDELINES,
+  isWithinWindow,
   KAKAO_FAILURE_REASONS,
   SKIP_REASON_LABEL,
 } from "@/lib/notification-meta"
@@ -23,7 +26,18 @@ export function NotificationCard({
   const meta = CLASS_META[notification.predicted_class]
   const Icon = meta.icon
   const isFire = notification.predicted_class === "fire_alarm"
-  const animate = isFire && !reduceMotion
+  // 화재 카드만 지금 시각을 들고 있다가 창이 지나면 다시 그려 모션을 멈춘다(30초 해상도 — 판정은 원값).
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    if (!isFire) return
+    const id = setInterval(() => setNowMs(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [isFire])
+  // 움직임 줄이기 설정이 먼저, 그다음 감지 후 최근 창(FIRE_MOTION_WINDOW_MS). 창 밖은 정적 빨강 테두리.
+  const animate =
+    isFire &&
+    !reduceMotion &&
+    isWithinWindow(notification.detected_at, nowMs, FIRE_MOTION_WINDOW_MS)
   const status = notification.notification_status
 
   return (
