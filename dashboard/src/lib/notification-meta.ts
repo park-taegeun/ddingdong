@@ -1,7 +1,7 @@
 // 알림 클래스 4종(알림 대상 3종 + other) 메타데이터 — 초인종/노크/화재경보/기타 소리 분기 DRY 단일 출처.
 // NotificationCard / ClassDistributionCard / 차트 등에서 공통 참조.
 
-import { AudioLines, Bell, Flame, Hand } from "lucide-react"
+import { AudioLines, Bell, DoorClosed, Flame } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { PredictedClass, SkipReason } from "@/types/notification"
 
@@ -23,10 +23,12 @@ export const CLASS_META: Record<PredictedClass, ClassMeta> = {
     dotColor: "bg-primary",
     chartVar: "var(--color-chart-1)",
   },
+  // 노크 = 닫힌 문(카톡 🚪와 같은 뜻). 아이콘 색은 경고색의 글자용 대비 보정분(랜딩 토큰 재사용) —
+  // 원래 경고색은 옅은 배경 위 1.80:1로 비텍스트 3:1에 못 미쳤다(보정분 5.53:1 · 다크 8.4:1).
   knock: {
     label: "노크",
-    icon: Hand,
-    iconColor: "text-warning",
+    icon: DoorClosed,
+    iconColor: "text-lp-amber",
     bgColor: "bg-warning/10",
     dotColor: "bg-warning",
     chartVar: "var(--color-chart-2)",
