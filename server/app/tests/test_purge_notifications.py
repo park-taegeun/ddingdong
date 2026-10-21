@@ -113,6 +113,7 @@ class PurgeNotificationsTest(_NoNetworkTestCase):
             DeviceHeartbeat,
             IdempotencyKey,
             KakaoToken,
+            KnockRhythmProbe,
             Notification,
             RegistrationFailure,
             RegistrationMatch,
@@ -122,7 +123,7 @@ class PurgeNotificationsTest(_NoNetworkTestCase):
 
         t0 = datetime(2026, 10, 20, 2, 0)
         with self.app.app_context():
-            for model in (Notification, IdempotencyKey, KakaoToken, RegistrationState,
+            for model in (KnockRhythmProbe, Notification, IdempotencyKey, KakaoToken, RegistrationState,
                           RegistrationTemplate, RegistrationMatch, RegistrationFailure,
                           DeviceHeartbeat):
                 db.session.query(model).delete()
@@ -162,6 +163,13 @@ class PurgeNotificationsTest(_NoNetworkTestCase):
                 DeviceHeartbeat(device_id="test", last_seen_at=t0, rssi=-50, uptime_s=1, fw="x",
                                 enrich_sent=0),
             ])
+            db.session.commit()
+            # 노크 타격 계측 행 — 알림마다 1행(notification_id 로 알림을 가리킨다).
+            db.session.add_all(
+                KnockRhythmProbe(notification_id=n.id, probe_version="v", params={}, peaks=[[8, 1.0]],
+                                 peak_count=1, env_max=1.0, mask_samples=0, compute_ms=1.0, created_at=t0)
+                for n in db.session.query(Notification).all()
+            )
             db.session.commit()
 
     def _snapshot(self, tables) -> dict:
@@ -208,6 +216,29 @@ class PurgeNotificationsTest(_NoNetworkTestCase):
         self.assertEqual(self._remaining_keys(), {k for k, (_, _, inside) in _ROWS.items() if not inside})
         self.assertEqual(self._snapshot(_OTHER_TABLES), others)
         self.assertIn("알림 2건 삭제 · 구간 밖 4건 → 4건.", out)
+
+    def _probe_owner_keys(self) -> list:
+        """계측 행마다 가리키는 알림의 키(알림이 없으면 None = 고아)."""
+        with contextlib.closing(sqlite3.connect(self._db_path)) as conn:
+            rows = conn.execute(
+                "SELECT n.client_request_id FROM knock_rhythm_probes p "
+                "LEFT JOIN notifications n ON n.id = p.notification_id ORDER BY p.id"
+            ).fetchall()
+        return [r[0] and r[0].removeprefix(_CRID_PREFIX) for r in rows]
+
+    def test_knock_rhythm_probes_follow_notifications(self):
+        with self.subTest("dry run"):
+            before = self._snapshot(("knock_rhythm_probes",))
+            code, out, _ = self._main(_ARGS)
+            self.assertEqual(code, 2)
+            self.assertIn("함께 지울 노크 계측 행 2건", out)
+            self.assertEqual(self._snapshot(("knock_rhythm_probes",)), before)
+        with self.subTest("confirm"):
+            code, out, _ = self._main(_ARGS + ["--confirm-delete"])
+            self.assertEqual(code, 0)
+            self.assertIn("노크 계측 행 2건 삭제.", out)
+            # 고아 0 · 구간 밖 알림의 계측 행은 그대로
+            self.assertEqual(sorted(self._probe_owner_keys()), sorted(self._remaining_keys()))
 
     def test_output_has_no_personal_data(self):
         _, dry, _ = self._main(_ARGS)

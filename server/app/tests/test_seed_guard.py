@@ -90,9 +90,10 @@ class SeedGuardTest(_NoNetworkTestCase):
     def setUp(self) -> None:
         super().setUp()
         from ..extensions import db
-        from ..models import IdempotencyKey, Notification
+        from ..models import IdempotencyKey, KnockRhythmProbe, Notification
 
         with self.app.app_context():
+            db.session.query(KnockRhythmProbe).delete()
             db.session.query(Notification).delete()
             db.session.query(IdempotencyKey).delete()
             t0 = datetime(2026, 10, 13, 3, 0, 0)
@@ -120,6 +121,12 @@ class SeedGuardTest(_NoNetworkTestCase):
                     response_json={"ok": True},
                     created_at=t0,
                 )
+            )
+            db.session.commit()
+            db.session.add_all(  # 노크 타격 계측 행 — 알림마다 1행
+                KnockRhythmProbe(notification_id=n.id, probe_version="v", params={}, peaks=[],
+                                 peak_count=0, env_max=0.0, mask_samples=0, compute_ms=1.0, created_at=t0)
+                for n in db.session.query(Notification).all()
             )
             db.session.commit()
 
@@ -155,6 +162,18 @@ class SeedGuardTest(_NoNetworkTestCase):
         )
         self.assertEqual(self._rows("idempotency_keys"), keys_before)
         self.assertIn(f"기존 알림 {_PRE_ROWS}건 삭제 → 데모 알림 5건 삽입 완료.", out)
+
+    def test_knock_rhythm_probes_follow_notifications(self):
+        def probes():
+            with contextlib.closing(sqlite3.connect(self._db_path)) as conn:
+                return conn.execute("SELECT * FROM knock_rhythm_probes ORDER BY id").fetchall()
+
+        before = probes()
+        self.assertEqual(len(before), _PRE_ROWS)
+        self.assertEqual(self._seed(False)[0], 2)
+        self.assertEqual(probes(), before)  # 플래그 없으면 쓰기 0
+        self.assertEqual(self._seed(True)[0], 0)
+        self.assertEqual(probes(), [])  # 지운 알림을 가리키는 계측 행이 남지 않는다(데모 알림엔 계측 없음)
 
     def test_main_without_flag_exits_nonzero(self):
         before = self._rows("notifications")

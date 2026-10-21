@@ -10,6 +10,7 @@
   - detected_at = utc_now() - timedelta(...) 동적 → stats "오늘"(KST) 필터 통과.
   - delete → insert 라 재실행해도 중복이 쌓이지 않는다(idempotent).
   - idempotency_keys 테이블은 건드리지 않는다(멱등 캐시는 시드 대상 아님).
+  - knock_rhythm_probes(노크 타격 계측)는 알림을 가리키므로 알림과 함께 지운다.
   - 사진은 dashboard/public/static/captures/*.svg (vite public 루트 서빙,
     프록시·서버 정적 라우트 0줄 변경). 직접 생성한 더미라 저작권·초상권 무관.
   - confidence 발송건은 전부 ≥ 0.7 (신뢰도 임계값 SSoT, 카테고리 6.1 계열),
@@ -28,7 +29,7 @@ from datetime import timedelta
 
 from app import create_app
 from app.extensions import db
-from app.models import Notification
+from app.models import KnockRhythmProbe, Notification
 from app.utils import to_kst_iso, utc_now
 
 # 이미지 경로(vite public 서빙): dashboard/public/static/captures/*.svg
@@ -216,6 +217,8 @@ def seed(app, confirm):
 
         # 데모 재현성: 기존 알림 전량 삭제 후 재삽입(재실행해도 중복 없음).
         # idempotency_keys 는 의도적으로 보존(멱등 캐시는 시드 대상 아님).
+        # 노크 타격 계측 행은 notification_id 로 알림을 가리킨다 → 먼저 지운다(고아 행 0, 같은 commit).
+        db.session.query(KnockRhythmProbe).delete()
         deleted = db.session.query(Notification).delete()
 
         now = utc_now()

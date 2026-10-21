@@ -21,6 +21,8 @@
     idempotency_keys.response_json 은 /detect 응답 스냅샷이라 stt · image_url 이 늘 None 이다
     (2차 /enrich 는 이 캐시를 고치지 않는다). registration_matches · registration_failures 는
     숫자 · 오류 요약뿐, kakao_tokens · registration_state · device_heartbeats 는 무관.
+    예외 = knock_rhythm_probes(노크 타격 계측 · 숫자만)는 notification_id 로 알림을 가리키므로
+    --confirm-delete 때 구간 안 알림의 계측 행을 먼저 지운다(알림 삭제와 같은 트랜잭션 — 고아 행 0).
   - 카카오톡 대화방의 카드: 카톡에서 손으로 지운다.
 
 출력에는 개수 · 시각 · 클래스만 찍는다(자막 내용 · 사진 id · client_request_id 는 찍지 않는다).
@@ -31,12 +33,12 @@ import os
 import sys
 from datetime import datetime, timezone
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 
 from app import create_app
 from app.constants import KST
 from app.extensions import db
-from app.models import Notification
+from app.models import KnockRhythmProbe, Notification
 from app.utils import to_kst_iso
 
 _INPUT_FORMAT = "%Y-%m-%d %H:%M"
@@ -56,6 +58,9 @@ def purge(app, start, end, confirm):
         db_name = os.path.basename(db.engine.url.database or "")
         query = db.session.query(Notification)
         outside_before = query.filter(~in_range).count()
+        probes = db.session.query(KnockRhythmProbe).filter(
+            KnockRhythmProbe.notification_id.in_(select(Notification.id).where(in_range))
+        )
         print(f"[purge] 대상 DB = {db_name} · 구간 {span}")
 
         if not confirm:
@@ -73,6 +78,7 @@ def purge(app, start, end, confirm):
             )
             total = sum(r[1] for r in by_class)
             print(f"        지울 알림 {total}건 · 구간 밖 {outside_before}건 — 아무것도 바꾸지 않았다.")
+            print(f"        함께 지울 노크 계측 행 {probes.count()}건")
             if by_class:
                 first = min(r[2] for r in by_class)
                 last = max(r[3] for r in by_class)
@@ -81,10 +87,12 @@ def purge(app, start, end, confirm):
             print("        지우려면 같은 명령에 --confirm-delete 를 붙여 다시 실행.")
             return 2
 
+        probes_deleted = probes.delete(synchronize_session=False)  # 계측 행 → 알림 순, commit 1회
         deleted = query.filter(in_range).delete(synchronize_session=False)
         db.session.commit()
         outside_after = query.filter(~in_range).count()
         print(f"        알림 {deleted}건 삭제 · 구간 밖 {outside_before}건 → {outside_after}건.")
+        print(f"        노크 계측 행 {probes_deleted}건 삭제.")
         return 0
 
 
