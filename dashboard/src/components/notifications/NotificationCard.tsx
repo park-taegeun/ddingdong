@@ -83,20 +83,7 @@ export function NotificationCard({
               </p>
             ))}
 
-          {/* 거리 센서(ToF) 검증 결과 — 통과/거부/미적용 3상태를 항상 표시한다.
-              숨기면 "ToF 부재"가 "통과"와 같아 보인다(6.4(c) 불변식). */}
-          <div className="mt-3">
-            <NotificationTof tof={notification.tof_check} />
-          </div>
-
-          {/* STT 자막 */}
-          {notification.stt && (
-            <div className="mt-3">
-              <NotificationSTT stt={notification.stt} />
-            </div>
-          )}
-
-          {/* 캡처 이미지 */}
+          {/* 캡처 이미지 — 본문 순서 = 사진 → 자막 → 거리 센서. 카톡 2차처럼 「누가 왔는지」가 먼저다. */}
           {notification.media.image_url && (
             <div className="mt-3">
               <NotificationImage
@@ -106,6 +93,19 @@ export function NotificationCard({
               />
             </div>
           )}
+
+          {/* STT 자막 */}
+          {notification.stt && (
+            <div className="mt-3">
+              <NotificationSTT stt={notification.stt} />
+            </div>
+          )}
+
+          {/* 거리 센서(ToF) 검증 결과 — 통과/거부/미적용 3상태를 항상 표시한다.
+              숨기면 "ToF 부재"가 "통과"와 같아 보인다(6.4(c) 불변식). */}
+          <div className="mt-3">
+            <NotificationTof tof={notification.tof_check} />
+          </div>
 
           {/* 화재경보 정부 지정 대응 수칙 4단계 — FIRE_ALARM_GUIDELINES(decisions.md 7.1 확정 카피 ①) */}
           {isFire && (
