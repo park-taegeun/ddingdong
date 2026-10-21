@@ -3102,6 +3102,47 @@ class DashboardPageLimitMatchesServerTest(_NoNetworkTestCase):
                 )
 
 
+class KakaoCopyLeadingEmojiTest(_NoNetworkTestCase):
+    """카톡 문구 첫머리 기호 — 잠금 화면 미리보기에서 클래스를 가르는 첫 글자다.
+
+    초인종 · 노크가 둘 다 🔔로 나가 미리보기만으로는 구분되지 않았다(2026-10-21 학부생 관찰).
+    1차 문구(PRIMARY_MESSAGES)와 2차 사진 카드 제목(SECONDARY_FEED_TITLES) 각각에서
+    **있는 클래스끼리** 첫머리 기호가 서로 다르고, 노크는 🚪(U+1F6AA)여야 한다.
+    첫머리 = 「[띵동]」 앞 문자열. 상수는 테스트 실행 시점에 읽는다(미리 바인딩하지 않는다).
+    """
+
+    BRAND = "[띵동]"
+    DOOR = "\U0001F6AA"
+
+    def _leads(self, copies: dict[str, str]) -> dict[str, str]:
+        leads = {}
+        for cls, text in copies.items():
+            head, sep, _ = text.partition(self.BRAND)
+            self.assertEqual(sep, self.BRAND, f"{cls}: 문구에 {self.BRAND} 가 없다")
+            self.assertTrue(head, f"{cls}: {self.BRAND} 앞 기호가 비었다")
+            leads[cls] = head
+        return leads
+
+    def test_knock_leads_with_door(self) -> None:
+        from .. import constants
+
+        for name in ("PRIMARY_MESSAGES", "SECONDARY_FEED_TITLES"):
+            with self.subTest(name):
+                lead = self._leads(getattr(constants, name))["knock"]
+                self.assertEqual(lead, self.DOOR)
+                self.assertEqual([ord(ch) for ch in lead], [0x1F6AA])
+
+    def test_leading_symbol_differs_between_classes(self) -> None:
+        from .. import constants
+
+        for name in ("PRIMARY_MESSAGES", "SECONDARY_FEED_TITLES"):
+            with self.subTest(name):
+                leads = self._leads(getattr(constants, name))
+                self.assertEqual(
+                    len(set(leads.values())), len(leads), f"{name} 첫머리 기호가 겹친다: {leads}"
+                )
+
+
 class NotificationsListContractTest(_NoNetworkTestCase):
     """대시보드 「이전 알림 더 보기」가 기대는 GET /notifications 의 limit · has_more 계약.
 
