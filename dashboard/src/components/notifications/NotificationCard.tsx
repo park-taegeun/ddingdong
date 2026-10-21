@@ -4,6 +4,7 @@ import { formatConfidence, formatDetectedAt } from "@/lib/format"
 import {
   CLASS_META,
   FIRE_ALARM_GUIDELINES,
+  KAKAO_FAILURE_REASONS,
   SKIP_REASON_LABEL,
 } from "@/lib/notification-meta"
 import { cn } from "@/lib/utils"
@@ -67,13 +68,20 @@ export function NotificationCard({
             </div>
           </div>
 
-          {/* 발송 제외 사유 */}
-          {!status.primary_sent && status.skip_reason && (
-            <p className="mt-2 text-caption text-foreground-secondary">
-              {SKIP_REASON_LABEL[status.skip_reason] ?? "발송 제외"} 때문에 알림을
-              보내지 않았어요.
-            </p>
-          )}
+          {/* 발송 제외 사유 — 카카오 발송 실패는 원인을 말하지 않고 경고 톤으로 따로 알린다 */}
+          {!status.primary_sent &&
+            status.skip_reason &&
+            (KAKAO_FAILURE_REASONS.has(status.skip_reason) ? (
+              <p className="mt-2 flex items-center gap-1.5 text-caption font-medium text-danger-deep">
+                <TriangleAlert className="h-4 w-4 shrink-0" aria-hidden />
+                카카오톡으로 보내지 못했어요.
+              </p>
+            ) : (
+              <p className="mt-2 text-caption text-foreground-secondary">
+                {SKIP_REASON_LABEL[status.skip_reason] ?? "발송 제외"} 때문에 알림을
+                보내지 않았어요.
+              </p>
+            ))}
 
           {/* 거리 센서(ToF) 검증 결과 — 통과/거부/미적용 3상태를 항상 표시한다.
               숨기면 "ToF 부재"가 "통과"와 같아 보인다(6.4(c) 불변식). */}

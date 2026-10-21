@@ -109,3 +109,10 @@ export const SILENT_SKIP_REASONS: ReadonlySet<SkipReason> = new Set<SkipReason>(
   "registration_collecting",
   "registration_mismatch",
 ])
+
+// 카카오 발송 실패 사유 — 위 다른 사유(의도된 차단)와 달리 보내려다 못 보낸 것이다.
+// 화면은 원인(내부 어휘)을 말하지 않고 「카카오톡으로 보내지 못했어요」로만 알린다.
+export const KAKAO_FAILURE_REASONS: ReadonlySet<SkipReason> = new Set<SkipReason>([
+  "token_expired",
+  "kakao_api_error",
+])

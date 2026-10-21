@@ -1,6 +1,7 @@
 import { Bell, CircleCheck, CircleSlash, Clock, TriangleAlert } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { KAKAO_FAILURE_REASONS } from "@/lib/notification-meta"
 import { cn } from "@/lib/utils"
 import type { NotificationStatus } from "@/types/notification"
 
@@ -20,6 +21,11 @@ function derive(status: NotificationStatus): {
   Icon: LucideIcon
 } {
   if (!status.primary_sent) {
+    // 카카오 발송 실패는 의도된 차단과 갈라 경고 톤으로 보인다. 아래 읽는 순서(secondary_sent →
+    // enrich_status)와 무관한 1차 미발송 블록 안의 분기다.
+    if (status.skip_reason && KAKAO_FAILURE_REASONS.has(status.skip_reason)) {
+      return { label: "보내기 실패", tone: "danger", Icon: TriangleAlert }
+    }
     return { label: "발송 제외", tone: "muted", Icon: CircleSlash }
   }
   if (status.secondary_sent) {
