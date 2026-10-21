@@ -207,6 +207,30 @@ class RegistrationFailure(db.Model):
     created_at: Mapped[datetime]  # naive UTC
 
 
+class KnockRhythmProbe(db.Model):
+    """/detect 예측 knock 건마다 타격 봉우리 후보 기록 (계측용 — 판정 기준 아님, 판정 0).
+
+    정의 · 파라미터 = knock_rhythm.py 상단 주석. 숫자만 — 오디오 · 파형은 저장하지 않는다.
+    notification_id = notifications.id. 외래 키 제약은 두지 않는다(repo 관례) — 알림 행을 지우는
+    정리 도구(seed.py · purge_notifications.py)가 이 표의 해당 행도 같은 트랜잭션에서 지운다.
+    ★ 새 테이블로만 추가한다(RegistrationState 주석과 같은 이유). add 는 카카오 발송 뒤에만.
+    """
+
+    __tablename__ = "knock_rhythm_probes"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    notification_id: Mapped[int] = mapped_column(index=True)
+    probe_version: Mapped[str]
+    params: Mapped[dict] = mapped_column(JSON)
+    peaks: Mapped[list | None] = mapped_column(JSON)  # [[ms, 창 최대 대비 높이], …] 시각순 · 실패면 None
+    peak_count: Mapped[int | None]
+    env_max: Mapped[float | None]  # 포락선 최대(int16 RMS 단위)
+    mask_samples: Mapped[int | None]  # 제외된 샘플 수(글리치 마스크 + 클램프)
+    compute_ms: Mapped[float]
+    error: Mapped[str | None]  # 계산 실패 시 예외 타입 + 메시지 앞부분
+    created_at: Mapped[datetime]  # naive UTC
+
+
 class DeviceHeartbeat(db.Model):
     """기기 heartbeat (기기당 1행 — 새 보고가 그 행을 덮어쓴다. KakaoToken 단일 행과 같은 결).
 

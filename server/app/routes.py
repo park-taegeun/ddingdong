@@ -18,6 +18,7 @@ from sqlalchemy import select
 from . import (
     image_store,
     kakao,
+    knock_rhythm,
     model_serving,
     rate_limit,
     registration_observe,
@@ -268,6 +269,8 @@ def detect():
     # 발송 앞에서 add 하면 kakao._assert_commit_is_safe() 가 RuntimeError 를 낸다.
     # 응답 body 는 이미 위에서 떴으므로 여기 쓰기는 응답에 영향이 없다.
     registration_observe.record(audio_bytes, waveform, reg, client_request_id, pred, now)
+    # 노크 타격 리듬 계측(판정 0) — 같은 자리 · 같은 이유(카카오 뒤 · commit 앞).
+    knock_rhythm.record(audio_bytes, notif, now)
     db.session.commit()
     return jsonify(body), 201
 
