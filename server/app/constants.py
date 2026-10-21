@@ -160,7 +160,7 @@ FIRE_ALARM_PRIMARY_MESSAGE = "\n".join(
 # ★ 확정 전까지 잠정값으로 다룰 것. 확정 카피가 등재되면 이 두 줄만 교체한다.
 PRIMARY_MESSAGES = {
     "doorbell": "🔔[띵동] 초인종이 울렸어요.",
-    "knock": "🔔[띵동] 누군가 노크했어요.",
+    "knock": "🚪[띵동] 누군가 노크했어요.",
     "fire_alarm": FIRE_ALARM_PRIMARY_MESSAGE,
 }
 
@@ -232,7 +232,7 @@ KAKAO_FEED_BUTTON_TITLE = "사진 보기"
 #   enrich_status "skipped")으로 막아 1차 발송도 /enrich(409)도 타지 않는다(33.13(a)).
 SECONDARY_FEED_TITLES = {
     "doorbell": "🔔[띵동] 초인종 — 방문자 사진",
-    "knock": "🔔[띵동] 노크 — 방문자 사진",
+    "knock": "🚪[띵동] 노크 — 방문자 사진",
     "fire_alarm": "🚨[띵동] 화재경보 — 현장 사진",
 }
 
