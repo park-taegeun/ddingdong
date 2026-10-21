@@ -42,7 +42,8 @@ export function TimingMetricsCard({ metrics }: { metrics: TimingMetrics }) {
               최대 {formatMs(col.max)}
             </p>
             <p className="mt-2 text-caption">
-              <span className="font-bold text-success tabular-nums">
+              {/* 비율 값은 중립 글자색 — 값과 무관한 초록은 「좋음」으로 읽힌다(합격선 판정은 두지 않는다) */}
+              <span className="font-bold text-foreground tabular-nums">
                 {formatRate(col.rate)}
               </span>
               <span className="text-foreground-secondary"> {col.slaLabel}</span>
