@@ -1,7 +1,7 @@
 // 알림 클래스 4종(알림 대상 3종 + other) 메타데이터 — 초인종/노크/화재경보/기타 소리 분기 DRY 단일 출처.
 // NotificationCard / ClassDistributionCard / 차트 등에서 공통 참조.
 
-import { AudioLines, Bell, Flame, Hand } from "lucide-react"
+import { AudioLines, Bell, DoorClosed, Flame } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { PredictedClass, SkipReason } from "@/types/notification"
 
@@ -23,10 +23,12 @@ export const CLASS_META: Record<PredictedClass, ClassMeta> = {
     dotColor: "bg-primary",
     chartVar: "var(--color-chart-1)",
   },
+  // 노크 = 닫힌 문(카톡 🚪와 같은 뜻). 아이콘 색은 경고색의 글자용 대비 보정분(랜딩 토큰 재사용) —
+  // 원래 경고색은 옅은 배경 위 1.80:1로 비텍스트 3:1에 못 미쳤다(보정분 5.53:1 · 다크 8.4:1).
   knock: {
     label: "노크",
-    icon: Hand,
-    iconColor: "text-warning",
+    icon: DoorClosed,
+    iconColor: "text-lp-amber",
     bgColor: "bg-warning/10",
     dotColor: "bg-warning",
     chartVar: "var(--color-chart-2)",
@@ -107,3 +109,18 @@ export const SILENT_SKIP_REASONS: ReadonlySet<SkipReason> = new Set<SkipReason>(
   "registration_collecting",
   "registration_mismatch",
 ])
+
+// 카카오 발송 실패 사유 — 위 다른 사유(의도된 차단)와 달리 보내려다 못 보낸 것이다.
+// 화면은 원인(내부 어휘)을 말하지 않고 「카카오톡으로 보내지 못했어요」로만 알린다.
+export const KAKAO_FAILURE_REASONS: ReadonlySet<SkipReason> = new Set<SkipReason>([
+  "token_expired",
+  "kakao_api_error",
+])
+
+// 감지 후 windowMs 이내인가 — 경계 포함(경과 == windowMs 면 이내). 지금보다 뒤 시각(시계 어긋남)도 이내.
+// 원값(ms) 비교만 한다 — 표시용 시각 문자열 · 반올림을 쓰지 않는다. 잘못된 시각은 이내가 아니다.
+export function isWithinWindow(iso: string, nowMs: number, windowMs: number): boolean {
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return false
+  return nowMs - t <= windowMs
+}

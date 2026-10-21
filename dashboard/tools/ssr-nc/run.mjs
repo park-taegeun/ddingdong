@@ -37,6 +37,10 @@ const SRC = {
   imageRetry: "src/lib/image-retry.ts",
   image: "src/components/notifications/NotificationImage.tsx",
   loadMore: "src/lib/load-more.ts",
+  badge: "src/components/notifications/NotificationStatusBadge.tsx",
+  card: "src/components/notifications/NotificationCard.tsx",
+  stt: "src/components/notifications/NotificationSTT.tsx",
+  meta: "src/lib/notification-meta.ts",
 }
 
 /**
@@ -165,6 +169,74 @@ const CASES = [
     anchor: "if (!Number.isInteger(value) || value < 1) {",
     patch: "if (false) {",
   },
+  // 8.4 · 7.6(d) — 뱃지는 secondary_sent 를 enrich_status 보다 먼저 본다. 결함 = 두 분기 순서를 바꾸면
+  // 엇갈린 입력(전송 완료인데 처리 중 표기)이 「2차 처리 중」이 된다. 함정: 정상 조합만 보면 순서와 무관하게 같다.
+  {
+    id: "NC-B1",
+    file: SRC.badge,
+    desc: "뱃지 읽는 순서 뒤집기 — secondary_sent 보다 처리 중을 먼저 (7.6(d))",
+    anchor:
+      '  if (status.secondary_sent) {\n    return { label: "전송 완료", tone: "success", Icon: CircleCheck }\n  }\n  if (status.enrich_status === "processing" || status.enrich_status === "pending") {\n    return { label: "2차 처리 중", tone: "processing", Icon: Clock }\n  }',
+    patch:
+      '  if (status.enrich_status === "processing" || status.enrich_status === "pending") {\n    return { label: "2차 처리 중", tone: "processing", Icon: Clock }\n  }\n  if (status.secondary_sent) {\n    return { label: "전송 완료", tone: "success", Icon: CircleCheck }\n  }',
+  },
+  // B4 — 카톡 실패는 「보내기 실패」. 결함 = 분기가 없으면 실패가 회색 「발송 제외」로 숨는다(감사 D02 원래 증상).
+  {
+    id: "NC-B2",
+    file: SRC.badge,
+    desc: "뱃지 카톡 실패 분기 제거 — token_expired 가 '발송 제외' (B4)",
+    anchor: "if (status.skip_reason && KAKAO_FAILURE_REASONS.has(status.skip_reason)) {",
+    patch: "if (false) {",
+  },
+  // B4 — 카드 문장도 실패를 원인 없이 알린다. 결함 = 분기가 없으면 「토큰 만료 때문에 …」 내부 어휘가 보인다.
+  {
+    id: "NC-B3",
+    file: SRC.card,
+    desc: "카드 카톡 실패 문장 분기 제거 — '토큰 만료 때문에 …' 노출 (B4)",
+    anchor: "(KAKAO_FAILURE_REASONS.has(status.skip_reason) ? (",
+    patch: "(false ? (",
+  },
+  // B3 — 날짜는 달력(자정) 기준. 결함 = 경과 시간으로 세면 어제 23:59(9시간 전)가 「오늘」이 된다.
+  // 함정: 어제 0시(33시간 전)만 보면 경과 시간으로도 「어제」라 같다 — 자정 바로 전 시각을 단언한다.
+  {
+    id: "NC-D1",
+    file: SRC.format,
+    desc: "날짜 판정을 달력 대신 경과 시간으로 — 어제 23:59 가 시각만 (B3)",
+    anchor: "const dayStart = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()",
+    patch: "const dayStart = (x: Date) => x.getTime()",
+  },
+  // B3 — 다른 해면 연도를 붙인다. 결함 = 빠지면 작년 12월 31일이 올해 날짜처럼 보인다.
+  {
+    id: "NC-D2",
+    file: SRC.format,
+    desc: "연도 분기 제거 — 작년 날짜에 연도가 빠진다 (B3)",
+    anchor: "d.getFullYear() === now.getFullYear() ? monthDay :",
+    patch: "true ? monthDay :",
+  },
+  // B9 — 신뢰도 칸은 null 일 때만 숨긴다. 결함 = 참거짓 검사로 바꾸면 실측 0 도 숨는다(8.4(d) 0 ≠ 없음).
+  {
+    id: "NC-S1",
+    file: SRC.stt,
+    desc: "자막 신뢰도 숨김 조건 완화 — 실측 0 의 '0%'가 사라진다 (B9)",
+    anchor: "{stt.confidence !== null && (",
+    patch: "{Boolean(stt.confidence) && (",
+  },
+  // B10 — 창은 경계 포함. 결함 = < 로 바뀌면 정확히 10분 된 행이 창 밖이 된다. 함정: 경계 점을 단언해야 잡힌다.
+  {
+    id: "NC-W1",
+    file: SRC.meta,
+    desc: "화재 모션 창 경계 <= → < — 정확히 10분이 창 밖 (B10)",
+    anchor: "return nowMs - t <= windowMs",
+    patch: "return nowMs - t < windowMs",
+  },
+  // B10 — 카드가 창 판정을 쓴다. 결함 = 조건이 빠지면 지난 화재 카드가 영구히 흔들린다(감사 D12 원래 증상).
+  {
+    id: "NC-W2",
+    file: SRC.card,
+    desc: "카드 화재 모션 창 조건 제거 — 2020년 화재 카드가 흔들림 (B10)",
+    anchor: "isWithinWindow(notification.detected_at, nowMs, FIRE_MOTION_WINDOW_MS)",
+    patch: "true",
+  },
 ]
 
 /**
@@ -190,7 +262,10 @@ const ASSERTIONS = [
   { fixture: "tof_absent", kind: "has", text: "tof_absent" },
   { fixture: "stt_conf_zero", kind: "has", text: "0%" },
   { fixture: "stt_conf_zero", kind: "lacks", text: "정보 없음" },
-  { fixture: "stt_conf_null", kind: "has", text: "정보 없음" },
+  // B9(사용자 결정 2026-10-21) — null 이면 신뢰도 칸을 숨긴다: 「정보 없음」 has → lacks. 자막 본문은 남는다.
+  { fixture: "stt_conf_null", kind: "lacks", text: "정보 없음" },
+  { fixture: "stt_conf_null", kind: "has", text: "“택배입니다”" },
+  { fixture: "stt_conf_zero", kind: "has", text: "“택배입니다”" },
   { fixture: "stale_notice", kind: "has", text: "최근 상태를 불러오지 못해 마지막으로 받은 상태를 보여 드려요." },
   { fixture: "stale_notice", kind: "has", text: "마지막 확인 12초 전" },
   { fixture: "stale_boundary", kind: "has", text: "5999ms=정상" },
@@ -225,6 +300,49 @@ const ASSERTIONS = [
   { fixture: "load_more_next", kind: "has", text: "최대작음=오류" },
   { fixture: "image_first_render", kind: "has", text: "크게 보기" },
   { fixture: "image_first_render", kind: "lacks", text: "사진을 불러올 수 없어요" },
+  { fixture: "image_first_render_caption", kind: "has", text: "크게 보기" },
+  { fixture: "image_first_render_caption", kind: "lacks", text: "사진을 불러올 수 없어요" },
+  // B3 날짜
+  { fixture: "detected_at", kind: "has", text: "오늘0시=오전 12:00" },
+  { fixture: "detected_at", kind: "has", text: "어제2359=어제 오후 11:59" },
+  { fixture: "detected_at", kind: "has", text: "어제0시=어제 오전 12:00" },
+  { fixture: "detected_at", kind: "has", text: "그제2359=10월 19일 오후 11:59" },
+  { fixture: "detected_at", kind: "has", text: "작년=2025년 12월 31일 오후 11:00" },
+  { fixture: "detected_at", kind: "has", text: "잘못=-" },
+  // B4 · 8.4 뱃지 6상태 + 읽는 순서
+  { fixture: "badge_blocked", kind: "has", text: "발송 제외" },
+  { fixture: "badge_blocked", kind: "lacks", text: "보내기 실패" },
+  { fixture: "badge_token_fail", kind: "has", text: "보내기 실패" },
+  { fixture: "badge_token_fail", kind: "lacks", text: "발송 제외" },
+  { fixture: "badge_api_fail", kind: "has", text: "보내기 실패" },
+  { fixture: "badge_complete", kind: "has", text: "전송 완료" },
+  { fixture: "badge_processing", kind: "has", text: "2차 처리 중" },
+  { fixture: "badge_partial", kind: "has", text: "2차 실패" },
+  { fixture: "badge_partial", kind: "lacks", text: "전송 완료" },
+  { fixture: "badge_primary_only", kind: "has", text: "1차 발송" },
+  { fixture: "badge_order", kind: "has", text: "전송 완료" },
+  { fixture: "badge_order", kind: "lacks", text: "2차 처리 중" },
+  // B5 뱃지 클래스 실물
+  { fixture: "badge_class", kind: "has", text: "text-caption" },
+  { fixture: "badge_class", kind: "lacks", text: "text-xs" },
+  { fixture: "badge_class", kind: "has", text: "text-foreground" },
+  { fixture: "badge_class", kind: "lacks", text: "text-success" },
+  // B4 카드 문장
+  { fixture: "card_token_fail", kind: "has", text: "카카오톡으로 보내지 못했어요." },
+  { fixture: "card_token_fail", kind: "lacks", text: "토큰 만료 때문에 알림을 보내지 않았어요." },
+  { fixture: "card_token_fail", kind: "has", text: "보내기 실패" },
+  { fixture: "card_blocked", kind: "has", text: "알림 대상이 아닌 소리 때문에 알림을 보내지 않았어요." },
+  { fixture: "card_blocked", kind: "lacks", text: "카카오톡으로 보내지 못했어요." },
+  // B10 화재 모션 창
+  { fixture: "fire_window", kind: "has", text: "10분=창 안" },
+  { fixture: "fire_window", kind: "has", text: "10분1ms=창 밖" },
+  { fixture: "fire_window", kind: "has", text: "미래=창 안" },
+  { fixture: "fire_window", kind: "has", text: "잘못=창 밖" },
+  { fixture: "fire_card_old", kind: "lacks", text: "animate-shake" },
+  { fixture: "fire_card_old", kind: "lacks", text: "animate-pulse-border" },
+  { fixture: "fire_card_old", kind: "has", text: "border-danger" },
+  { fixture: "fire_card_new", kind: "has", text: "animate-shake" },
+  { fixture: "fire_card_new", kind: "has", text: "animate-pulse-border" },
 ]
 
 const abs = (file) => path.join(ROOT, file)

@@ -7,22 +7,34 @@
 // ★ 픽스처 시각·수치는 전부 고정 주입이다 — 실 서버·실 시계 미호출(8.5(g) 동형).
 import { renderToStaticMarkup } from "react-dom/server"
 import { StaleDataNotice } from "@/components/feedback/StaleDataNotice"
+import { NotificationCard } from "@/components/notifications/NotificationCard"
 import { NotificationImage } from "@/components/notifications/NotificationImage"
+import { NotificationStatusBadge } from "@/components/notifications/NotificationStatusBadge"
 import { NotificationSTT } from "@/components/notifications/NotificationSTT"
 import { NotificationTof } from "@/components/notifications/NotificationTof"
 import { SystemHealthCard } from "@/components/stats/SystemHealthCard"
 import { SettingsProvider } from "@/contexts/SettingsContext"
 import { deriveConnection, isStale } from "@/lib/connection"
 import {
+  FIRE_MOTION_WINDOW_MS,
   IMAGE_RETRY_INTERVAL_MS,
   IMAGE_RETRY_MAX,
   NOTIFICATIONS_PAGE_MAX,
   NOTIFICATIONS_PAGE_STEP,
   STALE_AFTER_MS,
 } from "@/lib/constants"
+import { formatDetectedAt } from "@/lib/format"
 import { nextRetryDelay, retryUrl } from "@/lib/image-retry"
 import { loadMoreState, nextLimit } from "@/lib/load-more"
-import type { NotificationStt, TofCheck } from "@/types/notification"
+import { isWithinWindow } from "@/lib/notification-meta"
+import type {
+  NotificationItem,
+  NotificationStatus,
+  NotificationStt,
+  PredictedClass,
+  SkipReason,
+  TofCheck,
+} from "@/types/notification"
 import type { SystemHealth, TokenStatus } from "@/types/stats"
 
 function health(status: TokenStatus, minutes: number): SystemHealth {
@@ -84,6 +96,71 @@ const nextAt = (current: number, step = NOTIFICATIONS_PAGE_STEP, max = NOTIFICAT
   }
 }
 
+// 알림 카드 날짜 — 지역 시간대 달력 날짜 경계. 픽스처 시각을 지역 시각 생성자로 만들어 실행 기계의
+// 시간대와 무관하게 「자정 앞뒤」가 같은 뜻이 되게 한다(ISO 문자열 고정이면 시간대마다 날짜가 갈린다).
+const DAY_NOW = new Date(2026, 9, 21, 9, 0)
+const localIso = (y: number, mo: number, d: number, h: number, mi: number) =>
+  new Date(y, mo, d, h, mi).toISOString()
+
+// 뱃지 상태 — primary_sent · secondary_sent · enrich_status · 사진 전달 시각 · 사유 조합
+function status(
+  primary: boolean,
+  secondary: boolean,
+  enrich: NotificationStatus["enrich_status"],
+  photoAt: string | null,
+  skip?: SkipReason,
+): NotificationStatus {
+  return {
+    primary_sent: primary,
+    primary_sent_at: primary ? "2026-10-21T09:00:00.000+09:00" : null,
+    enrich_status: enrich,
+    secondary_sent: secondary,
+    secondary_sent_at: photoAt,
+    ...(skip ? { skip_reason: skip } : {}),
+  }
+}
+const badge = (s: NotificationStatus) => renderToStaticMarkup(<NotificationStatusBadge status={s} />)
+const PHOTO_AT = "2026-10-21T09:00:12.000+09:00"
+
+// 렌더 결과의 class 속성 토큰을 텍스트 노드로 — 「클래스가 코드에 있다 ≠ 화면에 적용됐다」(twMerge 병합 뒤 실물)
+const classTokens = (html: string) =>
+  renderToStaticMarkup(
+    <ul>
+      {[...new Set([...html.matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/)))].map(
+        (t) => (
+          <li key={t}>{t}</li>
+        ),
+      )}
+    </ul>,
+  )
+
+// 알림 카드 — 화재 모션 창 · 카톡 실패 문장. 감지 시각은 실행 시계와 무관하게 결정적인 값만 쓴다
+// (2020년 = 창 밖이 확실 · 2100년 = 지금보다 뒤라 창 안).
+function item(cls: PredictedClass, detectedAt: string, s: NotificationStatus): NotificationItem {
+  return {
+    client_request_id: "nc",
+    request_id: `nc-${cls}-${detectedAt}`,
+    detected_at: detectedAt,
+    predicted_class: cls,
+    confidence: 0.9,
+    all_scores: { doorbell: 0.03, knock: 0.03, fire_alarm: 0.9, other: 0.04 },
+    tof_check: tof(false, null, "fire_alarm_bypass"),
+    notification_status: s,
+    media: { image_url: null, image_thumbnail_url: null, audio_url: null },
+    stt: null,
+    device_id: "nc",
+  }
+}
+const card = (n: NotificationItem) =>
+  renderToStaticMarkup(
+    <SettingsProvider>
+      <NotificationCard notification={n} />
+    </SettingsProvider>,
+  )
+const WINDOW_NOW = Date.parse("2026-10-21T09:00:00.000+09:00")
+const windowAt = (iso: string) =>
+  isWithinWindow(iso, WINDOW_NOW, FIRE_MOTION_WINDOW_MS) ? "창 안" : "창 밖"
+
 export const output: Record<string, string> = {
   // 8.5(f) 실렌더 대조 픽스처 (카카오 토큰 3상태 + 만료 경과 환산)
   token_valid: renderToStaticMarkup(<SystemHealthCard health={health("valid", 360)} />),
@@ -100,7 +177,7 @@ export const output: Record<string, string> = {
   ),
   tof_absent: renderToStaticMarkup(<NotificationTof tof={tof(false, null, "tof_absent")} />),
 
-  // 8.4(d) STT 신뢰도 — 실측 0 과 값 부재(null)는 다르다
+  // 8.4(d) STT 신뢰도 — 실측 0 과 값 부재(null)는 다르다. null 이면 신뢰도 칸 자체를 숨긴다(B9)
   stt_conf_zero: renderToStaticMarkup(<NotificationSTT stt={stt(0)} />),
   stt_conf_null: renderToStaticMarkup(<NotificationSTT stt={stt(null)} />),
 
@@ -173,4 +250,52 @@ export const output: Record<string, string> = {
       <NotificationImage src="/captures/abc" alt="노크 감지 사진" />
     </SettingsProvider>,
   ),
+  // B15 — 라이트박스 맥락 줄 prop 이 붙어도 첫 렌더는 같은 사진 + 「크게 보기」(재시도 상태 무변경)
+  image_first_render_caption: renderToStaticMarkup(
+    <SettingsProvider>
+      <NotificationImage src="/captures/abc" alt="노크 감지 사진" caption={"노크 · 오후 2:05\n“택배입니다”"} />
+    </SettingsProvider>,
+  ),
+
+  // B3 알림 카드 날짜 — 오늘 · 어제 · 그 전 · 다른 해 · 잘못된 값(기준 = 10월 21일 오전 9시 지역 시각)
+  detected_at: renderToStaticMarkup(
+    <ul>
+      <li>{`오늘0시=${formatDetectedAt(localIso(2026, 9, 21, 0, 0), DAY_NOW)}`}</li>
+      <li>{`어제2359=${formatDetectedAt(localIso(2026, 9, 20, 23, 59), DAY_NOW)}`}</li>
+      <li>{`어제0시=${formatDetectedAt(localIso(2026, 9, 20, 0, 0), DAY_NOW)}`}</li>
+      <li>{`그제2359=${formatDetectedAt(localIso(2026, 9, 19, 23, 59), DAY_NOW)}`}</li>
+      <li>{`작년=${formatDetectedAt(localIso(2025, 11, 31, 23, 0), DAY_NOW)}`}</li>
+      <li>{`잘못=${formatDetectedAt("x", DAY_NOW)}`}</li>
+    </ul>,
+  ),
+
+  // B4 · 8.4 뱃지 — 6상태(발송 제외 · 보내기 실패 · 전송 완료 · 2차 처리 중 · 2차 실패 · 1차 발송)
+  badge_blocked: badge(status(false, false, "skipped", null, "not_target")),
+  badge_token_fail: badge(status(false, false, "skipped", null, "token_expired")),
+  badge_api_fail: badge(status(false, false, "skipped", null, "kakao_api_error")),
+  badge_complete: badge(status(true, true, "completed", PHOTO_AT)),
+  badge_processing: badge(status(true, false, "processing", null)),
+  badge_partial: badge(status(true, false, "failed", PHOTO_AT)),
+  badge_primary_only: badge(status(true, false, "skipped", null)),
+  // 7.6(d) 읽는 순서 — secondary_sent 를 enrich_status 보다 먼저 본다. 둘이 엇갈리는 입력에서만
+  // 순서가 결과를 가른다(전송 완료 + 아직 처리 중 표기).
+  badge_order: badge(status(true, true, "processing", PHOTO_AT)),
+  // B5 뱃지 클래스 실물(twMerge 병합 뒤) — 15px 토큰이 남고 12px 기본은 지워졌는가
+  badge_class: classTokens(badge(status(true, true, "completed", PHOTO_AT))),
+
+  // B4 카드 문장 — 카톡 실패는 원인 없이 「카카오톡으로 보내지 못했어요.」, 차단은 기존 문장
+  card_token_fail: card(item("knock", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "token_expired"))),
+  card_blocked: card(item("other", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "not_target"))),
+
+  // B10 화재 모션 창 — 경계 포함 · 미래 · 잘못된 시각
+  fire_window: renderToStaticMarkup(
+    <ul>
+      <li>{`10분=${windowAt("2026-10-21T08:50:00.000+09:00")}`}</li>
+      <li>{`10분1ms=${windowAt("2026-10-21T08:49:59.999+09:00")}`}</li>
+      <li>{`미래=${windowAt("2026-10-21T09:05:00.000+09:00")}`}</li>
+      <li>{`잘못=${windowAt("x")}`}</li>
+    </ul>,
+  ),
+  fire_card_old: classTokens(card(item("fire_alarm", "2020-01-01T09:00:00.000+09:00", status(true, false, "skipped", null)))),
+  fire_card_new: classTokens(card(item("fire_alarm", "2100-01-01T09:00:00.000+09:00", status(true, false, "skipped", null)))),
 }

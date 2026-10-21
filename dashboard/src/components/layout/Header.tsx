@@ -17,7 +17,7 @@ export function Header({ onMenuClick, menuButtonRef }: HeaderProps) {
   const disconnected = useStale(lastUpdated, error)
   const { theme, toggleTheme } = useSettings()
 
-  const { label: deviceLabel, Icon: ConnIcon, colorClass } = deriveConnection(
+  const { label: deviceLabel, short: deviceShort, Icon: ConnIcon, colorClass } = deriveConnection(
     isOnline,
     health !== null,
     disconnected,
@@ -41,8 +41,12 @@ export function Header({ onMenuClick, menuButtonRef }: HeaderProps) {
         <div className="flex h-touch items-center gap-2 rounded-xl bg-background-sub px-3">
           {/* 아이콘 shape가 상태별로 달라(Wifi/WifiOff/Refresh/ServerOff) 색 외에 형태로도 구분 — WCAG 1.4.1. */}
           <ConnIcon className={cn("h-4 w-4 shrink-0", colorClass)} aria-hidden />
-          {/* sm 미만에서도 SR이 상태를 읽도록 sr-only로 a11y 트리 상주(시각 표현은 아이콘).
-              색상 단독 의존 해소 — 텍스트 라벨 + 아이콘 shape 병행. */}
+          {/* 좁은 화면(sm 미만) = 짧은 글자를 눈에 보이게(시각 전용 — SR 중복 낭독 방지 aria-hidden).
+              긴 라벨은 sm 미만에선 시각적으로 숨긴 채 a11y 트리에 상주하고 sm 이상에선 그대로 보인다.
+              색상 단독 의존 해소 — 텍스트 + 아이콘 shape 병행. */}
+          <span className="text-caption font-medium text-foreground-secondary sm:hidden" aria-hidden>
+            {deviceShort}
+          </span>
           <span className="sr-only text-caption font-medium text-foreground-secondary sm:not-sr-only">
             {deviceLabel}
           </span>

@@ -20,6 +20,8 @@ interface ImageLightboxProps {
   alt: string
   /** 트리거로 감쌀 썸네일 (NotificationImage 의 <img>) */
   children: ReactNode
+  /** 확대 사진 아래 맥락 줄 — 줄바꿈(\n) 유지. 없으면 사진만 */
+  caption?: string
 }
 
 /**
@@ -31,7 +33,7 @@ interface ImageLightboxProps {
  * 기존 대시보드가 이미 쓰는 radix Dialog(= OnboardingModal 과 동일 패턴)에 위임한다.
  * (학습 16 — 신규 포커스 트랩 발명 없이 기존 컨벤션 재사용)
  */
-export function ImageLightbox({ src, alt, children }: ImageLightboxProps) {
+export function ImageLightbox({ src, alt, children, caption }: ImageLightboxProps) {
   const { reduceMotion } = useSettings()
 
   // 화재 애니메이션 정책과 동일하게, 인앱 '동작 줄이기' 설정이면 페이드 분기 제거.
@@ -64,12 +66,21 @@ export function ImageLightbox({ src, alt, children }: ImageLightboxProps) {
           {/* radix 는 접근성 이름을 위해 Title 을 요구 → 화면엔 숨기고 aria 로만 노출 */}
           <DialogTitle className="sr-only">방문자 사진 확대</DialogTitle>
 
-          {/* object-contain: 잘림 없이 사진 전체가 보이도록 */}
-          <img
-            src={src}
-            alt={alt}
-            className="max-h-full max-w-full rounded-xl object-contain"
-          />
+          {/* object-contain: 잘림 없이 사진 전체가 보이도록. 맥락 줄이 있으면 사진이 그만큼 줄어든다
+              (세로 칸 안에서 사진이 먼저 줄어들도록 최소 높이 0). 확대하는 순간 「언제 · 무슨 말」이
+              사라지지 않게 한다. */}
+          <figure className="flex h-full max-w-full flex-col items-center justify-center gap-3">
+            <img
+              src={src}
+              alt={alt}
+              className="min-h-0 max-w-full rounded-xl object-contain"
+            />
+            {caption && (
+              <figcaption className="max-w-prose whitespace-pre-line text-center text-body text-white">
+                {caption}
+              </figcaption>
+            )}
+          </figure>
 
           <DialogClose
             aria-label="사진 닫기"

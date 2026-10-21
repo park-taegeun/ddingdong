@@ -20,20 +20,21 @@ export function isStale(
 
 // 헤더 연결 상태 4구분. 끊김이 먼저 — 서버가 안 보이면 기기 상태를 모른다.
 // 색 + 아이콘 shape + 텍스트 3중 표현(WCAG 1.4.1 색 단독 의존 해소).
+// short = 좁은 화면(640px 미만)에 상시 보이는 짧은 글자. label = 넓은 화면 · 스크린리더용 원래 라벨.
 // Header.tsx에서 옮겨 왔다(컴포넌트 파일은 컴포넌트만 export — react-refresh 규칙).
 export function deriveConnection(
   isOnline: boolean,
   hasHealth: boolean,
   disconnected: boolean,
-): { label: string; Icon: LucideIcon; colorClass: string } {
+): { label: string; short: string; Icon: LucideIcon; colorClass: string } {
   if (disconnected) {
-    return { label: "서버 연결 끊김", Icon: ServerOff, colorClass: "text-status-failed" }
+    return { label: "서버 연결 끊김", short: "끊김", Icon: ServerOff, colorClass: "text-status-failed" }
   }
   if (isOnline) {
-    return { label: "디바이스 온라인", Icon: Wifi, colorClass: "text-status-online" }
+    return { label: "디바이스 온라인", short: "연결됨", Icon: Wifi, colorClass: "text-status-online" }
   }
   if (hasHealth) {
-    return { label: "디바이스 오프라인", Icon: WifiOff, colorClass: "text-status-failed" }
+    return { label: "디바이스 오프라인", short: "기기 꺼짐", Icon: WifiOff, colorClass: "text-status-failed" }
   }
-  return { label: "연결 확인 중", Icon: RefreshCw, colorClass: "text-status-processing" }
+  return { label: "연결 확인 중", short: "확인 중", Icon: RefreshCw, colorClass: "text-status-processing" }
 }

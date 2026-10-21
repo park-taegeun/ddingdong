@@ -1,16 +1,19 @@
 import { Bell, CircleCheck, CircleSlash, Clock, TriangleAlert } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { KAKAO_FAILURE_REASONS } from "@/lib/notification-meta"
 import { cn } from "@/lib/utils"
 import type { NotificationStatus } from "@/types/notification"
 
 type Tone = "success" | "processing" | "primary" | "danger" | "muted"
 
+// 글자는 진한 본문색(대비 4.5:1 이상), 상태 색은 옅은 배경과 아이콘이 맡는다 — 라벨 · 아이콘 · 색 3중.
+// 아이콘 색은 글자용 대비 보정 토큰이 있는 톤만 보정분을 쓴다(성공 톤은 보정 토큰이 없어 원래 색).
 const TONE_CLASS: Record<Tone, string> = {
-  success: "bg-success/10 text-success",
-  processing: "bg-warning/10 text-warning",
-  primary: "bg-primary/10 text-primary",
-  danger: "bg-danger/10 text-danger",
+  success: "bg-success/10 text-foreground [&>svg]:text-success",
+  processing: "bg-warning/10 text-foreground [&>svg]:text-lp-amber",
+  primary: "bg-primary/10 text-foreground [&>svg]:text-lp-blue",
+  danger: "bg-danger/10 text-foreground [&>svg]:text-danger-deep",
   muted: "bg-background-sub text-foreground-secondary",
 }
 
@@ -20,6 +23,11 @@ function derive(status: NotificationStatus): {
   Icon: LucideIcon
 } {
   if (!status.primary_sent) {
+    // 카카오 발송 실패는 의도된 차단과 갈라 경고 톤으로 보인다. 아래 읽는 순서(secondary_sent →
+    // enrich_status)와 무관한 1차 미발송 블록 안의 분기다.
+    if (status.skip_reason && KAKAO_FAILURE_REASONS.has(status.skip_reason)) {
+      return { label: "보내기 실패", tone: "danger", Icon: TriangleAlert }
+    }
     return { label: "발송 제외", tone: "muted", Icon: CircleSlash }
   }
   if (status.secondary_sent) {
@@ -53,7 +61,10 @@ export function NotificationStatusBadge({
 }) {
   const { label, tone, Icon } = derive(status)
   return (
-    <Badge variant="outline" className={cn("gap-1 border-transparent", TONE_CLASS[tone])}>
+    <Badge
+      variant="outline"
+      className={cn("gap-1 border-transparent text-caption [&>svg]:size-4", TONE_CLASS[tone])}
+    >
       <Icon aria-hidden />
       {label}
     </Badge>

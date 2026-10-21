@@ -9,9 +9,11 @@ import { ImageLightbox } from "./ImageLightbox"
 interface NotificationImageProps {
   src: string
   alt: string
+  /** 확대 화면 아래 한 줄(소리 종류 · 감지 시각 · 자막) — 라이트박스로 그대로 넘긴다 */
+  caption?: string
 }
 
-export function NotificationImage({ src, alt }: NotificationImageProps) {
+export function NotificationImage({ src, alt, caption }: NotificationImageProps) {
   // url = 지금 보여 줄 사진 주소(첫 요청은 원본 그대로), null = 실패 표시 중.
   // 실패하면 상수 간격 · 상한만큼 화면 밖(배경 Image)에서 다시 받아 보고, 성공했을 때만 사진으로 바꾼다 —
   // 재시도마다 실패 표시 ↔ 빈 사진 상자가 깜빡이지 않게. 상한을 다 쓰면 실패 표시가 남는다
@@ -52,7 +54,7 @@ export function NotificationImage({ src, alt }: NotificationImageProps) {
   }
 
   return (
-    <ImageLightbox src={state.url} alt={alt}>
+    <ImageLightbox src={state.url} alt={alt} caption={caption}>
       {/* relative 래퍼: 확대 힌트 뱃지를 사진 우측 상단에 오버레이.
           뱃지는 트리거 button 안에 있어 클릭 히트영역은 사진 전체 그대로 유지된다. */}
       <div className="relative">

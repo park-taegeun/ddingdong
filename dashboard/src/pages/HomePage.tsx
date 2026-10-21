@@ -22,16 +22,7 @@ export function HomePage() {
         </p>
       </header>
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-1.5">
-          <h2 className="text-h2 font-bold">오늘 통계</h2>
-          <HelpTooltip>
-            3초마다 자동으로 새로고침돼요. 숫자는 오늘 0시부터 누적된 값이에요.
-          </HelpTooltip>
-        </div>
-        <StatsCardsSection />
-      </section>
-
+      {/* 최근 알림이 먼저 — 「누가 왔었나」가 첫 질문이다(통계는 그 다음). */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-h2 font-bold">최근 알림</h2>
@@ -53,6 +44,16 @@ export function HomePage() {
             health ? <SystemHealthSummaryCard health={health} /> : undefined
           }
         />
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-h2 font-bold">오늘 통계</h2>
+          <HelpTooltip>
+            3초마다 자동으로 새로고침돼요. 숫자는 오늘 0시부터 누적된 값이에요.
+          </HelpTooltip>
+        </div>
+        <StatsCardsSection />
       </section>
     </div>
   )
