@@ -1,6 +1,6 @@
 import { TriangleAlert } from "lucide-react"
 import { useSettings } from "@/contexts/SettingsContext"
-import { formatClock, formatConfidence } from "@/lib/format"
+import { formatConfidence, formatDetectedAt } from "@/lib/format"
 import {
   CLASS_META,
   FIRE_ALARM_GUIDELINES,
@@ -61,7 +61,7 @@ export function NotificationCard({
                 className="text-caption text-foreground-secondary tabular-nums"
                 dateTime={notification.detected_at}
               >
-                {formatClock(notification.detected_at)}
+                {formatDetectedAt(notification.detected_at)}
               </time>
               <NotificationStatusBadge status={status} />
             </div>

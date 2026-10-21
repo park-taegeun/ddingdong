@@ -49,3 +49,22 @@ export function formatMs(ms: number): string {
 export function formatRate(rate: number): string {
   return `${Math.round(rate * 100)}%`
 }
+
+// 알림 감지 시각 표시 — 오늘이면 시각만, 어제면 「어제 오후 1:39」, 그 밖은 「10월 19일 오후 1:39」
+// (해가 다르면 「2025년 12월 31일 …」). 목록은 여러 날에 걸치는데 시각만 보이면 지난 방문을 오늘로 읽는다.
+// 날짜 판정 = formatClock 과 같은 브라우저 지역 시간대의 달력 날짜(자정 기준) 차이 — 경과 시간이 아니다
+// (어제 23:59 는 9시간 전이어도 어제다). 판정은 Date 원값으로 하고 표시 문자열은 쓰지 않는다.
+// now = 기준 시각 — 결정적 렌더(ssr-nc)용, 화면에서는 생략(= 지금).
+export function formatDetectedAt(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return "-"
+  const dayStart = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((dayStart(now) - dayStart(d)) / 86_400_000)
+  const clock = formatClock(iso)
+  if (days === 0) return clock
+  if (days === 1) return `어제 ${clock}`
+  const monthDay = `${d.getMonth() + 1}월 ${d.getDate()}일`
+  const date =
+    d.getFullYear() === now.getFullYear() ? monthDay : `${d.getFullYear()}년 ${monthDay}`
+  return `${date} ${clock}`
+}
