@@ -29,7 +29,19 @@ function SettingRow({
         <p className="text-body font-medium">{title}</p>
         <p className="text-caption text-foreground-secondary">{description}</p>
       </div>
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
+      {/* 켜짐 · 꺼짐을 글자로도 보인다(스위치 상태는 보조기기가 이미 읽으므로 글자는 aria-hidden).
+          꺼짐 트랙은 옅은 회색이라 흰 배경과 구분되게 보조 글자색 테두리를 둔다(대비 4.83:1). */}
+      <span className="flex shrink-0 items-center gap-2">
+        <span className="text-caption font-medium text-foreground-secondary" aria-hidden>
+          {checked ? "켜짐" : "꺼짐"}
+        </span>
+        <Switch
+          id={id}
+          checked={checked}
+          onCheckedChange={onCheckedChange}
+          className="data-[state=unchecked]:border-foreground-secondary"
+        />
+      </span>
     </label>
   )
 }
