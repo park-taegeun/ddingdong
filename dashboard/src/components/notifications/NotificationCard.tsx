@@ -39,6 +39,14 @@ export function NotificationCard({
     !reduceMotion &&
     isWithinWindow(notification.detected_at, nowMs, FIRE_MOTION_WINDOW_MS)
   const status = notification.notification_status
+  const detectedLabel = formatDetectedAt(notification.detected_at)
+  // 사진 확대 화면 아래 맥락 줄 — 소리 종류 · 감지 시각, 자막이 있으면 다음 줄에 자막
+  const photoCaption = [
+    `${meta.label} · ${detectedLabel}`,
+    notification.stt ? `“${notification.stt.transcript}”` : null,
+  ]
+    .filter(Boolean)
+    .join("\n")
 
   return (
     <article
@@ -76,7 +84,7 @@ export function NotificationCard({
                 className="text-caption text-foreground-secondary tabular-nums"
                 dateTime={notification.detected_at}
               >
-                {formatDetectedAt(notification.detected_at)}
+                {detectedLabel}
               </time>
               <NotificationStatusBadge status={status} />
             </div>
@@ -104,6 +112,7 @@ export function NotificationCard({
                 key={notification.media.image_url}
                 src={notification.media.image_url}
                 alt={`${meta.label} 감지 사진`}
+                caption={photoCaption}
               />
             </div>
           )}
