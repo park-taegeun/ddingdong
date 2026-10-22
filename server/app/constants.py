@@ -215,6 +215,29 @@ TOF_MOTION_AGGREGATE_TOTAL = 16
 #   15초 예산이 넉넉해 즉시 재시도로 충분하다).
 KAKAO_SECONDARY_MAX_ATTEMPTS = 2
 
+# 화재경보(fire_alarm) 1차 텍스트 발송의 총 시도 횟수(최초 1회 + 재시도 1회). 🔴 잠정값.
+# 근거유형 = 사용자 결정(2026-10-22, Claude 권고 수용) — UX 감사 K07: 화재 1차가 한 번
+#   실패하면 누락되는 단일 실패점이었다. 1차는 원래 "재시도 없음"(kakao._post_memo
+#   docstring · decisions.md 7.7(d)②)이고, 이 값은 화재 1차에 한한 예외다.
+# ★ KAKAO_SECONDARY_MAX_ATTEMPTS 를 재사용하지 않는 이유: 그 값은 카테고리 7 "2차 =
+#   best-effort + 1회 재시도"(15초 예산 안) 인용이고, 이 값은 5초 예산 초과를 수용한
+#   별도 결정이라 근거와 재판정 트리거가 다르다. 한쪽 정책이 바뀌어도 다른 쪽은 그대로다.
+# 재시도 조건 = 2차(7.6(c))와 같은 예외 클래스 기준 — KakaoSendError 전부(망 · 타임아웃 ·
+#   5xx · 401 외 4xx · result_code≠0). 결정론적 4xx 도 한 번 더 쏘지만 빨리 실패하는
+#   왕복 1회(memo p95 84.1ms, 7.2)라 수용한다. KakaoTokenError(401)는 재시도 없음.
+# 수용된 위험:
+#   ① 중복 도착 — 첫 요청이 카카오에 도착한 뒤 응답만 타임아웃이면 화재 알림이 2번 온다
+#      (7.6(j) 2차 사진 카드 중복과 같은 기전). 화재는 누락보다 중복이 낫다.
+#   ② 1차 지연 — 위 KAKAO_HTTP_TIMEOUT_SECONDS 역산(잔여 3000ms = 최대 2회 × 1.5s)이
+#      최대 3회(토큰 갱신 + 발송 2회) × 1.5s = 4.5s 로 잔여를 1.5s 넘는다 → 체인
+#      1900 + 105 + 4500 ≈ 6.5s. timeout 은 소켓 연산 단위 상한이라(7.7(l) 입력 ③)
+#      실측 배율 ≈1.60(7.7(l) 입력 ①)을 걸면 카카오 구간 ≈7.2s · 체인 ≈9.2s 로 5초
+#      예산을 넘는다. 보드 /detect 타임아웃 10s(UPLINK_HTTP_TIMEOUT_MS) 안이고, 화재는
+#      2차가 없어 보드가 응답을 놓쳐도 잃는 것은 응답 수신뿐이다(논증).
+# 재판정 트리거: 화재 1차 중복 도착 실측 · KAKAO_HTTP_TIMEOUT_SECONDS 재계산(G29 / PR-C) ·
+#   카테고리 7 1차 재시도 정책 변경 · 보드 /detect 타임아웃 변경.
+KAKAO_FIRE_PRIMARY_MAX_ATTEMPTS = 2
+
 # feed 템플릿 필수 필드 button_title. link 는 KAKAO_LINK_URL 재사용(text 템플릿과 동형).
 KAKAO_FEED_BUTTON_TITLE = "사진 보기"
 

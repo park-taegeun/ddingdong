@@ -19,6 +19,7 @@ from flask import current_app
 
 from .constants import (
     KAKAO_FEED_BUTTON_TITLE,
+    KAKAO_FIRE_PRIMARY_MAX_ATTEMPTS,
     KAKAO_HTTP_TIMEOUT_SECONDS,
     KAKAO_LINK_URL,
     KAKAO_MEMO_URL,
@@ -342,8 +343,13 @@ def _invalidate_access_token():
     )
 
 
-def send_primary_text(predicted_class):
+def send_primary_text(predicted_class, client_request_id=None):
     """1차 텍스트 알림을 1회 발송한다. 성공이면 None, 실패면 skip_reason 문자열.
+
+    ★ 예외 = fire_alarm 만 KakaoSendError 에 한해 최대 KAKAO_FIRE_PRIMARY_MAX_ATTEMPTS 회
+      시도한다(사용자 결정 2026-10-22 — 근거 · 수용된 위험은 그 상수 주석). 2차
+      _send_part 와 같은 루프 모양이고, 401(KakaoTokenError)은 화재여도 재시도 없이
+      아래 자기 치유 경로 그대로다. client_request_id 는 재시도 WARNING 에만 쓴다.
 
     반환값 계약: None(성공) / SKIP_REASON_TOKEN_EXPIRED / SKIP_REASON_KAKAO_API_ERROR.
     호출부는 이 값을 그대로 Notification.skip_reason 에 넣고 primary_sent=False 로
@@ -376,15 +382,27 @@ def send_primary_text(predicted_class):
         current_app.logger.warning("kakao primary send skipped: %s", exc)
         return SKIP_REASON_TOKEN_EXPIRED
 
-    try:
-        _post_memo(access_token, message)
-    except KakaoTokenError as exc:  # 401 — 토큰이 죽어 있다
-        _invalidate_access_token()
-        current_app.logger.warning("kakao primary send skipped: %s", exc)
-        return SKIP_REASON_TOKEN_EXPIRED
-    except KakaoSendError as exc:
-        current_app.logger.warning("kakao primary send failed: %s", exc)
-        return SKIP_REASON_KAKAO_API_ERROR
+    max_attempts = KAKAO_FIRE_PRIMARY_MAX_ATTEMPTS if predicted_class == "fire_alarm" else 1
+    for attempt in range(1, max_attempts + 1):
+        try:
+            _post_memo(access_token, message)
+        except KakaoTokenError as exc:  # 401 — 토큰이 죽어 있다
+            _invalidate_access_token()
+            current_app.logger.warning("kakao primary send skipped: %s", exc)
+            return SKIP_REASON_TOKEN_EXPIRED
+        except KakaoSendError as exc:
+            if attempt < max_attempts:
+                current_app.logger.warning(
+                    "kakao primary retrying (%d/%d): client_request_id=%s %s",
+                    attempt,
+                    max_attempts,
+                    client_request_id,
+                    exc,
+                )
+                continue
+            current_app.logger.warning("kakao primary send failed: %s", exc)
+            return SKIP_REASON_KAKAO_API_ERROR
+        break
 
     current_app.logger.info("kakao primary sent: class=%s", predicted_class)
     return None

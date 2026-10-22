@@ -246,7 +246,7 @@ class DetectProbeTest(_DetectCase):
 
         real_guard = kakao._assert_commit_is_safe
 
-        def fake_send(predicted_class):
+        def fake_send(predicted_class, client_request_id=None):
             real_guard()
             return None
 
@@ -261,7 +261,7 @@ class DetectProbeTest(_DetectCase):
     def test_knock_writes_one_row_matching_measure(self):
         pcm = _three_hits()
         resp, send = self._send(pcm, confidence=0.9, cls="knock")
-        send.assert_called_once_with("knock")  # 카카오 순서 가드를 실제로 지났다
+        send.assert_called_once_with("knock", mock.ANY)  # 카카오 순서 가드를 실제로 지났다
         (p,) = self._probes()
         from ..models import Notification
 
@@ -308,7 +308,7 @@ class DetectProbeTest(_DetectCase):
         with mock.patch("app.knock_rhythm.measure", side_effect=RuntimeError("boom")), \
                 self.assertLogs(self.app.logger, "ERROR") as logs:
             resp, send = self._send(_three_hits(), confidence=0.9, cls="knock")
-        send.assert_called_once_with("knock")
+        send.assert_called_once_with("knock", mock.ANY)
         crid = resp.get_json()["client_request_id"]
         self.assertEqual(len(logs.output), 1)  # ERROR 1줄
         self.assertIn(crid, logs.output[0])
@@ -335,7 +335,7 @@ class DetectProbeTest(_DetectCase):
                     resp, send = self._send(_three_hits(), cls="knock", **kw)
                 rec.assert_called_once()  # 끈 자리가 실제 훅 호출 지점이다
             body = strip(resp.get_json())
-            return body, strip(self._stored(resp)), send.call_args_list
+            return body, strip(self._stored(resp)), [c.args[0] for c in send.call_args_list]
 
         cases = {
             "sent": dict(confidence=0.9),
