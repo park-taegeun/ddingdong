@@ -1,11 +1,12 @@
 import { MessageCircleOff, ServerOff, WifiOff } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { BannerKind } from "@/lib/banner"
-import { STALE_NOTICE } from "@/lib/connection"
 
 // 문구는 원인을 단정하지 않는다(내부 어휘 금지). 아이콘은 헤더 연결 표시와 같은 모양(끊김 · 기기 꺼짐).
-const CONTENT: Record<BannerKind, { Icon: LucideIcon; title: string; body: string }> = {
-  server: { Icon: ServerOff, title: "서버와 연결이 끊겼어요", body: STALE_NOTICE },
+// 끊김은 제목만 — 「마지막으로 받은 상태를 보여 드린다」는 옛 데이터가 없을 때 사실과 다르고, 옛 데이터가
+// 있으면 그 위의 끊김 안내가 이미 말한다(사용자 결정 2026-10-22).
+const CONTENT: Record<BannerKind, { Icon: LucideIcon; title: string; body?: string }> = {
+  server: { Icon: ServerOff, title: "서버와 연결이 끊겼어요" },
   device: {
     Icon: WifiOff,
     title: "현관 기기가 응답하지 않아요",
@@ -30,7 +31,7 @@ export function StatusBanner({ kind }: { kind: BannerKind | null }) {
           <content.Icon className="mt-0.5 h-5 w-5 shrink-0 text-danger-deep" aria-hidden />
           <div className="min-w-0">
             <p className="text-body font-bold text-danger-deep">{content.title}</p>
-            <p className="text-body text-foreground">{content.body}</p>
+            {content.body && <p className="text-body text-foreground">{content.body}</p>}
           </div>
         </div>
       )}

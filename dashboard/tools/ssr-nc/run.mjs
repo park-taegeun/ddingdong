@@ -42,6 +42,7 @@ const SRC = {
   stt: "src/components/notifications/NotificationSTT.tsx",
   meta: "src/lib/notification-meta.ts",
   banner: "src/lib/banner.ts",
+  statusBanner: "src/components/feedback/StatusBanner.tsx",
   filter: "src/lib/notification-filter.ts",
 }
 
@@ -265,6 +266,15 @@ const CASES = [
     anchor: "for (const n of notifications) {",
     patch: "for (const n of notifications.slice(0, 1)) {",
   },
+  // 띠 ① 본문 — 결함 = 끊김 안내 문장을 되살리면 옛 데이터 없는 화면(「알림을 불러오지 못했어요」) 위에서
+  // 사실과 다른 말이 되고, 목록 위 끊김 안내와 겹친다. 패치는 문자열 그대로(띠 파일은 그 상수를 import 하지 않는다).
+  {
+    id: "NC-G4",
+    file: SRC.statusBanner,
+    desc: "띠 ① 본문 되살리기 — 끊김 띠에 '최근 상태를 불러오지 못해 …' (전역 경고 띠)",
+    anchor: 'server: { Icon: ServerOff, title: "서버와 연결이 끊겼어요" },',
+    patch: 'server: { Icon: ServerOff, title: "서버와 연결이 끊겼어요", body: "최근 상태를 불러오지 못해 마지막으로 받은 상태를 보여 드려요." },',
+  },
   // 날짜 묶음 머리 — 달력(자정) 기준. 결함 = 경과 시간으로 세면 어제 23:59(9시간 전)가 「오늘」 묶음에 들어간다.
   // 함정: 어제 0시(33시간 전)만 보면 같다 — 자정 바로 전 시각을 단언한다. 앵커는 NC-D1(카드 시각)과 문자열 비포함.
   {
@@ -423,7 +433,8 @@ const ASSERTIONS = [
   { fixture: "banner_kind", kind: "has", text: "켜짐·차단만=없음" },
   { fixture: "banner_kind", kind: "has", text: "상태모름·목록없음=없음" },
   { fixture: "banner_server", kind: "has", text: "서버와 연결이 끊겼어요" },
-  { fixture: "banner_server", kind: "has", text: "최근 상태를 불러오지 못해 마지막으로 받은 상태를 보여 드려요." },
+  // 띠 ①은 제목만(사용자 결정 2026-10-22) — 옛 데이터가 없을 때 「마지막으로 받은 상태」는 사실과 다르다.
+  { fixture: "banner_server", kind: "lacks", text: "최근 상태를 불러오지 못해 마지막으로 받은 상태를 보여 드려요." },
   { fixture: "banner_kakao", kind: "has", text: "최근 알림을 카카오톡으로 보내지 못했어요" },
   { fixture: "banner_kakao", kind: "lacks", text: "토큰 만료" },
   { fixture: "banner_none", kind: "lacks", text: "서버와 연결이 끊겼어요" },
