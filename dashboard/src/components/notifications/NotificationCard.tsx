@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { TriangleAlert } from "lucide-react"
+import { ChevronDown, TriangleAlert } from "lucide-react"
 import { useSettings } from "@/contexts/SettingsContext"
 import { FIRE_MOTION_WINDOW_MS } from "@/lib/constants"
 import { formatConfidence, formatDetectedAt } from "@/lib/format"
@@ -41,6 +41,8 @@ export function NotificationCard({
     isFire &&
     !reduceMotion &&
     isWithinWindow(notification.detected_at, nowMs, FIRE_MOTION_WINDOW_MS)
+  // 기술 정보(모델 신뢰도) — 기본 접힘. 카드마다 따로, 화면을 나가면 다시 접힌다.
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const status = notification.notification_status
   const detectedLabel = formatDetectedAt(notification.detected_at)
   // 사진 확대 화면 아래 맥락 줄 — 소리 종류 · 감지 시각, 자막이 있으면 다음 줄에 자막
@@ -84,9 +86,6 @@ export function NotificationCard({
               <h3 className={cn("text-(length:--text-h3) font-bold", isFire && "text-danger-deep")}>
                 {meta.label}
               </h3>
-              <p className="text-caption text-foreground-secondary tabular-nums">
-                신뢰도 {formatConfidence(notification.confidence)}
-              </p>
             </div>
             <div className="ml-auto flex flex-col items-end gap-1">
               <time
@@ -168,6 +167,25 @@ export function NotificationCard({
               </ol>
             </div>
           )}
+
+          {/* 기술 정보 접기(감사 UX-D08) — 펼치면 신뢰도. 거리 센서 칸은 위에 늘 보인다: 3상태 라벨이
+              상시 표시 불변식(6.4(c))이고 부스 리셋 뒤 초기화 확인(33.33(b))에 쓴다. */}
+          <div className="mt-1">
+            <button
+              type="button"
+              aria-expanded={detailsOpen}
+              onClick={() => setDetailsOpen((v) => !v)}
+              className="flex h-touch items-center gap-1 text-caption font-medium text-foreground-secondary hover:text-foreground"
+            >
+              {detailsOpen ? "접기" : "자세히"}
+              <ChevronDown className={cn("h-4 w-4", detailsOpen && "rotate-180")} aria-hidden />
+            </button>
+            {detailsOpen && (
+              <p className="text-caption text-foreground-secondary tabular-nums">
+                신뢰도 {formatConfidence(notification.confidence)}
+              </p>
+            )}
+          </div>
         </div>
       </div>
     </article>

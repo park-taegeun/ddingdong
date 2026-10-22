@@ -351,6 +351,23 @@ const CASES = [
     anchor: "    // 쓰기 실패 = 이번 화면 동안만 메모리 값으로 동작한다",
     patch: '    throw new Error("NC-E1c-write")',
   },
+  // 기술 정보 접기 — 거리 센서 칸은 접힘 밖. 결함 = 칸이 접힘 안으로 들어가면 3상태 라벨이 기본 화면에서 사라져
+  // 부스 리셋 뒤 「검증 안 함」(ToF 초기화 실패)을 첫 카드에서 못 본다(6.4(c) · 33.33(b)).
+  {
+    id: "NC-E2",
+    file: SRC.card,
+    desc: "거리 센서 칸을 접힘 안으로 — 기본 카드에 '검증 안 함' 없음 (기술 정보 접기)",
+    anchor: "<NotificationTof tof={notification.tof_check} />",
+    patch: "{detailsOpen && <NotificationTof tof={notification.tof_check} />}",
+  },
+  // 기술 정보 접기 — 기본은 접힘. 결함 = 펼친 채 시작하면 신뢰도 숫자가 다시 전면에 나온다.
+  {
+    id: "NC-E2b",
+    file: SRC.card,
+    desc: "기본 펼침 — 기본 카드에 '신뢰도 90%' (기술 정보 접기)",
+    anchor: "const [detailsOpen, setDetailsOpen] = useState(false)",
+    patch: "const [detailsOpen, setDetailsOpen] = useState(true)",
+  },
 ]
 
 /**
@@ -510,6 +527,12 @@ const ASSERTIONS = [
   { fixture: "unread_count", kind: "has", text: "제목0=띵동 — 알림 대시보드" },
   { fixture: "card_new", kind: "has", text: "새 알림" },
   { fixture: "card_blocked", kind: "lacks", text: "새 알림" },
+  // 기술 정보 접기 — 기본 접힘 · 거리 센서 칸 상시
+  { fixture: "card_blocked", kind: "has", text: "자세히" },
+  { fixture: "card_blocked", kind: "lacks", text: "신뢰도 90%" },
+  { fixture: "card_blocked", kind: "has", text: "거리 센서" },
+  { fixture: "card_blocked", kind: "has", text: "검증 안 함" },
+  { fixture: "card_token_fail", kind: "has", text: "검증 안 함" },
 ]
 
 const abs = (file) => path.join(ROOT, file)
