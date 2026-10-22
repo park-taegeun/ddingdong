@@ -6,6 +6,7 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart"
 import type { ChartConfig } from "@/components/ui/chart"
+import { SkipReasonsCard } from "@/components/stats/SkipReasonsCard"
 import { StatsCardsSection } from "@/components/stats/StatsCardsSection"
 import { useStats } from "@/hooks/useStats"
 
@@ -26,6 +27,9 @@ export function StatsPage() {
       </header>
 
       <StatsCardsSection />
+
+      {/* 홈 공용 섹션 밖 — 통계 화면에만 */}
+      {stats && <SkipReasonsCard counts={stats.skip_reasons} />}
 
       {stats && (
         <Card>

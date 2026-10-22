@@ -45,6 +45,7 @@ const SRC = {
   statusBanner: "src/components/feedback/StatusBanner.tsx",
   filter: "src/lib/notification-filter.ts",
   unread: "src/lib/unread.ts",
+  skipCard: "src/components/stats/SkipReasonsCard.tsx",
 }
 
 /**
@@ -368,6 +369,23 @@ const CASES = [
     anchor: "const [detailsOpen, setDetailsOpen] = useState(false)",
     patch: "const [detailsOpen, setDetailsOpen] = useState(true)",
   },
+  // 오늘 보내지 않은 이유 — 0건 줄은 숨긴다. 결함 = 걸러내지 않으면 7줄이 늘 보여 실제 사유가 묻힌다.
+  // 함정: 픽스처 키가 전부 1 이상이면 같다 — 사람 감지 실패 · 등록 중 = 0.
+  {
+    id: "NC-E4a",
+    file: SRC.skipCard,
+    desc: "0건 줄 숨김 제거 — '사람 감지 실패' 0건 줄 노출 (보내지 않은 이유)",
+    anchor: "].filter((r) => r.count > 0)",
+    patch: "].filter(() => true)",
+  },
+  // 오늘 보내지 않은 이유 — 카톡 실패 줄만 경고 톤 + 아이콘. 결함 = 분기가 빠지면 라벨만 남아 3중 표기 중 2개(색 · 아이콘)를 잃는다.
+  {
+    id: "NC-E4b",
+    file: SRC.skipCard,
+    desc: "카톡 실패 줄 경고 톤 · 아이콘 제거 — 위험색 · 경고 아이콘 클래스 없음 (보내지 않은 이유)",
+    anchor: "{r.failure ? (",
+    patch: "{false ? (",
+  },
 ]
 
 /**
@@ -539,6 +557,22 @@ const ASSERTIONS = [
   { fixture: "bottom_nav", kind: "has", text: "통계" },
   { fixture: "bottom_nav", kind: "has", text: "설정" },
   { fixture: "bottom_nav", kind: "has", text: "도움말" },
+  // 오늘 보내지 않은 이유
+  { fixture: "skip_some", kind: "has", text: "오늘 보내지 않은 이유" },
+  { fixture: "skip_some", kind: "has", text: "카카오톡으로 보내지 못했어요" },
+  { fixture: "skip_some", kind: "lacks", text: "토큰 만료" },
+  { fixture: "skip_some", kind: "lacks", text: "카카오 전송 오류" },
+  { fixture: "skip_some", kind: "has", text: "알림 대상이 아닌 소리" },
+  { fixture: "skip_some", kind: "has", text: "등록한 초인종과 다른 소리" },
+  { fixture: "skip_some", kind: "lacks", text: "사람 감지 실패" },
+  { fixture: "skip_some", kind: "lacks", text: "초인종 등록 중에 들어온 소리" },
+  { fixture: "skip_some", kind: "has", text: "모두 8건" },
+  { fixture: "skip_some_class", kind: "has", text: "text-danger-deep" },
+  { fixture: "skip_some_class", kind: "has", text: "lucide-triangle-alert" },
+  { fixture: "skip_no_fail_class", kind: "lacks", text: "text-danger-deep" },
+  { fixture: "skip_no_fail_class", kind: "lacks", text: "lucide-triangle-alert" },
+  { fixture: "skip_zero", kind: "has", text: "오늘은 보내지 않은 알림이 없어요." },
+  { fixture: "skip_zero", kind: "lacks", text: "모두 0건" },
 ]
 
 const abs = (file) => path.join(ROOT, file)

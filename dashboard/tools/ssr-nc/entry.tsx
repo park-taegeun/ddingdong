@@ -16,6 +16,7 @@ import { NotificationImage } from "@/components/notifications/NotificationImage"
 import { NotificationStatusBadge } from "@/components/notifications/NotificationStatusBadge"
 import { NotificationSTT } from "@/components/notifications/NotificationSTT"
 import { NotificationTof } from "@/components/notifications/NotificationTof"
+import { SkipReasonsCard } from "@/components/stats/SkipReasonsCard"
 import { SystemHealthCard } from "@/components/stats/SystemHealthCard"
 import { SettingsProvider } from "@/contexts/SettingsContext"
 import { deriveBanner } from "@/lib/banner"
@@ -43,7 +44,7 @@ import type {
   SkipReason,
   TofCheck,
 } from "@/types/notification"
-import type { SystemHealth, TokenStatus } from "@/types/stats"
+import type { SkipReasonCounts, SystemHealth, TokenStatus } from "@/types/stats"
 
 function health(status: TokenStatus, minutes: number): SystemHealth {
   return {
@@ -189,6 +190,25 @@ const LOADED = [
 const filterAt = (cls: Parameters<typeof filterNotifications>[1], sentOnly: boolean) =>
   filterNotifications(LOADED, cls, sentOnly).length
 const noop = () => {}
+
+const SKIP_ZERO: SkipReasonCounts = {
+  not_target: 0,
+  low_confidence: 0,
+  tof_rejected: 0,
+  kakao_api_error: 0,
+  token_expired: 0,
+  registration_collecting: 0,
+  registration_mismatch: 0,
+}
+// 카톡 실패 = 1 + 1(합쳐 2) · 0건 = 사람 감지 실패 · 등록 중 · 합계 8
+const SKIP_SOME: SkipReasonCounts = {
+  ...SKIP_ZERO,
+  not_target: 3,
+  low_confidence: 1,
+  kakao_api_error: 1,
+  token_expired: 1,
+  registration_mismatch: 2,
+}
 
 // 새 알림 — 불러온 4건(초인종 보냄 9시 · 노크 실패 8시 · 기타 차단 10시 · 초인종 신뢰도 차단 7시) 기준.
 // 차단 행이 확인 시각보다 뒤에 있어야 「발송 시도만 센다」가 결과를 가른다(기타 차단 10시).
@@ -434,5 +454,10 @@ export const output: Record<string, string> = {
       <BottomNav />
     </MemoryRouter>,
   ),
+  // 오늘 보내지 않은 이유 — 0건 줄 숨김 · 카톡 실패 2키 합산(원인 어휘 없음) · 합계 · 전부 0이면 빈 상태
+  skip_some: renderToStaticMarkup(<SkipReasonsCard counts={SKIP_SOME} />),
+  skip_some_class: classTokens(renderToStaticMarkup(<SkipReasonsCard counts={SKIP_SOME} />)),
+  skip_no_fail_class: classTokens(renderToStaticMarkup(<SkipReasonsCard counts={{ ...SKIP_ZERO, not_target: 2 }} />)),
+  skip_zero: renderToStaticMarkup(<SkipReasonsCard counts={SKIP_ZERO} />),
   card_new: card(item("doorbell", "2020-01-01T09:00:00.000+09:00", status(true, false, "skipped", null)), true),
 }
