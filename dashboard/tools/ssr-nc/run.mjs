@@ -41,6 +41,7 @@ const SRC = {
   card: "src/components/notifications/NotificationCard.tsx",
   stt: "src/components/notifications/NotificationSTT.tsx",
   meta: "src/lib/notification-meta.ts",
+  banner: "src/lib/banner.ts",
 }
 
 /**
@@ -237,6 +238,32 @@ const CASES = [
     anchor: "isWithinWindow(notification.detected_at, nowMs, FIRE_MOTION_WINDOW_MS)",
     patch: "true",
   },
+  // 전역 경고 띠 — 끊김이 기기 꺼짐보다 먼저. 결함 = 순서를 바꾸면 서버가 죽었는데 옛 기기 상태로 「기기 꺼짐」이 뜬다.
+  // 함정: 한 가지 상태만 켠 입력은 순서와 무관하게 같다 — 끊김 · 꺼짐이 동시에 참인 입력을 단언한다.
+  {
+    id: "NC-G1",
+    file: SRC.banner,
+    desc: "띠 우선순위 뒤집기 — 끊김 · 꺼짐 동시에 '기기' (전역 경고 띠)",
+    anchor: '  if (disconnected) return "server"\n  if (hasHealth && !isOnline) return "device"',
+    patch: '  if (hasHealth && !isOnline) return "device"\n  if (disconnected) return "server"',
+  },
+  // 전역 경고 띠 — 카톡 실패 판정. 결함 = 분기가 없으면 카톡이 끊겨도 띠가 안 뜬다(감사 D04 원래 증상).
+  {
+    id: "NC-G2",
+    file: SRC.banner,
+    desc: "카톡 실패 판정 제거 — 최신 시도 행이 실패여도 '없음' (전역 경고 띠)",
+    anchor: "if (s.skip_reason && KAKAO_FAILURE_REASONS.has(s.skip_reason)) return true",
+    patch: "if (false) return true",
+  },
+  // 전역 경고 띠 — 의도된 차단 행은 건너뛰고 첫 발송 시도 행을 본다. 결함 = 맨 위 행만 보면 실패 뒤 기타 소리
+  // 한 건이 띠를 지운다. 함정: 실패 행이 맨 위인 입력만 보면 같다 — 차단 뒤 실패 입력을 단언한다.
+  {
+    id: "NC-G3",
+    file: SRC.banner,
+    desc: "맨 위 행만 판정 — 차단 뒤 실패가 '없음' (전역 경고 띠)",
+    anchor: "for (const n of notifications) {",
+    patch: "for (const n of notifications.slice(0, 1)) {",
+  },
 ]
 
 /**
@@ -343,6 +370,21 @@ const ASSERTIONS = [
   { fixture: "fire_card_old", kind: "has", text: "border-danger" },
   { fixture: "fire_card_new", kind: "has", text: "animate-shake" },
   { fixture: "fire_card_new", kind: "has", text: "animate-pulse-border" },
+  // 전역 경고 띠
+  { fixture: "banner_kind", kind: "has", text: "끊김·꺼짐·실패=서버" },
+  { fixture: "banner_kind", kind: "has", text: "꺼짐·실패=기기" },
+  { fixture: "banner_kind", kind: "has", text: "켜짐·실패=카톡" },
+  { fixture: "banner_kind", kind: "has", text: "켜짐·차단뒤실패=카톡" },
+  { fixture: "banner_kind", kind: "has", text: "켜짐·보냄뒤실패=없음" },
+  { fixture: "banner_kind", kind: "has", text: "켜짐·실패뒤보냄=카톡" },
+  { fixture: "banner_kind", kind: "has", text: "켜짐·차단만=없음" },
+  { fixture: "banner_kind", kind: "has", text: "상태모름·목록없음=없음" },
+  { fixture: "banner_server", kind: "has", text: "서버와 연결이 끊겼어요" },
+  { fixture: "banner_server", kind: "has", text: "최근 상태를 불러오지 못해 마지막으로 받은 상태를 보여 드려요." },
+  { fixture: "banner_kakao", kind: "has", text: "최근 알림을 카카오톡으로 보내지 못했어요" },
+  { fixture: "banner_kakao", kind: "lacks", text: "토큰 만료" },
+  { fixture: "banner_none", kind: "lacks", text: "서버와 연결이 끊겼어요" },
+  { fixture: "banner_none", kind: "lacks", text: "최근 알림을 카카오톡으로 보내지 못했어요" },
 ]
 
 const abs = (file) => path.join(ROOT, file)

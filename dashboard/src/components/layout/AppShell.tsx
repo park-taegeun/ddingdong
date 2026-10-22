@@ -2,11 +2,13 @@ import { useRef, useState } from "react"
 import { Outlet } from "react-router-dom"
 import { Dialog as DialogPrimitive } from "radix-ui"
 import { OnboardingModal } from "@/components/feedback/OnboardingModal"
+import { StatusBanner } from "@/components/feedback/StatusBanner"
 import { NotificationAnnouncer } from "@/components/notifications/NotificationAnnouncer"
 import { useDevice } from "@/hooks/useDevice"
 import { useNotifications } from "@/hooks/useNotifications"
 import { useReducedMotion } from "@/hooks/useReducedMotion"
 import { useStale } from "@/hooks/useStale"
+import { deriveBanner } from "@/lib/banner"
 import { cn } from "@/lib/utils"
 import { Header } from "./Header"
 import { Sidebar } from "./Sidebar"
@@ -76,6 +78,9 @@ export function AppShell() {
           tabIndex={-1}
           className="flex-1 px-4 py-6 outline-none lg:px-8"
         >
+          <div className="mx-auto w-full max-w-5xl">
+            <StatusBanner kind={deriveBanner(disconnected, isOnline, health !== null, notifications)} />
+          </div>
           <div className={cn("mx-auto w-full max-w-5xl", !reduced && "page-enter")}>
             <Outlet />
           </div>
