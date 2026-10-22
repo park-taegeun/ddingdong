@@ -1,8 +1,6 @@
 import type { Ref } from "react"
 import { Menu, Moon, Sun } from "lucide-react"
 import { useSettings } from "@/contexts/SettingsContext"
-import { useDevice } from "@/hooks/useDevice"
-import { useStale } from "@/hooks/useStale"
 import { deriveConnection } from "@/lib/connection"
 import { cn } from "@/lib/utils"
 
@@ -10,16 +8,18 @@ interface HeaderProps {
   onMenuClick: () => void
   // 모바일 drawer 닫힐 때 포커스를 되돌릴 트리거(B-1b 포커스 복원)
   menuButtonRef?: Ref<HTMLButtonElement>
+  // 연결 상태 입력 — AppShell 이 구독해 넘긴다(전역 경고 띠와 같은 값).
+  isOnline: boolean
+  hasHealth: boolean
+  disconnected: boolean
 }
 
-export function Header({ onMenuClick, menuButtonRef }: HeaderProps) {
-  const { isOnline, health, error, lastUpdated } = useDevice()
-  const disconnected = useStale(lastUpdated, error)
+export function Header({ onMenuClick, menuButtonRef, isOnline, hasHealth, disconnected }: HeaderProps) {
   const { theme, toggleTheme } = useSettings()
 
   const { label: deviceLabel, short: deviceShort, Icon: ConnIcon, colorClass } = deriveConnection(
     isOnline,
-    health !== null,
+    hasHealth,
     disconnected,
   )
 

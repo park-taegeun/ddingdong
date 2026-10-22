@@ -5,12 +5,11 @@
 //   - doorbell/knock → role="status"(aria-live=polite): 대기 후 announce
 //   - other → announce 안 함: 33.13 「other = 알림 차단」을 이 알림 채널도 따른다(목록 행 표시는 유지).
 //   - 등록 판정이 막은 행(SILENT_SKIP_REASONS — 수집 중 억제 · 소리 불일치) → announce 안 함(같은 이유).
-// 폴링 훅(usePolling/useNotifications) 무수정 — 소비 측 additive. 자체 폴링 구독 1개를
-// AppShell에 상시 마운트해, 어느 페이지에 있든(설정/통계 화면 포함) 신규 알림을 announce.
+// 폴링 훅(usePolling/useNotifications) 무수정 — 소비 측 additive. 폴링 구독 1개는 AppShell이 들고
+// (전역 경고 띠와 공유) props로 넘긴다. 상시 마운트라 어느 페이지에 있든(설정/통계 화면 포함) 신규 알림을 announce.
 // "신규만" 보장: seenRef로 announce 완료 ID 추적 + 첫 성공 로드 시 기존 ID 전량 seed(초기 무announce).
 
 import { useEffect, useRef, useState } from "react"
-import { useNotifications } from "@/hooks/useNotifications"
 import { CLASS_META, SILENT_SKIP_REASONS } from "@/lib/notification-meta"
 import type { NotificationItem, PredictedClass } from "@/types/notification"
 
@@ -35,8 +34,13 @@ interface Announcement {
 
 const EMPTY: Announcement = { id: 0, text: "" }
 
-export function NotificationAnnouncer() {
-  const { notifications, lastUpdated } = useNotifications()
+export function NotificationAnnouncer({
+  notifications,
+  lastUpdated,
+}: {
+  notifications: NotificationItem[]
+  lastUpdated: Date | null
+}) {
 
   const seenRef = useRef<Set<string>>(new Set())
   const initializedRef = useRef(false)
