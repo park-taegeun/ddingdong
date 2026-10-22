@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Outlet } from "react-router-dom"
 import { Dialog as DialogPrimitive } from "radix-ui"
 import { OnboardingModal } from "@/components/feedback/OnboardingModal"
@@ -8,7 +8,9 @@ import { useDevice } from "@/hooks/useDevice"
 import { useNotifications } from "@/hooks/useNotifications"
 import { useReducedMotion } from "@/hooks/useReducedMotion"
 import { useStale } from "@/hooks/useStale"
+import type { UnreadState } from "@/hooks/useUnread"
 import { deriveBanner } from "@/lib/banner"
+import { browserStorage, countNew, readLastSeen, titleWithCount, writeLastSeen } from "@/lib/unread"
 import { cn } from "@/lib/utils"
 import { Header } from "./Header"
 import { Sidebar } from "./Sidebar"
@@ -25,6 +27,24 @@ export function AppShell() {
   const { isOnline, health, error, lastUpdated } = useDevice()
   const disconnected = useStale(lastUpdated, error)
   const { notifications, lastUpdated: notificationsUpdated } = useNotifications()
+
+  // 새 알림 표식 — 마지막 확인 시각(브라우저 저장, 실패하면 메모리). 탭 제목은 셸 폴러 목록으로 센다(새 폴링 · 타이머 0).
+  const [lastSeenMs, setLastSeenMs] = useState(() => readLastSeen(browserStorage(), Date.now()))
+  const markSeen = useCallback(() => {
+    const t = Date.now()
+    writeLastSeen(browserStorage(), t)
+    setLastSeenMs(t)
+  }, [])
+  const unread = useMemo<UnreadState>(() => ({ lastSeenMs, markSeen }), [lastSeenMs, markSeen])
+  const newCount = countNew(notifications, lastSeenMs)
+  const [baseTitle] = useState(() => document.title)
+  useEffect(() => {
+    document.title = titleWithCount(newCount, baseTitle)
+    // 셸을 벗어나면(랜딩) 원래 제목으로.
+    return () => {
+      document.title = baseTitle
+    }
+  }, [newCount, baseTitle])
 
   return (
     <div className="flex min-h-screen bg-background-sub">
@@ -82,7 +102,7 @@ export function AppShell() {
             <StatusBanner kind={deriveBanner(disconnected, isOnline, health !== null, notifications)} />
           </div>
           <div className={cn("mx-auto w-full max-w-5xl", !reduced && "page-enter")}>
-            <Outlet />
+            <Outlet context={unread} />
           </div>
         </main>
       </div>

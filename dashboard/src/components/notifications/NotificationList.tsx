@@ -5,6 +5,7 @@ import { LoadingSkeleton } from "@/components/feedback/LoadingSkeleton"
 import { StaleDataNotice } from "@/components/feedback/StaleDataNotice"
 import { useStale } from "@/hooks/useStale"
 import { groupByDay } from "@/lib/notification-filter"
+import { isNewNotification } from "@/lib/unread"
 import type { NotificationItem } from "@/types/notification"
 import { NotificationCard } from "./NotificationCard"
 
@@ -21,6 +22,8 @@ interface NotificationListProps {
   emptySlot?: ReactNode
   // 날짜 묶음 머리(오늘 · 어제 · 10월 19일) — 알림 화면만. 홈은 현행(묶지 않음).
   groupByDay?: boolean
+  // 이 시각보다 뒤에 감지된 발송 시도 행에 「새 알림」 표식(lib/unread.ts). 없으면 표식 0.
+  newSince?: number
 }
 
 export function NotificationList({
@@ -31,6 +34,7 @@ export function NotificationList({
   limit,
   emptySlot,
   groupByDay: grouped = false,
+  newSince,
 }: NotificationListProps) {
   const stale = useStale(lastUpdated, error)
 
@@ -61,6 +65,7 @@ export function NotificationList({
   }
 
   const items = limit ? notifications.slice(0, limit) : notifications
+  const isNew = (n: NotificationItem) => newSince !== undefined && isNewNotification(n, newSince)
 
   return (
     <div className="space-y-3">
@@ -72,7 +77,11 @@ export function NotificationList({
             <section key={group.heading} className="space-y-3">
               <h2 className="pt-2 text-body font-bold text-foreground-secondary">{group.heading}</h2>
               {group.items.map((notification) => (
-                <NotificationCard key={notification.request_id} notification={notification} />
+                <NotificationCard
+                  key={notification.request_id}
+                  notification={notification}
+                  isNew={isNew(notification)}
+                />
               ))}
             </section>
           ))
@@ -80,6 +89,7 @@ export function NotificationList({
             <NotificationCard
               key={notification.request_id}
               notification={notification}
+              isNew={isNew(notification)}
             />
           ))}
     </div>

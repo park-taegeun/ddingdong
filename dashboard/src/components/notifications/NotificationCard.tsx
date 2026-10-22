@@ -19,8 +19,11 @@ import { NotificationTof } from "./NotificationTof"
 
 export function NotificationCard({
   notification,
+  isNew = false,
 }: {
   notification: NotificationItem
+  // 새 알림 표식(lib/unread.ts) — 글자 + 점. 색 단독 의존 금지 · 모션 0 · 자동 사라짐 타이머 0.
+  isNew?: boolean
 }) {
   const { reduceMotion } = useSettings()
   const meta = CLASS_META[notification.predicted_class]
@@ -72,6 +75,12 @@ export function NotificationCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-start gap-2">
             <div className="min-w-0">
+              {isNew && (
+                <p className="flex items-center gap-1.5 text-caption font-bold text-primary">
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-primary" aria-hidden />
+                  새 알림
+                </p>
+              )}
               <h3 className={cn("text-(length:--text-h3) font-bold", isFire && "text-danger-deep")}>
                 {meta.label}
               </h3>

@@ -44,6 +44,7 @@ const SRC = {
   banner: "src/lib/banner.ts",
   statusBanner: "src/components/feedback/StatusBanner.tsx",
   filter: "src/lib/notification-filter.ts",
+  unread: "src/lib/unread.ts",
 }
 
 /**
@@ -317,6 +318,39 @@ const CASES = [
     anchor: '(cls === "all" || n.predicted_class === cls)',
     patch: "true",
   },
+  // 새 알림 — 발송 시도 행만 센다. 결함 = 조건이 빠지면 기타 소리 · 차단 행도 「새」가 되어 탭 제목이 부푼다.
+  // 함정: 확인 시각 뒤에 차단 행이 없으면 결과가 같다 — 픽스처의 기타 차단 행(10시)이 9시 확인보다 뒤다.
+  {
+    id: "NC-E1a",
+    file: SRC.unread,
+    desc: "새 알림에 차단 행 섞기 — 9시 확인 뒤 기타 소리가 '새' (새 알림 표식)",
+    anchor: "isSendAttempt(n) && ",
+    patch: "",
+  },
+  // 새 알림 — 저장값이 없으면 지금으로 초기화. 결함 = 초기화가 빠지면 첫 방문에 불러온 과거 알림이 전부 「새」.
+  {
+    id: "NC-E1b",
+    file: SRC.unread,
+    desc: "저장값 없을 때 초기화 제거 — 첫 방문 새 알림 2 (새 알림 표식)",
+    anchor: "  writeLastSeen(storage, nowMs)\n  return nowMs",
+    patch: "  return 0",
+  },
+  // 새 알림 — 저장소 읽기 예외를 삼킨다. 결함 = 던지면 셸 첫 렌더(useState 초기화)가 깨진다(차단된 사이트 데이터).
+  {
+    id: "NC-E1c-read",
+    file: SRC.unread,
+    desc: "저장소 읽기 예외를 다시 던짐 — 저장실패 '오류' (새 알림 표식)",
+    anchor: "    // 읽기 실패 = 저장값 없음과 같다",
+    patch: '    throw new Error("NC-E1c-read")',
+  },
+  // 새 알림 — 저장소 쓰기 예외도 삼킨다(읽기는 삼키고 쓰기에서 터지는 변형). 같은 픽스처가 잡는다.
+  {
+    id: "NC-E1c-write",
+    file: SRC.unread,
+    desc: "저장소 쓰기 예외를 다시 던짐 — 저장실패 '오류' (새 알림 표식)",
+    anchor: "    // 쓰기 실패 = 이번 화면 동안만 메모리 값으로 동작한다",
+    patch: '    throw new Error("NC-E1c-write")',
+  },
 ]
 
 /**
@@ -466,6 +500,16 @@ const ASSERTIONS = [
   { fixture: "filter_empty", kind: "has", text: "불러온 알림 중에는 맞는 알림이 없어요" },
   { fixture: "filter_empty", kind: "has", text: "필터 해제" },
   { fixture: "filter_empty", kind: "lacks", text: "아직 알림이 없어요" },
+  // 새 알림 표식
+  { fixture: "unread_count", kind: "has", text: "6시확인=2" },
+  { fixture: "unread_count", kind: "has", text: "9시확인=0" },
+  { fixture: "unread_count", kind: "has", text: "첫방문=0" },
+  { fixture: "unread_count", kind: "has", text: "저장소없음=0" },
+  { fixture: "unread_count", kind: "has", text: "저장실패=0" },
+  { fixture: "unread_count", kind: "has", text: "제목2=(2) 띵동" },
+  { fixture: "unread_count", kind: "has", text: "제목0=띵동 — 알림 대시보드" },
+  { fixture: "card_new", kind: "has", text: "새 알림" },
+  { fixture: "card_blocked", kind: "lacks", text: "새 알림" },
 ]
 
 const abs = (file) => path.join(ROOT, file)

@@ -6,12 +6,15 @@ import { StatsCardsSection } from "@/components/stats/StatsCardsSection"
 import { SystemHealthSummaryCard } from "@/components/stats/SystemHealthSummaryCard"
 import { useDevice } from "@/hooks/useDevice"
 import { useNotifications } from "@/hooks/useNotifications"
+import { useUnread } from "@/hooks/useUnread"
 
 export function HomePage() {
   const { notifications, isLoading, error, lastUpdated } = useNotifications()
   // 빈 상태(알림 0건, 정상)일 때 안심 카드로 대체. system_health = useDevice(stats 파생).
   // ※ 폴러 통합은 deferred(decisions.md 8.3) — 본 PR 비범위, 기존 useDevice 패턴 재사용.
   const { health } = useDevice()
+  // 홈은 표식만 보여 주고 지우지 않는다 — 확인은 알림 화면에서.
+  const { lastSeenMs } = useUnread()
 
   return (
     <div className="space-y-8">
@@ -40,6 +43,7 @@ export function HomePage() {
           error={error}
           lastUpdated={lastUpdated}
           limit={3}
+          newSince={lastSeenMs}
           emptySlot={
             health ? <SystemHealthSummaryCard health={health} /> : undefined
           }
