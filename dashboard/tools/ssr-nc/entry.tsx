@@ -13,6 +13,7 @@ import { BottomNav } from "@/components/layout/BottomNav"
 import { NotificationCard } from "@/components/notifications/NotificationCard"
 import { FilterEmpty, NotificationFilterBar } from "@/components/notifications/NotificationFilterBar"
 import { NotificationImage } from "@/components/notifications/NotificationImage"
+import { NotificationList } from "@/components/notifications/NotificationList"
 import { NotificationStatusBadge } from "@/components/notifications/NotificationStatusBadge"
 import { NotificationSTT } from "@/components/notifications/NotificationSTT"
 import { NotificationTof } from "@/components/notifications/NotificationTof"
@@ -459,5 +460,22 @@ export const output: Record<string, string> = {
   skip_some_class: classTokens(renderToStaticMarkup(<SkipReasonsCard counts={SKIP_SOME} />)),
   skip_no_fail_class: classTokens(renderToStaticMarkup(<SkipReasonsCard counts={{ ...SKIP_ZERO, not_target: 2 }} />)),
   skip_zero: renderToStaticMarkup(<SkipReasonsCard counts={SKIP_ZERO} />),
+  // 기타 소리 한 줄 — 화재 · 초인종은 전체 카드, 기타 소리는 한 줄(숨김 0 · 기본 접힘)
+  list_collapse: renderToStaticMarkup(
+    <SettingsProvider>
+      <NotificationList
+        notifications={[
+          item("fire_alarm", "2020-01-01T09:00:00.000+09:00", status(true, false, "skipped", null)),
+          item("other", "2020-01-01T08:00:00.000+09:00", status(false, false, "skipped", null, "not_target")),
+          item("doorbell", "2020-01-01T07:00:00.000+09:00", status(true, false, "skipped", null)),
+        ]}
+        isLoading={false}
+        error={null}
+        lastUpdated={null}
+        groupByDay
+        collapseOther
+      />
+    </SettingsProvider>,
+  ),
   card_new: card(item("doorbell", "2020-01-01T09:00:00.000+09:00", status(true, false, "skipped", null)), true),
 }

@@ -46,6 +46,7 @@ const SRC = {
   filter: "src/lib/notification-filter.ts",
   unread: "src/lib/unread.ts",
   skipCard: "src/components/stats/SkipReasonsCard.tsx",
+  list: "src/components/notifications/NotificationList.tsx",
 }
 
 /**
@@ -386,6 +387,22 @@ const CASES = [
     anchor: "{r.failure ? (",
     patch: "{false ? (",
   },
+  // 기타 소리 한 줄 — 줄이는 것은 기타 소리뿐. 결함 = 화재까지 줄이면 대응 수칙이 접힌 채 지나간다.
+  {
+    id: "NC-E5",
+    file: SRC.list,
+    desc: "화재 행도 한 줄로 — '화재 시 대응 수칙' 없음 (기타 소리 축약)",
+    anchor: 'collapseOther && n.predicted_class === "other" ? (',
+    patch: 'collapseOther && (n.predicted_class === "other" || n.predicted_class === "fire_alarm") ? (',
+  },
+  // 기타 소리 한 줄 — 숨기지 않는다(33.17(f)①). 결함 = 줄이는 대신 빼면 목록에서 기타 소리가 사라진다.
+  {
+    id: "NC-E5b",
+    file: SRC.list,
+    desc: "기타 소리 행 숨김 — '기타 소리' · '알림 안 보냄' 없음 (33.17(f)①)",
+    anchor: "<OtherRow key={n.request_id} notification={n} />",
+    patch: "null",
+  },
 ]
 
 /**
@@ -573,6 +590,12 @@ const ASSERTIONS = [
   { fixture: "skip_no_fail_class", kind: "lacks", text: "lucide-triangle-alert" },
   { fixture: "skip_zero", kind: "has", text: "오늘은 보내지 않은 알림이 없어요." },
   { fixture: "skip_zero", kind: "lacks", text: "모두 0건" },
+  // 기타 소리 한 줄
+  { fixture: "list_collapse", kind: "has", text: "화재 시 대응 수칙" },
+  { fixture: "list_collapse", kind: "has", text: "초인종" },
+  { fixture: "list_collapse", kind: "has", text: "기타 소리" },
+  { fixture: "list_collapse", kind: "has", text: "알림 안 보냄" },
+  { fixture: "list_collapse", kind: "lacks", text: "알림 대상이 아닌 소리 때문에 알림을 보내지 않았어요." },
 ]
 
 const abs = (file) => path.join(ROOT, file)

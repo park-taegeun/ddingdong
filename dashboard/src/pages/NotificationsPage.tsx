@@ -77,6 +77,7 @@ export function NotificationsPage() {
         lastUpdated={lastUpdated}
         groupByDay
         newSince={newSince}
+        collapseOther
         // 불러온 알림은 있는데 거른 결과가 0건 — 「알림이 없다」가 아니라 「불러온 것 중에 없다」.
         emptySlot={notifications.length > 0 ? <FilterEmpty onClear={clearFilter} /> : undefined}
       />
