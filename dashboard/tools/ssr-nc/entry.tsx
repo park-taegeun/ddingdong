@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { StaleDataNotice } from "@/components/feedback/StaleDataNotice"
 import { StatusBanner } from "@/components/feedback/StatusBanner"
 import { NotificationCard } from "@/components/notifications/NotificationCard"
+import { FilterEmpty, NotificationFilterBar } from "@/components/notifications/NotificationFilterBar"
 import { NotificationImage } from "@/components/notifications/NotificationImage"
 import { NotificationStatusBadge } from "@/components/notifications/NotificationStatusBadge"
 import { NotificationSTT } from "@/components/notifications/NotificationSTT"
@@ -28,7 +29,7 @@ import {
 import { formatDayHeading, formatDetectedAt } from "@/lib/format"
 import { nextRetryDelay, retryUrl } from "@/lib/image-retry"
 import { loadMoreState, nextLimit } from "@/lib/load-more"
-import { groupByDay } from "@/lib/notification-filter"
+import { filterNotifications, filterSummary, groupByDay } from "@/lib/notification-filter"
 import { isWithinWindow } from "@/lib/notification-meta"
 import type {
   NotificationItem,
@@ -173,6 +174,17 @@ const bannerAt = (disconnected: boolean, isOnline: boolean, hasHealth: boolean, 
   const k = deriveBanner(disconnected, isOnline, hasHealth, rows)
   return k ? BANNER_LABEL[k] : "없음"
 }
+
+// 알림 화면 필터 — 불러온 4건(초인종 보냄 · 노크 실패 · 기타 차단 · 초인종 차단) 안에서만 거른다.
+const LOADED = [
+  SENT,
+  FAILED,
+  BLOCKED,
+  { ...item("doorbell", "2026-10-21T07:00:00.000+09:00", status(false, false, "skipped", null, "low_confidence")), request_id: "nc-doorbell-low" },
+]
+const filterAt = (cls: Parameters<typeof filterNotifications>[1], sentOnly: boolean) =>
+  filterNotifications(LOADED, cls, sentOnly).length
+const noop = () => {}
 
 export const output: Record<string, string> = {
   // 8.5(f) 실렌더 대조 픽스처 (카카오 토큰 3상태 + 만료 경과 환산)
@@ -356,4 +368,21 @@ export const output: Record<string, string> = {
       ))}
     </ul>,
   ),
+
+  // 알림 화면 필터 — 종류 · 보낸 알림만 · 둘 다 · 범위 안내
+  filter_result: renderToStaticMarkup(
+    <ul>
+      <li>{`전체=${filterAt("all", false)}`}</li>
+      <li>{`초인종=${filterAt("doorbell", false)}`}</li>
+      <li>{`기타=${filterAt("other", false)}`}</li>
+      <li>{`보낸만=${filterAt("all", true)}`}</li>
+      <li>{`초인종·보낸만=${filterAt("doorbell", true)}`}</li>
+      <li>{`노크·보낸만=${filterAt("knock", true)}`}</li>
+      <li>{filterSummary(LOADED.length, filterAt("doorbell", true))}</li>
+    </ul>,
+  ),
+  filter_bar: renderToStaticMarkup(
+    <NotificationFilterBar cls="fire_alarm" sentOnly={false} onClsChange={noop} onSentOnlyChange={noop} />,
+  ),
+  filter_empty: renderToStaticMarkup(<FilterEmpty onClear={noop} />),
 }

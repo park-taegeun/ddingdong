@@ -1,5 +1,6 @@
 import { Inbox } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
+import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
 interface EmptyStateProps {
@@ -7,6 +8,8 @@ interface EmptyStateProps {
   title: string
   description?: string
   tone?: "default" | "error"
+  // 설명 아래 행동 버튼(예: 「필터 해제」)
+  action?: ReactNode
 }
 
 export function EmptyState({
@@ -14,6 +17,7 @@ export function EmptyState({
   title,
   description,
   tone = "default",
+  action,
 }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-background px-6 py-12 text-center">
@@ -33,6 +37,7 @@ export function EmptyState({
           {description}
         </p>
       )}
+      {action && <div className="mt-4">{action}</div>}
     </div>
   )
 }

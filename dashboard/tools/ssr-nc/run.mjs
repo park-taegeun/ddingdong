@@ -282,6 +282,31 @@ const CASES = [
     anchor: "if (last && last.heading === heading) last.items.push(item)",
     patch: "if (false) last.items.push(item)",
   },
+  // 필터 범위 — 안내는 「불러온 알림 N건 중」을 함께 말한다. 결함 = 범위가 빠지면 화면에 불러온 20건 안의 결과가
+  // 전체 기록의 건수처럼 읽힌다(더 보기로 늘 수 있다).
+  {
+    id: "NC-F1",
+    file: SRC.filter,
+    desc: "필터 안내에서 범위 제거 — '1건'만 (불러온 범위를 넘어 단정)",
+    anchor: "return `불러온 알림 ${loaded}건 중 ${shown}건`",
+    patch: "return `${shown}건`",
+  },
+  // 「보낸 알림만」 — primary_sent 만 남긴다. 결함 = 조건이 빠지면 토글이 아무것도 거르지 않는다.
+  {
+    id: "NC-F2",
+    file: SRC.filter,
+    desc: "보낸 알림만 조건 제거 — 보낸만 4건 (필터)",
+    anchor: "(!sentOnly || n.notification_status.primary_sent)",
+    patch: "true",
+  },
+  // 종류 칩 — 결함 = 조건이 빠지면 칩이 아무것도 거르지 않는다. 함정: 「전체」만 보면 같다.
+  {
+    id: "NC-F3",
+    file: SRC.filter,
+    desc: "종류 조건 제거 — 초인종 칩이 4건 (필터)",
+    anchor: '(cls === "all" || n.predicted_class === cls)',
+    patch: "true",
+  },
 ]
 
 /**
@@ -413,6 +438,23 @@ const ASSERTIONS = [
   { fixture: "day_groups", kind: "has", text: "오늘=2" },
   { fixture: "day_groups", kind: "has", text: "어제=1" },
   { fixture: "day_groups", kind: "has", text: "10월 19일=1" },
+  // 알림 화면 필터
+  { fixture: "filter_result", kind: "has", text: "전체=4" },
+  { fixture: "filter_result", kind: "has", text: "초인종=2" },
+  { fixture: "filter_result", kind: "has", text: "기타=1" },
+  { fixture: "filter_result", kind: "has", text: "보낸만=1" },
+  { fixture: "filter_result", kind: "has", text: "초인종·보낸만=1" },
+  { fixture: "filter_result", kind: "has", text: "노크·보낸만=0" },
+  { fixture: "filter_result", kind: "has", text: "불러온 알림 4건 중 1건" },
+  { fixture: "filter_bar", kind: "has", text: "전체" },
+  { fixture: "filter_bar", kind: "has", text: "초인종" },
+  { fixture: "filter_bar", kind: "has", text: "노크" },
+  { fixture: "filter_bar", kind: "has", text: "화재경보" },
+  { fixture: "filter_bar", kind: "has", text: "기타 소리" },
+  { fixture: "filter_bar", kind: "has", text: "보낸 알림만" },
+  { fixture: "filter_empty", kind: "has", text: "불러온 알림 중에는 맞는 알림이 없어요" },
+  { fixture: "filter_empty", kind: "has", text: "필터 해제" },
+  { fixture: "filter_empty", kind: "lacks", text: "아직 알림이 없어요" },
 ]
 
 const abs = (file) => path.join(ROOT, file)
