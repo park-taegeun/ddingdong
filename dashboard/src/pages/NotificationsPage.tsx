@@ -31,6 +31,7 @@ export function NotificationsPage() {
         isLoading={isLoading}
         error={error}
         lastUpdated={lastUpdated}
+        groupByDay
       />
 
       {notifications.length > 0 && loadState && (

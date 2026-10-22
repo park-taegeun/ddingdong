@@ -25,9 +25,10 @@ import {
   NOTIFICATIONS_PAGE_STEP,
   STALE_AFTER_MS,
 } from "@/lib/constants"
-import { formatDetectedAt } from "@/lib/format"
+import { formatDayHeading, formatDetectedAt } from "@/lib/format"
 import { nextRetryDelay, retryUrl } from "@/lib/image-retry"
 import { loadMoreState, nextLimit } from "@/lib/load-more"
+import { groupByDay } from "@/lib/notification-filter"
 import { isWithinWindow } from "@/lib/notification-meta"
 import type {
   NotificationItem,
@@ -327,4 +328,32 @@ export const output: Record<string, string> = {
   banner_server: renderToStaticMarkup(<StatusBanner kind="server" />),
   banner_kakao: renderToStaticMarkup(<StatusBanner kind="kakao" />),
   banner_none: renderToStaticMarkup(<StatusBanner kind={null} />),
+
+  // 알림 화면 날짜 묶음 머리 — 달력(자정) 경계 · 다른 해 · 잘못된 값(기준 = 10월 21일 오전 9시 지역 시각)
+  day_heading: renderToStaticMarkup(
+    <ul>
+      <li>{`오늘0시=${formatDayHeading(localIso(2026, 9, 21, 0, 0), DAY_NOW)}`}</li>
+      <li>{`어제2359=${formatDayHeading(localIso(2026, 9, 20, 23, 59), DAY_NOW)}`}</li>
+      <li>{`어제0시=${formatDayHeading(localIso(2026, 9, 20, 0, 0), DAY_NOW)}`}</li>
+      <li>{`그제2359=${formatDayHeading(localIso(2026, 9, 19, 23, 59), DAY_NOW)}`}</li>
+      <li>{`작년=${formatDayHeading(localIso(2025, 11, 31, 23, 0), DAY_NOW)}`}</li>
+      <li>{`잘못=${formatDayHeading("x", DAY_NOW)}`}</li>
+    </ul>,
+  ),
+  // 날짜 묶음 — 최신순 4건이 자정을 사이에 두고 「오늘 2 · 어제 1 · 10월 19일 1」로 나뉜다
+  day_groups: renderToStaticMarkup(
+    <ul>
+      {groupByDay(
+        [
+          localIso(2026, 9, 21, 8, 0),
+          localIso(2026, 9, 21, 0, 0),
+          localIso(2026, 9, 20, 23, 59),
+          localIso(2026, 9, 19, 12, 0),
+        ].map((iso) => item("doorbell", iso, status(true, false, "skipped", null))),
+        DAY_NOW,
+      ).map((g) => (
+        <li key={g.heading}>{`${g.heading}=${g.items.length}`}</li>
+      ))}
+    </ul>,
+  ),
 }

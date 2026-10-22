@@ -42,6 +42,7 @@ const SRC = {
   stt: "src/components/notifications/NotificationSTT.tsx",
   meta: "src/lib/notification-meta.ts",
   banner: "src/lib/banner.ts",
+  filter: "src/lib/notification-filter.ts",
 }
 
 /**
@@ -264,6 +265,23 @@ const CASES = [
     anchor: "for (const n of notifications) {",
     patch: "for (const n of notifications.slice(0, 1)) {",
   },
+  // 날짜 묶음 머리 — 달력(자정) 기준. 결함 = 경과 시간으로 세면 어제 23:59(9시간 전)가 「오늘」 묶음에 들어간다.
+  // 함정: 어제 0시(33시간 전)만 보면 같다 — 자정 바로 전 시각을 단언한다. 앵커는 NC-D1(카드 시각)과 문자열 비포함.
+  {
+    id: "NC-D3",
+    file: SRC.format,
+    desc: "묶음 머리 날짜 판정을 경과 시간으로 — 어제 23:59 가 '오늘' (날짜 묶음 자정 경계)",
+    anchor: "const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()",
+    patch: "const startOfDay = (x: Date) => x.getTime()",
+  },
+  // 날짜 묶음 — 이웃한 같은 날만 합친다. 결함 = 비교가 빠지면 하루 한 묶음이 아니라 행마다 머리가 붙는다.
+  {
+    id: "NC-D4",
+    file: SRC.filter,
+    desc: "같은 날 합치기 제거 — 오늘 2건이 머리 2개 (날짜 묶음)",
+    anchor: "if (last && last.heading === heading) last.items.push(item)",
+    patch: "if (false) last.items.push(item)",
+  },
 ]
 
 /**
@@ -385,6 +403,16 @@ const ASSERTIONS = [
   { fixture: "banner_kakao", kind: "lacks", text: "토큰 만료" },
   { fixture: "banner_none", kind: "lacks", text: "서버와 연결이 끊겼어요" },
   { fixture: "banner_none", kind: "lacks", text: "최근 알림을 카카오톡으로 보내지 못했어요" },
+  // 날짜 묶음 머리 · 묶음
+  { fixture: "day_heading", kind: "has", text: "오늘0시=오늘" },
+  { fixture: "day_heading", kind: "has", text: "어제2359=어제" },
+  { fixture: "day_heading", kind: "has", text: "어제0시=어제" },
+  { fixture: "day_heading", kind: "has", text: "그제2359=10월 19일" },
+  { fixture: "day_heading", kind: "has", text: "작년=2025년 12월 31일" },
+  { fixture: "day_heading", kind: "has", text: "잘못=-" },
+  { fixture: "day_groups", kind: "has", text: "오늘=2" },
+  { fixture: "day_groups", kind: "has", text: "어제=1" },
+  { fixture: "day_groups", kind: "has", text: "10월 19일=1" },
 ]
 
 const abs = (file) => path.join(ROOT, file)
