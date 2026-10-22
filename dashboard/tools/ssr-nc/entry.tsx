@@ -7,13 +7,16 @@
 // ★ 픽스처 시각·수치는 전부 고정 주입이다 — 실 서버·실 시계 미호출(8.5(g) 동형).
 import { renderToStaticMarkup } from "react-dom/server"
 import { StaleDataNotice } from "@/components/feedback/StaleDataNotice"
+import { StatusBanner } from "@/components/feedback/StatusBanner"
 import { NotificationCard } from "@/components/notifications/NotificationCard"
+import { FilterEmpty, NotificationFilterBar } from "@/components/notifications/NotificationFilterBar"
 import { NotificationImage } from "@/components/notifications/NotificationImage"
 import { NotificationStatusBadge } from "@/components/notifications/NotificationStatusBadge"
 import { NotificationSTT } from "@/components/notifications/NotificationSTT"
 import { NotificationTof } from "@/components/notifications/NotificationTof"
 import { SystemHealthCard } from "@/components/stats/SystemHealthCard"
 import { SettingsProvider } from "@/contexts/SettingsContext"
+import { deriveBanner } from "@/lib/banner"
 import { deriveConnection, isStale } from "@/lib/connection"
 import {
   FIRE_MOTION_WINDOW_MS,
@@ -23,9 +26,10 @@ import {
   NOTIFICATIONS_PAGE_STEP,
   STALE_AFTER_MS,
 } from "@/lib/constants"
-import { formatDetectedAt } from "@/lib/format"
+import { formatDayHeading, formatDetectedAt } from "@/lib/format"
 import { nextRetryDelay, retryUrl } from "@/lib/image-retry"
 import { loadMoreState, nextLimit } from "@/lib/load-more"
+import { filterNotifications, filterSummary, groupByDay } from "@/lib/notification-filter"
 import { isWithinWindow } from "@/lib/notification-meta"
 import type {
   NotificationItem,
@@ -160,6 +164,27 @@ const card = (n: NotificationItem) =>
 const WINDOW_NOW = Date.parse("2026-10-21T09:00:00.000+09:00")
 const windowAt = (iso: string) =>
   isWithinWindow(iso, WINDOW_NOW, FIRE_MOTION_WINDOW_MS) ? "창 안" : "창 밖"
+
+// 전역 경고 띠 — 우선순위 · 카톡 판정. 목록은 최신순(앞이 최신). 시각은 판정에 안 쓰인다.
+const SENT = item("doorbell", "2026-10-21T09:00:00.000+09:00", status(true, false, "skipped", null))
+const FAILED = item("knock", "2026-10-21T08:00:00.000+09:00", status(false, false, "skipped", null, "token_expired"))
+const BLOCKED = item("other", "2026-10-21T10:00:00.000+09:00", status(false, false, "skipped", null, "not_target"))
+const BANNER_LABEL = { server: "서버", device: "기기", kakao: "카톡" } as const
+const bannerAt = (disconnected: boolean, isOnline: boolean, hasHealth: boolean, rows: NotificationItem[]) => {
+  const k = deriveBanner(disconnected, isOnline, hasHealth, rows)
+  return k ? BANNER_LABEL[k] : "없음"
+}
+
+// 알림 화면 필터 — 불러온 4건(초인종 보냄 · 노크 실패 · 기타 차단 · 초인종 차단) 안에서만 거른다.
+const LOADED = [
+  SENT,
+  FAILED,
+  BLOCKED,
+  { ...item("doorbell", "2026-10-21T07:00:00.000+09:00", status(false, false, "skipped", null, "low_confidence")), request_id: "nc-doorbell-low" },
+]
+const filterAt = (cls: Parameters<typeof filterNotifications>[1], sentOnly: boolean) =>
+  filterNotifications(LOADED, cls, sentOnly).length
+const noop = () => {}
 
 export const output: Record<string, string> = {
   // 8.5(f) 실렌더 대조 픽스처 (카카오 토큰 3상태 + 만료 경과 환산)
@@ -298,4 +323,66 @@ export const output: Record<string, string> = {
   ),
   fire_card_old: classTokens(card(item("fire_alarm", "2020-01-01T09:00:00.000+09:00", status(true, false, "skipped", null)))),
   fire_card_new: classTokens(card(item("fire_alarm", "2100-01-01T09:00:00.000+09:00", status(true, false, "skipped", null)))),
+
+  // 전역 경고 띠 — 우선순위(끊김 > 기기 꺼짐 > 카톡) · 최신 발송 시도 행 기준 · 차단 행 건너뛰기
+  banner_kind: renderToStaticMarkup(
+    <ul>
+      <li>{`끊김·꺼짐·실패=${bannerAt(true, false, true, [FAILED])}`}</li>
+      <li>{`꺼짐·실패=${bannerAt(false, false, true, [FAILED])}`}</li>
+      <li>{`켜짐·실패=${bannerAt(false, true, true, [FAILED])}`}</li>
+      <li>{`켜짐·차단뒤실패=${bannerAt(false, true, true, [BLOCKED, FAILED])}`}</li>
+      <li>{`켜짐·보냄뒤실패=${bannerAt(false, true, true, [SENT, FAILED])}`}</li>
+      <li>{`켜짐·실패뒤보냄=${bannerAt(false, true, true, [FAILED, SENT])}`}</li>
+      <li>{`켜짐·차단만=${bannerAt(false, true, true, [BLOCKED])}`}</li>
+      <li>{`상태모름·목록없음=${bannerAt(false, false, false, [])}`}</li>
+    </ul>,
+  ),
+  banner_server: renderToStaticMarkup(<StatusBanner kind="server" />),
+  banner_kakao: renderToStaticMarkup(<StatusBanner kind="kakao" />),
+  banner_none: renderToStaticMarkup(<StatusBanner kind={null} />),
+
+  // 알림 화면 날짜 묶음 머리 — 달력(자정) 경계 · 다른 해 · 잘못된 값(기준 = 10월 21일 오전 9시 지역 시각)
+  day_heading: renderToStaticMarkup(
+    <ul>
+      <li>{`오늘0시=${formatDayHeading(localIso(2026, 9, 21, 0, 0), DAY_NOW)}`}</li>
+      <li>{`어제2359=${formatDayHeading(localIso(2026, 9, 20, 23, 59), DAY_NOW)}`}</li>
+      <li>{`어제0시=${formatDayHeading(localIso(2026, 9, 20, 0, 0), DAY_NOW)}`}</li>
+      <li>{`그제2359=${formatDayHeading(localIso(2026, 9, 19, 23, 59), DAY_NOW)}`}</li>
+      <li>{`작년=${formatDayHeading(localIso(2025, 11, 31, 23, 0), DAY_NOW)}`}</li>
+      <li>{`잘못=${formatDayHeading("x", DAY_NOW)}`}</li>
+    </ul>,
+  ),
+  // 날짜 묶음 — 최신순 4건이 자정을 사이에 두고 「오늘 2 · 어제 1 · 10월 19일 1」로 나뉜다
+  day_groups: renderToStaticMarkup(
+    <ul>
+      {groupByDay(
+        [
+          localIso(2026, 9, 21, 8, 0),
+          localIso(2026, 9, 21, 0, 0),
+          localIso(2026, 9, 20, 23, 59),
+          localIso(2026, 9, 19, 12, 0),
+        ].map((iso) => item("doorbell", iso, status(true, false, "skipped", null))),
+        DAY_NOW,
+      ).map((g) => (
+        <li key={g.heading}>{`${g.heading}=${g.items.length}`}</li>
+      ))}
+    </ul>,
+  ),
+
+  // 알림 화면 필터 — 종류 · 보낸 알림만 · 둘 다 · 범위 안내
+  filter_result: renderToStaticMarkup(
+    <ul>
+      <li>{`전체=${filterAt("all", false)}`}</li>
+      <li>{`초인종=${filterAt("doorbell", false)}`}</li>
+      <li>{`기타=${filterAt("other", false)}`}</li>
+      <li>{`보낸만=${filterAt("all", true)}`}</li>
+      <li>{`초인종·보낸만=${filterAt("doorbell", true)}`}</li>
+      <li>{`노크·보낸만=${filterAt("knock", true)}`}</li>
+      <li>{filterSummary(LOADED.length, filterAt("doorbell", true))}</li>
+    </ul>,
+  ),
+  filter_bar: renderToStaticMarkup(
+    <NotificationFilterBar cls="fire_alarm" sentOnly={false} onClsChange={noop} onSentOnlyChange={noop} />,
+  ),
+  filter_empty: renderToStaticMarkup(<FilterEmpty onClear={noop} />),
 }

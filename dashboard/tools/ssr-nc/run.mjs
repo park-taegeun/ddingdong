@@ -41,6 +41,9 @@ const SRC = {
   card: "src/components/notifications/NotificationCard.tsx",
   stt: "src/components/notifications/NotificationSTT.tsx",
   meta: "src/lib/notification-meta.ts",
+  banner: "src/lib/banner.ts",
+  statusBanner: "src/components/feedback/StatusBanner.tsx",
+  filter: "src/lib/notification-filter.ts",
 }
 
 /**
@@ -237,6 +240,83 @@ const CASES = [
     anchor: "isWithinWindow(notification.detected_at, nowMs, FIRE_MOTION_WINDOW_MS)",
     patch: "true",
   },
+  // 전역 경고 띠 — 끊김이 기기 꺼짐보다 먼저. 결함 = 순서를 바꾸면 서버가 죽었는데 옛 기기 상태로 「기기 꺼짐」이 뜬다.
+  // 함정: 한 가지 상태만 켠 입력은 순서와 무관하게 같다 — 끊김 · 꺼짐이 동시에 참인 입력을 단언한다.
+  {
+    id: "NC-G1",
+    file: SRC.banner,
+    desc: "띠 우선순위 뒤집기 — 끊김 · 꺼짐 동시에 '기기' (전역 경고 띠)",
+    anchor: '  if (disconnected) return "server"\n  if (hasHealth && !isOnline) return "device"',
+    patch: '  if (hasHealth && !isOnline) return "device"\n  if (disconnected) return "server"',
+  },
+  // 전역 경고 띠 — 카톡 실패 판정. 결함 = 분기가 없으면 카톡이 끊겨도 띠가 안 뜬다(감사 D04 원래 증상).
+  {
+    id: "NC-G2",
+    file: SRC.banner,
+    desc: "카톡 실패 판정 제거 — 최신 시도 행이 실패여도 '없음' (전역 경고 띠)",
+    anchor: "if (s.skip_reason && KAKAO_FAILURE_REASONS.has(s.skip_reason)) return true",
+    patch: "if (false) return true",
+  },
+  // 전역 경고 띠 — 의도된 차단 행은 건너뛰고 첫 발송 시도 행을 본다. 결함 = 맨 위 행만 보면 실패 뒤 기타 소리
+  // 한 건이 띠를 지운다. 함정: 실패 행이 맨 위인 입력만 보면 같다 — 차단 뒤 실패 입력을 단언한다.
+  {
+    id: "NC-G3",
+    file: SRC.banner,
+    desc: "맨 위 행만 판정 — 차단 뒤 실패가 '없음' (전역 경고 띠)",
+    anchor: "for (const n of notifications) {",
+    patch: "for (const n of notifications.slice(0, 1)) {",
+  },
+  // 띠 ① 본문 — 결함 = 끊김 안내 문장을 되살리면 옛 데이터 없는 화면(「알림을 불러오지 못했어요」) 위에서
+  // 사실과 다른 말이 되고, 목록 위 끊김 안내와 겹친다. 패치는 문자열 그대로(띠 파일은 그 상수를 import 하지 않는다).
+  {
+    id: "NC-G4",
+    file: SRC.statusBanner,
+    desc: "띠 ① 본문 되살리기 — 끊김 띠에 '최근 상태를 불러오지 못해 …' (전역 경고 띠)",
+    anchor: 'server: { Icon: ServerOff, title: "서버와 연결이 끊겼어요" },',
+    patch: 'server: { Icon: ServerOff, title: "서버와 연결이 끊겼어요", body: "최근 상태를 불러오지 못해 마지막으로 받은 상태를 보여 드려요." },',
+  },
+  // 날짜 묶음 머리 — 달력(자정) 기준. 결함 = 경과 시간으로 세면 어제 23:59(9시간 전)가 「오늘」 묶음에 들어간다.
+  // 함정: 어제 0시(33시간 전)만 보면 같다 — 자정 바로 전 시각을 단언한다. 앵커는 NC-D1(카드 시각)과 문자열 비포함.
+  {
+    id: "NC-D3",
+    file: SRC.format,
+    desc: "묶음 머리 날짜 판정을 경과 시간으로 — 어제 23:59 가 '오늘' (날짜 묶음 자정 경계)",
+    anchor: "const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()",
+    patch: "const startOfDay = (x: Date) => x.getTime()",
+  },
+  // 날짜 묶음 — 이웃한 같은 날만 합친다. 결함 = 비교가 빠지면 하루 한 묶음이 아니라 행마다 머리가 붙는다.
+  {
+    id: "NC-D4",
+    file: SRC.filter,
+    desc: "같은 날 합치기 제거 — 오늘 2건이 머리 2개 (날짜 묶음)",
+    anchor: "if (last && last.heading === heading) last.items.push(item)",
+    patch: "if (false) last.items.push(item)",
+  },
+  // 필터 범위 — 안내는 「불러온 알림 N건 중」을 함께 말한다. 결함 = 범위가 빠지면 화면에 불러온 20건 안의 결과가
+  // 전체 기록의 건수처럼 읽힌다(더 보기로 늘 수 있다).
+  {
+    id: "NC-F1",
+    file: SRC.filter,
+    desc: "필터 안내에서 범위 제거 — '1건'만 (불러온 범위를 넘어 단정)",
+    anchor: "return `불러온 알림 ${loaded}건 중 ${shown}건`",
+    patch: "return `${shown}건`",
+  },
+  // 「보낸 알림만」 — primary_sent 만 남긴다. 결함 = 조건이 빠지면 토글이 아무것도 거르지 않는다.
+  {
+    id: "NC-F2",
+    file: SRC.filter,
+    desc: "보낸 알림만 조건 제거 — 보낸만 4건 (필터)",
+    anchor: "(!sentOnly || n.notification_status.primary_sent)",
+    patch: "true",
+  },
+  // 종류 칩 — 결함 = 조건이 빠지면 칩이 아무것도 거르지 않는다. 함정: 「전체」만 보면 같다.
+  {
+    id: "NC-F3",
+    file: SRC.filter,
+    desc: "종류 조건 제거 — 초인종 칩이 4건 (필터)",
+    anchor: '(cls === "all" || n.predicted_class === cls)',
+    patch: "true",
+  },
 ]
 
 /**
@@ -343,6 +423,49 @@ const ASSERTIONS = [
   { fixture: "fire_card_old", kind: "has", text: "border-danger" },
   { fixture: "fire_card_new", kind: "has", text: "animate-shake" },
   { fixture: "fire_card_new", kind: "has", text: "animate-pulse-border" },
+  // 전역 경고 띠
+  { fixture: "banner_kind", kind: "has", text: "끊김·꺼짐·실패=서버" },
+  { fixture: "banner_kind", kind: "has", text: "꺼짐·실패=기기" },
+  { fixture: "banner_kind", kind: "has", text: "켜짐·실패=카톡" },
+  { fixture: "banner_kind", kind: "has", text: "켜짐·차단뒤실패=카톡" },
+  { fixture: "banner_kind", kind: "has", text: "켜짐·보냄뒤실패=없음" },
+  { fixture: "banner_kind", kind: "has", text: "켜짐·실패뒤보냄=카톡" },
+  { fixture: "banner_kind", kind: "has", text: "켜짐·차단만=없음" },
+  { fixture: "banner_kind", kind: "has", text: "상태모름·목록없음=없음" },
+  { fixture: "banner_server", kind: "has", text: "서버와 연결이 끊겼어요" },
+  // 띠 ①은 제목만(사용자 결정 2026-10-22) — 옛 데이터가 없을 때 「마지막으로 받은 상태」는 사실과 다르다.
+  { fixture: "banner_server", kind: "lacks", text: "최근 상태를 불러오지 못해 마지막으로 받은 상태를 보여 드려요." },
+  { fixture: "banner_kakao", kind: "has", text: "최근 알림을 카카오톡으로 보내지 못했어요" },
+  { fixture: "banner_kakao", kind: "lacks", text: "토큰 만료" },
+  { fixture: "banner_none", kind: "lacks", text: "서버와 연결이 끊겼어요" },
+  { fixture: "banner_none", kind: "lacks", text: "최근 알림을 카카오톡으로 보내지 못했어요" },
+  // 날짜 묶음 머리 · 묶음
+  { fixture: "day_heading", kind: "has", text: "오늘0시=오늘" },
+  { fixture: "day_heading", kind: "has", text: "어제2359=어제" },
+  { fixture: "day_heading", kind: "has", text: "어제0시=어제" },
+  { fixture: "day_heading", kind: "has", text: "그제2359=10월 19일" },
+  { fixture: "day_heading", kind: "has", text: "작년=2025년 12월 31일" },
+  { fixture: "day_heading", kind: "has", text: "잘못=-" },
+  { fixture: "day_groups", kind: "has", text: "오늘=2" },
+  { fixture: "day_groups", kind: "has", text: "어제=1" },
+  { fixture: "day_groups", kind: "has", text: "10월 19일=1" },
+  // 알림 화면 필터
+  { fixture: "filter_result", kind: "has", text: "전체=4" },
+  { fixture: "filter_result", kind: "has", text: "초인종=2" },
+  { fixture: "filter_result", kind: "has", text: "기타=1" },
+  { fixture: "filter_result", kind: "has", text: "보낸만=1" },
+  { fixture: "filter_result", kind: "has", text: "초인종·보낸만=1" },
+  { fixture: "filter_result", kind: "has", text: "노크·보낸만=0" },
+  { fixture: "filter_result", kind: "has", text: "불러온 알림 4건 중 1건" },
+  { fixture: "filter_bar", kind: "has", text: "전체" },
+  { fixture: "filter_bar", kind: "has", text: "초인종" },
+  { fixture: "filter_bar", kind: "has", text: "노크" },
+  { fixture: "filter_bar", kind: "has", text: "화재경보" },
+  { fixture: "filter_bar", kind: "has", text: "기타 소리" },
+  { fixture: "filter_bar", kind: "has", text: "보낸 알림만" },
+  { fixture: "filter_empty", kind: "has", text: "불러온 알림 중에는 맞는 알림이 없어요" },
+  { fixture: "filter_empty", kind: "has", text: "필터 해제" },
+  { fixture: "filter_empty", kind: "lacks", text: "아직 알림이 없어요" },
 ]
 
 const abs = (file) => path.join(ROOT, file)

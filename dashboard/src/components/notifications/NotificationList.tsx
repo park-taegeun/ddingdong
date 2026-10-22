@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/feedback/EmptyState"
 import { LoadingSkeleton } from "@/components/feedback/LoadingSkeleton"
 import { StaleDataNotice } from "@/components/feedback/StaleDataNotice"
 import { useStale } from "@/hooks/useStale"
+import { groupByDay } from "@/lib/notification-filter"
 import type { NotificationItem } from "@/types/notification"
 import { NotificationCard } from "./NotificationCard"
 
@@ -18,6 +19,8 @@ interface NotificationListProps {
   // 정상 빈 상태(0건, 에러 아님) 전용 대체 노출. 로딩/에러 분기는 무영향.
   // 홈 = 시스템 건강 안심 카드, 그 외 = 기본 "아직 알림이 없어요" 유지.
   emptySlot?: ReactNode
+  // 날짜 묶음 머리(오늘 · 어제 · 10월 19일) — 알림 화면만. 홈은 현행(묶지 않음).
+  groupByDay?: boolean
 }
 
 export function NotificationList({
@@ -27,6 +30,7 @@ export function NotificationList({
   lastUpdated,
   limit,
   emptySlot,
+  groupByDay: grouped = false,
 }: NotificationListProps) {
   const stale = useStale(lastUpdated, error)
 
@@ -62,12 +66,22 @@ export function NotificationList({
     <div className="space-y-3">
       {/* 끊김이면 옛 목록 위에 안내 — 새 알림이 안 와도 모르는 상태를 막는다. */}
       {stale && <StaleDataNotice lastUpdated={lastUpdated} />}
-      {items.map((notification) => (
-        <NotificationCard
-          key={notification.request_id}
-          notification={notification}
-        />
-      ))}
+      {grouped
+        ? groupByDay(items).map((group) => (
+            // 머리 = h2 — 페이지 제목(h1)과 카드 제목(h3) 사이 계층.
+            <section key={group.heading} className="space-y-3">
+              <h2 className="pt-2 text-body font-bold text-foreground-secondary">{group.heading}</h2>
+              {group.items.map((notification) => (
+                <NotificationCard key={notification.request_id} notification={notification} />
+              ))}
+            </section>
+          ))
+        : items.map((notification) => (
+            <NotificationCard
+              key={notification.request_id}
+              notification={notification}
+            />
+          ))}
     </div>
   )
 }

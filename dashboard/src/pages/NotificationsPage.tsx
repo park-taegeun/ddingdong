@@ -1,14 +1,32 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
+import {
+  FilterEmpty,
+  NotificationFilterBar,
+} from "@/components/notifications/NotificationFilterBar"
 import { NotificationList } from "@/components/notifications/NotificationList"
 import { Button } from "@/components/ui/button"
 import { useNotificationsPage } from "@/hooks/useNotificationsPage"
 import { NOTIFICATIONS_PAGE_MAX } from "@/lib/constants"
 import { formatRelativeTime } from "@/lib/format"
 import type { LoadMoreState } from "@/lib/load-more"
+import { filterNotifications, filterSummary } from "@/lib/notification-filter"
+import type { ClassFilter } from "@/lib/notification-filter"
 
 export function NotificationsPage() {
   const { notifications, isLoading, error, lastUpdated, loadState, loadMore } =
     useNotificationsPage()
+  // 필터 = 화면 상태만(새로고침 · 다른 화면에 다녀오면 초기화). 저장하지 않는다 — 걸린 줄 모르고 다음에 열면
+  // 화재 · 초인종 알림을 놓칠 수 있다. 거르는 범위 = 불러온 알림 안(서버 API 무변경).
+  const [cls, setCls] = useState<ClassFilter>("all")
+  const [sentOnly, setSentOnly] = useState(false)
+  const allChipRef = useRef<HTMLButtonElement>(null)
+  const filtering = cls !== "all" || sentOnly
+  const shown = filterNotifications(notifications, cls, sentOnly)
+  const clearFilter = () => {
+    setCls("all")
+    setSentOnly(false)
+    allChipRef.current?.focus()
+  }
 
   return (
     <div className="space-y-4">
@@ -26,11 +44,31 @@ export function NotificationsPage() {
         )}
       </header>
 
+      {notifications.length > 0 && (
+        <div className="space-y-2">
+          <NotificationFilterBar
+            cls={cls}
+            sentOnly={sentOnly}
+            onClsChange={setCls}
+            onSentOnlyChange={setSentOnly}
+            allChipRef={allChipRef}
+          />
+          {filtering && (
+            <p className="text-caption text-foreground-secondary tabular-nums">
+              {filterSummary(notifications.length, shown.length)}
+            </p>
+          )}
+        </div>
+      )}
+
       <NotificationList
-        notifications={notifications}
+        notifications={shown}
         isLoading={isLoading}
         error={error}
         lastUpdated={lastUpdated}
+        groupByDay
+        // 불러온 알림은 있는데 거른 결과가 0건 — 「알림이 없다」가 아니라 「불러온 것 중에 없다」.
+        emptySlot={notifications.length > 0 ? <FilterEmpty onClear={clearFilter} /> : undefined}
       />
 
       {notifications.length > 0 && loadState && (

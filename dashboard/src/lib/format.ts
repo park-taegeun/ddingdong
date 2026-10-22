@@ -68,3 +68,19 @@ export function formatDetectedAt(iso: string, now: Date = new Date()): string {
     d.getFullYear() === now.getFullYear() ? monthDay : `${d.getFullYear()}년 ${monthDay}`
   return `${date} ${clock}`
 }
+
+// 알림 목록 날짜 묶음 머리 — 「오늘」 · 「어제」 · 「10월 19일」(해가 다르면 「2025년 12월 31일」).
+// 날짜 판정 = formatDetectedAt 과 같은 규칙(지역 시간대 달력 날짜 차이 — 경과 시간이 아니다). 그 함수 본문은
+// 무변경 대상이라 규칙을 여기 한 번 더 쓴다 — 한쪽만 바꾸면 묶음 머리와 카드 시각이 어긋난다.
+// now = 기준 시각 — 결정적 렌더(ssr-nc)용, 화면에서는 생략(= 지금).
+export function formatDayHeading(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return "-"
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000)
+  if (days === 0) return "오늘"
+  if (days === 1) return "어제"
+  const monthDay = `${d.getMonth() + 1}월 ${d.getDate()}일`
+  if (d.getFullYear() !== now.getFullYear()) return `${d.getFullYear()}년 ${monthDay}`
+  return monthDay
+}

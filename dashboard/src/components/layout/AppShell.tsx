@@ -2,8 +2,13 @@ import { useRef, useState } from "react"
 import { Outlet } from "react-router-dom"
 import { Dialog as DialogPrimitive } from "radix-ui"
 import { OnboardingModal } from "@/components/feedback/OnboardingModal"
+import { StatusBanner } from "@/components/feedback/StatusBanner"
 import { NotificationAnnouncer } from "@/components/notifications/NotificationAnnouncer"
+import { useDevice } from "@/hooks/useDevice"
+import { useNotifications } from "@/hooks/useNotifications"
 import { useReducedMotion } from "@/hooks/useReducedMotion"
+import { useStale } from "@/hooks/useStale"
+import { deriveBanner } from "@/lib/banner"
 import { cn } from "@/lib/utils"
 import { Header } from "./Header"
 import { Sidebar } from "./Sidebar"
@@ -15,6 +20,11 @@ export function AppShell() {
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   // 진입 연출 게이트 — 꺼져 있으면 클래스 자체를 붙이지 않는다(최종 상태 즉시 렌더).
   const reduced = useReducedMotion()
+  // 셸 공용 구독 — 헤더 · 신규 알림 안내가 쓰던 훅을 여기서 한 번씩만 부른다(폴러 · 1초 타이머 개수 그대로).
+  // 1초마다 셸이 다시 그려져도 페이지는 그대로다 — Outlet 은 같은 라우트 element 를 돌려준다(react-router useOutlet 의 useMemo).
+  const { isOnline, health, error, lastUpdated } = useDevice()
+  const disconnected = useStale(lastUpdated, error)
+  const { notifications, lastUpdated: notificationsUpdated } = useNotifications()
 
   return (
     <div className="flex min-h-screen bg-background-sub">
@@ -59,12 +69,18 @@ export function AppShell() {
         <Header
           onMenuClick={() => setMobileOpen(true)}
           menuButtonRef={menuButtonRef}
+          isOnline={isOnline}
+          hasHealth={health !== null}
+          disconnected={disconnected}
         />
         <main
           id="main-content"
           tabIndex={-1}
           className="flex-1 px-4 py-6 outline-none lg:px-8"
         >
+          <div className="mx-auto w-full max-w-5xl">
+            <StatusBanner kind={deriveBanner(disconnected, isOnline, health !== null, notifications)} />
+          </div>
           <div className={cn("mx-auto w-full max-w-5xl", !reduced && "page-enter")}>
             <Outlet />
           </div>
@@ -74,7 +90,7 @@ export function AppShell() {
       <OnboardingModal />
 
       {/* 신규 알림 스크린리더 announce (어느 페이지든 동작하도록 상시 마운트) */}
-      <NotificationAnnouncer />
+      <NotificationAnnouncer notifications={notifications} lastUpdated={notificationsUpdated} />
     </div>
   )
 }
