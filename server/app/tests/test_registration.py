@@ -752,7 +752,7 @@ class DetectJudgmentTest(_DetectCase):
 
         real_guard = kakao._assert_commit_is_safe
 
-        def fake_send(predicted_class):
+        def fake_send(predicted_class, client_request_id=None):
             real_guard()
             return None
 
@@ -797,7 +797,7 @@ class DetectJudgmentTest(_DetectCase):
         st = self._status(resp)
         self.assertTrue(st["primary_sent"])
         self.assertNotIn("skip_reason", st)
-        send.assert_called_once_with(cls)
+        send.assert_called_once_with(cls, mock.ANY)
 
     # ── 수집 중 ──
     def test_collecting_doorbell_is_suppressed_and_saved(self):

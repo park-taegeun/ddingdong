@@ -212,7 +212,7 @@ def detect():
         skip_reason = reg.skip_reason
         enrich_status = "skipped"
     if primary_sent:
-        send_skip_reason = kakao.send_primary_text(pred["predicted_class"])
+        send_skip_reason = kakao.send_primary_text(pred["predicted_class"], client_request_id)
         if send_skip_reason is not None:
             # 발송 실패는 요청 실패가 아니다 → 5xx 로 올리지 않고 미발송으로 기록만 한다.
             # enrich_status 는 건드리지 않는다: 2차 알림 진행 여부는 A-2 소관 결정이고,

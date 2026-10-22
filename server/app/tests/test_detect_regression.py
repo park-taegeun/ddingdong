@@ -892,7 +892,7 @@ class DetectRegressionTest(_NoNetworkTestCase):
         ), mock.patch("app.kakao.send_primary_text", return_value=None) as send:
             r = self._detect("regr-send-ok", "dev-send-ok")
             self.assertEqual(r.status_code, 201)
-            send.assert_called_once_with("doorbell")
+            send.assert_called_once_with("doorbell", mock.ANY)
 
             row = self._row("regr-send-ok")
             self.assertTrue(row.primary_sent)
@@ -984,7 +984,7 @@ class DetectRegressionTest(_NoNetworkTestCase):
         sent = self._policy("doorbell", 0.95)
         seen = []
 
-        def _guarded(predicted_class):
+        def _guarded(predicted_class, client_request_id=None):
             kakao._assert_commit_is_safe()  # 위반이면 RuntimeError
             seen.append("send")
             return None
@@ -1137,6 +1137,166 @@ class DetectRegressionTest(_NoNetworkTestCase):
             )
             # 갱신 후 재발송 없음(재시도 금지)
             self.assertEqual(urlopen.call_count, 1)
+
+    # ── 화재 1차 재시도 1회 (PoC-(75), 사용자 결정 2026-10-22) ──────────────
+    # fire_alarm 1차만 KakaoSendError 에 한해 최대 KAKAO_FIRE_PRIMARY_MAX_ATTEMPTS 회.
+    # outcomes 원소 = 예외 인스턴스(그대로 raise) 또는 result_code(int). 원소가 모자라면
+    # pop 의 IndexError 가 KakaoSendError 로 둔갑하므로 시도 수는 wire 호출 수로 센다.
+    @staticmethod
+    def _wire(outcomes, calls, before=None):
+        seq = list(outcomes)
+
+        def _urlopen(req, timeout=None):
+            if before is not None:
+                before()
+            calls.append(req)
+            o = seq.pop(0)
+            if isinstance(o, Exception):
+                raise o
+            return _FakeResponse({"result_code": o})
+
+        return _urlopen
+
+    def _primary(self, predicted_class, outcomes, client_request_id="fire-crid-1"):
+        """send_primary_text 실함수 1회. (skip_reason, wire 요청들, 재시도 WARNING 줄, invalidate, 로그)."""
+        from .. import kakao
+
+        calls = []
+        with self.app.app_context(), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch("app.kakao._invalidate_access_token") as invalidate, mock.patch(
+            "app.kakao.urllib.request.urlopen", side_effect=self._wire(outcomes, calls)
+        ), self.assertLogs(self.app.logger, "INFO") as logs:
+            reason = kakao.send_primary_text(predicted_class, client_request_id)
+        retry = [line for line in logs.output if "kakao primary retrying" in line]
+        return reason, calls, retry, invalidate, logs.output
+
+    @staticmethod
+    def _http(code):
+        return urllib.error.HTTPError(KAKAO_MEMO_URL_FOR_TEST, code, "x", {}, None)
+
+    def test_fire_primary_retries_once_then_succeeds(self) -> None:
+        """① 화재 + 1회 KakaoSendError → 2회째 성공 = None(primary_sent) · 호출 2 · WARNING 1."""
+        reason, calls, retry, _, logs = self._primary("fire_alarm", [-1, 0])
+        self.assertIsNone(reason)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(retry), 1)
+        self.assertIn("(1/2)", retry[0])
+        self.assertIn("client_request_id=fire-crid-1", retry[0])
+        self.assertFalse(any(_FAKE_ACCESS_TOKEN in line for line in logs))  # 토큰 값 금지
+
+    def test_fire_primary_both_attempts_fail_is_api_error(self) -> None:
+        """② 화재 + 2회 모두 실패(타임아웃 → 5xx) = 기존 kakao_api_error · 호출 2(3회째 없음)."""
+        from .. import kakao
+
+        reason, calls, retry, _, _ = self._primary(
+            "fire_alarm", [urllib.error.URLError("timed out"), self._http(503)]
+        )
+        self.assertEqual(reason, kakao.SKIP_REASON_KAKAO_API_ERROR)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(retry), 1)
+
+    def test_fire_primary_401_is_not_retried(self) -> None:
+        """③ 화재 + 401 = 재시도 0 · 기존 401 경로(만료 표시 1회 · token_expired)."""
+        from .. import kakao
+
+        reason, calls, retry, invalidate, _ = self._primary("fire_alarm", [self._http(401), 0])
+        self.assertEqual(reason, kakao.SKIP_REASON_TOKEN_EXPIRED)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(retry, [])
+        invalidate.assert_called_once()
+
+    def test_doorbell_and_knock_primary_are_not_retried(self) -> None:
+        """④ 초인종 · 노크 + KakaoSendError = 재시도 0(호출 1) — 1차 「재시도 없음」 현행."""
+        from .. import kakao
+
+        for cls in ("doorbell", "knock"):
+            with self.subTest(cls):
+                reason, calls, retry, _, _ = self._primary(cls, [-1, 0])
+                self.assertEqual(reason, kakao.SKIP_REASON_KAKAO_API_ERROR)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(retry, [])
+
+    def test_fire_primary_retry_resends_identical_copy(self) -> None:
+        """⑤ 재시도도 카피 ② 전문(266자 / 603 B)을 바이트 그대로 다시 싣는다."""
+        from ..constants import FIRE_ALARM_PRIMARY_MESSAGE
+
+        _, calls, _, _, _ = self._primary("fire_alarm", [-1, 0])
+        texts = [
+            json.loads(urllib.parse.parse_qs(r.data.decode("utf-8"))["template_object"][0])["text"]
+            for r in calls
+        ]
+        self.assertEqual(texts, [FIRE_ALARM_PRIMARY_MESSAGE] * 2)
+        self.assertEqual(len(texts[1].encode("utf-8")), 603)
+        self.assertEqual(calls[0].data, calls[1].data)
+
+    def test_fire_primary_http_400_is_retried_then_api_error(self) -> None:
+        """⑧ 화재 + HTTP 400 → 시도 2 · 최종 kakao_api_error.
+
+        4xx 도 KakaoSendError 라 한 번 더 쏜다 — 2차(7.6(c))와 같은 예외 클래스 기준을
+        수용한 동작이다(사용자 결정 2026-10-22). 이 테스트가 깨지면 분류가 바뀐 것이다.
+        """
+        from .. import kakao
+
+        reason, calls, _, _, _ = self._primary("fire_alarm", [self._http(400), self._http(400)])
+        self.assertEqual(reason, kakao.SKIP_REASON_KAKAO_API_ERROR)
+        self.assertEqual(len(calls), 2)
+
+    def _detect_fire_real_send(self, key, outcomes, before=None):
+        """/detect fire_alarm 1회 — send_primary_text 는 실함수, wire 만 대역. (응답, 행, 요청들)."""
+        calls = []
+        with self.app.app_context(), mock.patch(
+            "app.routes.mock_prediction", side_effect=self._prediction_stub("fire_alarm")
+        ), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch(
+            "app.kakao.urllib.request.urlopen", side_effect=self._wire(outcomes, calls, before)
+        ):
+            resp = self._detect(key, f"dev-{key}")
+            row = self._row(key)
+        return resp, row, calls
+
+    def test_fire_primary_retry_keeps_detect_response_shape(self) -> None:
+        """⑥ 재시도 성공 응답 = 무재시도 응답과 키 구조 · 바이트 크기 동일, primary_sent True."""
+
+        def shape(d):
+            return {k: shape(v) if isinstance(v, dict) else None for k, v in d.items()}
+
+        plain, _, plain_calls = self._detect_fire_real_send("fire-shape-a", [0])
+        retried, row, retried_calls = self._detect_fire_real_send("fire-shape-b", [-1, 0])
+        self.assertEqual((len(plain_calls), len(retried_calls)), (1, 2))
+        self.assertEqual(retried.status_code, 201)
+        self.assertEqual(shape(retried.get_json()), shape(plain.get_json()))
+        self.assertEqual(len(retried.get_data()), len(plain.get_data()))
+        self.assertTrue(retried.get_json()["notification_status"]["primary_sent"])
+        self.assertTrue(row.primary_sent)
+        self.assertIsNone(row.skip_reason)
+
+    def test_fire_primary_retry_passes_commit_guard_each_attempt(self) -> None:
+        """⑦ 재시도 왕복마다 _assert_commit_is_safe() 통과 — Notification add 전에 끝난다.
+
+        가드 RuntimeError 를 wire 안에서 그대로 올리면 _post_memo 가 KakaoSendError 로
+        삼킨다 → 결과를 따로 모아 단언한다.
+        """
+        from .. import kakao
+
+        guard = []
+
+        def _check():
+            try:
+                kakao._assert_commit_is_safe()
+                guard.append("ok")
+            except RuntimeError as exc:
+                guard.append(str(exc))
+
+        with self.assertLogs(self.app.logger, "WARNING") as logs:
+            resp, row, calls = self._detect_fire_real_send("fire-guard", [-1, 0], before=_check)
+        self.assertEqual(resp.status_code, 201)
+        # routes.detect 가 client_request_id 를 실제로 넘긴다(재시도 WARNING 에 실린다)
+        self.assertTrue(any("client_request_id=fire-guard" in line for line in logs.output))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(guard, ["ok", "ok"])
+        self.assertTrue(row.primary_sent)
 
     # ── 401 자기 치유 (G-신규, 2026-09-03) ────────────────────────────────
     # 배경: needs_refresh() 는 access_expires_at 만 본다. 그 값이 미래인데 카카오가
@@ -1665,7 +1825,7 @@ class DetectRegressionTest(_NoNetworkTestCase):
         """I1. ToF 4필드 부재 = 현행 A-1 경로 그대로 발송된다(400 아님, 차단 아님)."""
         resp, send, row = self._detect_with("absent", "knock", None)
         self.assertEqual(resp.status_code, 201)
-        send.assert_called_once_with("knock")
+        send.assert_called_once_with("knock", mock.ANY)
 
         status = resp.get_json()["notification_status"]
         self.assertTrue(status["primary_sent"])
@@ -1676,7 +1836,7 @@ class DetectRegressionTest(_NoNetworkTestCase):
         """I2. 노크 + presence 참 → 발송 경로 진입 + 게이트 적용 기록."""
         resp, send, row = self._detect_with("knock-pass", "knock", self._TOF_PASS)
         self.assertEqual(resp.status_code, 201)
-        send.assert_called_once_with("knock")
+        send.assert_called_once_with("knock", mock.ANY)
 
         check = resp.get_json()["tof_check"]
         self.assertTrue(check["applied"])
@@ -1719,7 +1879,7 @@ class DetectRegressionTest(_NoNetworkTestCase):
         """
         resp, send, row = self._detect_with("fire-fail", "fire_alarm", self._TOF_FAIL)
         self.assertEqual(resp.status_code, 201)
-        send.assert_called_once_with("fire_alarm")
+        send.assert_called_once_with("fire_alarm", mock.ANY)
         self.assertTrue(row.primary_sent)
         self.assertIsNone(row.skip_reason)
 
@@ -1772,7 +1932,7 @@ class DetectRegressionTest(_NoNetworkTestCase):
             "invalid", "knock", {"tof_near_count": "13", "tof_center_mm": "1015"}
         )
         self.assertEqual(resp.status_code, 201)  # 400 아님 — 체인을 죽이지 않는다
-        send.assert_called_once_with("knock")
+        send.assert_called_once_with("knock", mock.ANY)
 
         check = resp.get_json()["tof_check"]
         self.assertFalse(check["applied"])
@@ -1865,7 +2025,7 @@ class DetectRegressionTest(_NoNetworkTestCase):
             "knock",
             {"tof_presence": "true", "tof_near_count": "0", "tof_motion_ndet": "0"},
         )
-        send_lo.assert_called_once_with("knock")
+        send_lo.assert_called_once_with("knock", mock.ANY)
         self.assertTrue(row_lo.primary_sent)
 
     def test_tof_meta_does_not_change_gate_order(self) -> None:
