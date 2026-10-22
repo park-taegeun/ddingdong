@@ -44,7 +44,7 @@ function tokenExtra(status: TokenStatus, minutes: number): string {
 
 export function SystemHealthCard({ health }: { health: SystemHealth }) {
   const rows = [
-    { label: "디바이스", status: health.device_status, extra: undefined },
+    { label: "현관 기기", status: health.device_status, extra: undefined },
     {
       label: "카카오 토큰",
       status: health.kakao_token_status,

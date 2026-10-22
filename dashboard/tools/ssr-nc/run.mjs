@@ -44,6 +44,9 @@ const SRC = {
   banner: "src/lib/banner.ts",
   statusBanner: "src/components/feedback/StatusBanner.tsx",
   filter: "src/lib/notification-filter.ts",
+  unread: "src/lib/unread.ts",
+  skipCard: "src/components/stats/SkipReasonsCard.tsx",
+  list: "src/components/notifications/NotificationList.tsx",
 }
 
 /**
@@ -91,13 +94,13 @@ const CASES = [
     patch: "return nowMs - lastUpdated.getTime() > staleAfterMs",
   },
   // AU-07 I5 — 끊김은 온라인 · 오프라인보다 먼저 본다. 결함 = 끊김 분기를 지우면 서버가 죽어도
-  // 마지막 health 가 online 이라 「디바이스 온라인」이 남는다(AU-07 원래 증상). 함정: 끊김 단독
+  // 마지막 health 가 online 이라 「현관 기기 연결됨」이 남는다(AU-07 원래 증상). 함정: 끊김 단독
   // 입력(online=false · health 없음)만 보면 「연결 확인 중」으로 떨어져도 라벨 차이를 못 볼 수
   // 있다 — 온라인+끊김 입력을 단언한다. 앵커 = 분기 조건 한 줄(NC-a 앵커와 문자열 비포함).
   {
     id: "NC-b",
     file: SRC.connection,
-    desc: "헤더 끊김 우선 제거 — 온라인+끊김에서 '디바이스 온라인' (AU-07 I5)",
+    desc: "헤더 끊김 우선 제거 — 온라인+끊김에서 '현관 기기 연결됨' (AU-07 I5)",
     anchor: "if (disconnected) {",
     patch: "if (false) {",
   },
@@ -317,6 +320,90 @@ const CASES = [
     anchor: '(cls === "all" || n.predicted_class === cls)',
     patch: "true",
   },
+  // 새 알림 — 발송 시도 행만 센다. 결함 = 조건이 빠지면 기타 소리 · 차단 행도 「새」가 되어 탭 제목이 부푼다.
+  // 함정: 확인 시각 뒤에 차단 행이 없으면 결과가 같다 — 픽스처의 기타 차단 행(10시)이 9시 확인보다 뒤다.
+  {
+    id: "NC-E1a",
+    file: SRC.unread,
+    desc: "새 알림에 차단 행 섞기 — 9시 확인 뒤 기타 소리가 '새' (새 알림 표식)",
+    anchor: "isSendAttempt(n) && ",
+    patch: "",
+  },
+  // 새 알림 — 저장값이 없으면 지금으로 초기화. 결함 = 초기화가 빠지면 첫 방문에 불러온 과거 알림이 전부 「새」.
+  {
+    id: "NC-E1b",
+    file: SRC.unread,
+    desc: "저장값 없을 때 초기화 제거 — 첫 방문 새 알림 2 (새 알림 표식)",
+    anchor: "  writeLastSeen(storage, nowMs)\n  return nowMs",
+    patch: "  return 0",
+  },
+  // 새 알림 — 저장소 읽기 예외를 삼킨다. 결함 = 던지면 셸 첫 렌더(useState 초기화)가 깨진다(차단된 사이트 데이터).
+  {
+    id: "NC-E1c-read",
+    file: SRC.unread,
+    desc: "저장소 읽기 예외를 다시 던짐 — 저장실패 '오류' (새 알림 표식)",
+    anchor: "    // 읽기 실패 = 저장값 없음과 같다",
+    patch: '    throw new Error("NC-E1c-read")',
+  },
+  // 새 알림 — 저장소 쓰기 예외도 삼킨다(읽기는 삼키고 쓰기에서 터지는 변형). 같은 픽스처가 잡는다.
+  {
+    id: "NC-E1c-write",
+    file: SRC.unread,
+    desc: "저장소 쓰기 예외를 다시 던짐 — 저장실패 '오류' (새 알림 표식)",
+    anchor: "    // 쓰기 실패 = 이번 화면 동안만 메모리 값으로 동작한다",
+    patch: '    throw new Error("NC-E1c-write")',
+  },
+  // 기술 정보 접기 — 거리 센서 칸은 접힘 밖. 결함 = 칸이 접힘 안으로 들어가면 3상태 라벨이 기본 화면에서 사라져
+  // 부스 리셋 뒤 「검증 안 함」(ToF 초기화 실패)을 첫 카드에서 못 본다(6.4(c) · 33.33(b)).
+  {
+    id: "NC-E2",
+    file: SRC.card,
+    desc: "거리 센서 칸을 접힘 안으로 — 기본 카드에 '검증 안 함' 없음 (기술 정보 접기)",
+    anchor: "<NotificationTof tof={notification.tof_check} />",
+    // 패치에 앵커 문자열이 남지 않게 필드를 대괄호로 읽는다(하네스 ③ 「앵커 잔존」 가드).
+    patch: '{detailsOpen && <NotificationTof tof={notification["tof_check"]} />}',
+  },
+  // 기술 정보 접기 — 기본은 접힘. 결함 = 펼친 채 시작하면 신뢰도 숫자가 다시 전면에 나온다.
+  {
+    id: "NC-E2b",
+    file: SRC.card,
+    desc: "기본 펼침 — 기본 카드에 '신뢰도 90%' (기술 정보 접기)",
+    anchor: "const [detailsOpen, setDetailsOpen] = useState(false)",
+    patch: "const [detailsOpen, setDetailsOpen] = useState(true)",
+  },
+  // 오늘 보내지 않은 이유 — 0건 줄은 숨긴다. 결함 = 걸러내지 않으면 7줄이 늘 보여 실제 사유가 묻힌다.
+  // 함정: 픽스처 키가 전부 1 이상이면 같다 — 사람 감지 실패 · 등록 중 = 0.
+  {
+    id: "NC-E4a",
+    file: SRC.skipCard,
+    desc: "0건 줄 숨김 제거 — '사람 감지 실패' 0건 줄 노출 (보내지 않은 이유)",
+    anchor: "].filter((r) => r.count > 0)",
+    patch: "].filter(() => true)",
+  },
+  // 오늘 보내지 않은 이유 — 카톡 실패 줄만 경고 톤 + 아이콘. 결함 = 분기가 빠지면 라벨만 남아 3중 표기 중 2개(색 · 아이콘)를 잃는다.
+  {
+    id: "NC-E4b",
+    file: SRC.skipCard,
+    desc: "카톡 실패 줄 경고 톤 · 아이콘 제거 — 위험색 · 경고 아이콘 클래스 없음 (보내지 않은 이유)",
+    anchor: "{r.failure ? (",
+    patch: "{false ? (",
+  },
+  // 기타 소리 한 줄 — 줄이는 것은 기타 소리뿐. 결함 = 화재까지 줄이면 대응 수칙이 접힌 채 지나간다.
+  {
+    id: "NC-E5",
+    file: SRC.list,
+    desc: "화재 행도 한 줄로 — '화재 시 대응 수칙' 없음 (기타 소리 축약)",
+    anchor: 'collapseOther && n.predicted_class === "other" ? (',
+    patch: 'collapseOther && (n.predicted_class === "other" || n.predicted_class === "fire_alarm") ? (',
+  },
+  // 기타 소리 한 줄 — 숨기지 않는다(33.17(f)①). 결함 = 줄이는 대신 빼면 목록에서 기타 소리가 사라진다.
+  {
+    id: "NC-E5b",
+    file: SRC.list,
+    desc: "기타 소리 행 숨김 — '기타 소리' · '알림 안 보냄' 없음 (33.17(f)①)",
+    anchor: "<OtherRow key={n.request_id} notification={n} />",
+    patch: "null",
+  },
 ]
 
 /**
@@ -353,8 +440,8 @@ const ASSERTIONS = [
   { fixture: "stale_boundary", kind: "has", text: "첫성공전오류=끊김" },
   { fixture: "stale_boundary", kind: "has", text: "첫성공전대기=정상" },
   { fixture: "conn_labels", kind: "has", text: "온라인+끊김=서버 연결 끊김" },
-  { fixture: "conn_labels", kind: "has", text: "온라인=디바이스 온라인" },
-  { fixture: "conn_labels", kind: "has", text: "오프라인=디바이스 오프라인" },
+  { fixture: "conn_labels", kind: "has", text: "온라인=현관 기기 연결됨" },
+  { fixture: "conn_labels", kind: "has", text: "오프라인=현관 기기 꺼짐" },
   { fixture: "conn_labels", kind: "has", text: "확인중=연결 확인 중" },
   { fixture: "image_retry_delay", kind: "has", text: "실패1=10000ms" },
   { fixture: "image_retry_delay", kind: "has", text: "실패6=10000ms" },
@@ -466,6 +553,50 @@ const ASSERTIONS = [
   { fixture: "filter_empty", kind: "has", text: "불러온 알림 중에는 맞는 알림이 없어요" },
   { fixture: "filter_empty", kind: "has", text: "필터 해제" },
   { fixture: "filter_empty", kind: "lacks", text: "아직 알림이 없어요" },
+  // 새 알림 표식
+  { fixture: "unread_count", kind: "has", text: "6시확인=2" },
+  { fixture: "unread_count", kind: "has", text: "9시확인=0" },
+  { fixture: "unread_count", kind: "has", text: "첫방문=0" },
+  { fixture: "unread_count", kind: "has", text: "저장소없음=0" },
+  { fixture: "unread_count", kind: "has", text: "저장실패=0" },
+  { fixture: "unread_count", kind: "has", text: "제목2=(2) 띵동" },
+  { fixture: "unread_count", kind: "has", text: "제목0=띵동 — 알림 대시보드" },
+  { fixture: "card_new", kind: "has", text: "새 알림" },
+  { fixture: "card_blocked", kind: "lacks", text: "새 알림" },
+  // 기술 정보 접기 — 기본 접힘 · 거리 센서 칸 상시
+  { fixture: "card_blocked", kind: "has", text: "자세히" },
+  { fixture: "card_blocked", kind: "lacks", text: "신뢰도 90%" },
+  { fixture: "card_blocked", kind: "has", text: "거리 센서" },
+  { fixture: "card_blocked", kind: "has", text: "검증 안 함" },
+  { fixture: "card_token_fail", kind: "has", text: "검증 안 함" },
+  // 폰 폭 하단 탭
+  { fixture: "bottom_nav", kind: "has", text: "홈" },
+  { fixture: "bottom_nav", kind: "has", text: "알림" },
+  { fixture: "bottom_nav", kind: "has", text: "통계" },
+  { fixture: "bottom_nav", kind: "has", text: "설정" },
+  { fixture: "bottom_nav", kind: "has", text: "도움말" },
+  // 오늘 보내지 않은 이유
+  { fixture: "skip_some", kind: "has", text: "오늘 보내지 않은 이유" },
+  { fixture: "skip_some", kind: "has", text: "카카오톡으로 보내지 못했어요" },
+  { fixture: "skip_some", kind: "lacks", text: "토큰 만료" },
+  { fixture: "skip_some", kind: "lacks", text: "카카오 전송 오류" },
+  { fixture: "skip_some", kind: "has", text: "알림 대상이 아닌 소리" },
+  { fixture: "skip_some", kind: "has", text: "등록한 초인종과 다른 소리" },
+  { fixture: "skip_some", kind: "lacks", text: "사람 감지 실패" },
+  { fixture: "skip_some", kind: "lacks", text: "초인종 등록 중에 들어온 소리" },
+  { fixture: "skip_some", kind: "has", text: "모두 8건" },
+  { fixture: "skip_some_class", kind: "has", text: "text-danger-deep" },
+  { fixture: "skip_some_class", kind: "has", text: "lucide-triangle-alert" },
+  { fixture: "skip_no_fail_class", kind: "lacks", text: "text-danger-deep" },
+  { fixture: "skip_no_fail_class", kind: "lacks", text: "lucide-triangle-alert" },
+  { fixture: "skip_zero", kind: "has", text: "오늘은 보내지 않은 알림이 없어요." },
+  { fixture: "skip_zero", kind: "lacks", text: "모두 0건" },
+  // 기타 소리 한 줄
+  { fixture: "list_collapse", kind: "has", text: "화재 시 대응 수칙" },
+  { fixture: "list_collapse", kind: "has", text: "초인종" },
+  { fixture: "list_collapse", kind: "has", text: "기타 소리" },
+  { fixture: "list_collapse", kind: "has", text: "알림 안 보냄" },
+  { fixture: "list_collapse", kind: "lacks", text: "알림 대상이 아닌 소리 때문에 알림을 보내지 않았어요." },
 ]
 
 const abs = (file) => path.join(ROOT, file)

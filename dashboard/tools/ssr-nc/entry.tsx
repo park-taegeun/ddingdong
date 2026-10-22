@@ -6,14 +6,18 @@
 //   비교이므로 마커가 끼면 비교 단위가 흔들린다.
 // ★ 픽스처 시각·수치는 전부 고정 주입이다 — 실 서버·실 시계 미호출(8.5(g) 동형).
 import { renderToStaticMarkup } from "react-dom/server"
+import { MemoryRouter } from "react-router-dom"
 import { StaleDataNotice } from "@/components/feedback/StaleDataNotice"
 import { StatusBanner } from "@/components/feedback/StatusBanner"
+import { BottomNav } from "@/components/layout/BottomNav"
 import { NotificationCard } from "@/components/notifications/NotificationCard"
 import { FilterEmpty, NotificationFilterBar } from "@/components/notifications/NotificationFilterBar"
 import { NotificationImage } from "@/components/notifications/NotificationImage"
+import { NotificationList } from "@/components/notifications/NotificationList"
 import { NotificationStatusBadge } from "@/components/notifications/NotificationStatusBadge"
 import { NotificationSTT } from "@/components/notifications/NotificationSTT"
 import { NotificationTof } from "@/components/notifications/NotificationTof"
+import { SkipReasonsCard } from "@/components/stats/SkipReasonsCard"
 import { SystemHealthCard } from "@/components/stats/SystemHealthCard"
 import { SettingsProvider } from "@/contexts/SettingsContext"
 import { deriveBanner } from "@/lib/banner"
@@ -31,6 +35,8 @@ import { nextRetryDelay, retryUrl } from "@/lib/image-retry"
 import { loadMoreState, nextLimit } from "@/lib/load-more"
 import { filterNotifications, filterSummary, groupByDay } from "@/lib/notification-filter"
 import { isWithinWindow } from "@/lib/notification-meta"
+import { countNew, readLastSeen, titleWithCount } from "@/lib/unread"
+import type { SeenStorage } from "@/lib/unread"
 import type {
   NotificationItem,
   NotificationStatus,
@@ -39,7 +45,7 @@ import type {
   SkipReason,
   TofCheck,
 } from "@/types/notification"
-import type { SystemHealth, TokenStatus } from "@/types/stats"
+import type { SkipReasonCounts, SystemHealth, TokenStatus } from "@/types/stats"
 
 function health(status: TokenStatus, minutes: number): SystemHealth {
   return {
@@ -155,10 +161,10 @@ function item(cls: PredictedClass, detectedAt: string, s: NotificationStatus): N
     device_id: "nc",
   }
 }
-const card = (n: NotificationItem) =>
+const card = (n: NotificationItem, isNew = false) =>
   renderToStaticMarkup(
     <SettingsProvider>
-      <NotificationCard notification={n} />
+      <NotificationCard notification={n} isNew={isNew} />
     </SettingsProvider>,
   )
 const WINDOW_NOW = Date.parse("2026-10-21T09:00:00.000+09:00")
@@ -185,6 +191,51 @@ const LOADED = [
 const filterAt = (cls: Parameters<typeof filterNotifications>[1], sentOnly: boolean) =>
   filterNotifications(LOADED, cls, sentOnly).length
 const noop = () => {}
+
+const SKIP_ZERO: SkipReasonCounts = {
+  not_target: 0,
+  low_confidence: 0,
+  tof_rejected: 0,
+  kakao_api_error: 0,
+  token_expired: 0,
+  registration_collecting: 0,
+  registration_mismatch: 0,
+}
+// 카톡 실패 = 1 + 1(합쳐 2) · 0건 = 사람 감지 실패 · 등록 중 · 합계 8
+const SKIP_SOME: SkipReasonCounts = {
+  ...SKIP_ZERO,
+  not_target: 3,
+  low_confidence: 1,
+  kakao_api_error: 1,
+  token_expired: 1,
+  registration_mismatch: 2,
+}
+
+// 새 알림 — 불러온 4건(초인종 보냄 9시 · 노크 실패 8시 · 기타 차단 10시 · 초인종 신뢰도 차단 7시) 기준.
+// 차단 행이 확인 시각보다 뒤에 있어야 「발송 시도만 센다」가 결과를 가른다(기타 차단 10시).
+const SEEN_6 = Date.parse("2026-10-21T06:00:00.000+09:00")
+const SEEN_9 = Date.parse("2026-10-21T09:00:00.000+09:00")
+const VISIT_NOW = Date.parse("2026-10-21T10:30:00.000+09:00")
+const memStorage = (): SeenStorage => {
+  const m = new Map<string, string>()
+  return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => void m.set(k, v) }
+}
+const brokenStorage: SeenStorage = {
+  getItem: () => {
+    throw new Error("blocked")
+  },
+  setItem: () => {
+    throw new Error("blocked")
+  },
+}
+// 저장소 상태 → 첫 방문 새 알림 수. 저장 함수가 던지면 「오류」(= 셸 렌더 실패).
+const firstVisitAt = (storage: SeenStorage | null) => {
+  try {
+    return String(countNew(LOADED, readLastSeen(storage, VISIT_NOW)))
+  } catch {
+    return "오류"
+  }
+}
 
 export const output: Record<string, string> = {
   // 8.5(f) 실렌더 대조 픽스처 (카카오 토큰 3상태 + 만료 경과 환산)
@@ -385,4 +436,46 @@ export const output: Record<string, string> = {
     <NotificationFilterBar cls="fire_alarm" sentOnly={false} onClsChange={noop} onSentOnlyChange={noop} />,
   ),
   filter_empty: renderToStaticMarkup(<FilterEmpty onClear={noop} />),
+
+  // 새 알림 — 발송 시도 행만 · 확인 시각 경계(같은 시각은 새 알림 아님) · 첫 방문 0 · 저장 실패여도 동작
+  unread_count: renderToStaticMarkup(
+    <ul>
+      <li>{`6시확인=${countNew(LOADED, SEEN_6)}`}</li>
+      <li>{`9시확인=${countNew(LOADED, SEEN_9)}`}</li>
+      <li>{`첫방문=${firstVisitAt(memStorage())}`}</li>
+      <li>{`저장소없음=${firstVisitAt(null)}`}</li>
+      <li>{`저장실패=${firstVisitAt(brokenStorage)}`}</li>
+      <li>{`제목2=${titleWithCount(2, "띵동 — 알림 대시보드")}`}</li>
+      <li>{`제목0=${titleWithCount(0, "띵동 — 알림 대시보드")}`}</li>
+    </ul>,
+  ),
+  // 폰 폭 하단 탭 — NAV_ITEMS 5개 글자(현재 위치 = 통계). 배치 · 겹침 · 안전 영역은 사정권 밖(화면 확인).
+  bottom_nav: renderToStaticMarkup(
+    <MemoryRouter initialEntries={["/stats"]}>
+      <BottomNav />
+    </MemoryRouter>,
+  ),
+  // 오늘 보내지 않은 이유 — 0건 줄 숨김 · 카톡 실패 2키 합산(원인 어휘 없음) · 합계 · 전부 0이면 빈 상태
+  skip_some: renderToStaticMarkup(<SkipReasonsCard counts={SKIP_SOME} />),
+  skip_some_class: classTokens(renderToStaticMarkup(<SkipReasonsCard counts={SKIP_SOME} />)),
+  skip_no_fail_class: classTokens(renderToStaticMarkup(<SkipReasonsCard counts={{ ...SKIP_ZERO, not_target: 2 }} />)),
+  skip_zero: renderToStaticMarkup(<SkipReasonsCard counts={SKIP_ZERO} />),
+  // 기타 소리 한 줄 — 화재 · 초인종은 전체 카드, 기타 소리는 한 줄(숨김 0 · 기본 접힘)
+  list_collapse: renderToStaticMarkup(
+    <SettingsProvider>
+      <NotificationList
+        notifications={[
+          item("fire_alarm", "2020-01-01T09:00:00.000+09:00", status(true, false, "skipped", null)),
+          item("other", "2020-01-01T08:00:00.000+09:00", status(false, false, "skipped", null, "not_target")),
+          item("doorbell", "2020-01-01T07:00:00.000+09:00", status(true, false, "skipped", null)),
+        ]}
+        isLoading={false}
+        error={null}
+        lastUpdated={null}
+        groupByDay
+        collapseOther
+      />
+    </SettingsProvider>,
+  ),
+  card_new: card(item("doorbell", "2020-01-01T09:00:00.000+09:00", status(true, false, "skipped", null)), true),
 }

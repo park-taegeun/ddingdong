@@ -6,6 +6,7 @@ import {
 import { NotificationList } from "@/components/notifications/NotificationList"
 import { Button } from "@/components/ui/button"
 import { useNotificationsPage } from "@/hooks/useNotificationsPage"
+import { useUnread } from "@/hooks/useUnread"
 import { NOTIFICATIONS_PAGE_MAX } from "@/lib/constants"
 import { formatRelativeTime } from "@/lib/format"
 import type { LoadMoreState } from "@/lib/load-more"
@@ -20,6 +21,14 @@ export function NotificationsPage() {
   const [cls, setCls] = useState<ClassFilter>("all")
   const [sentOnly, setSentOnly] = useState(false)
   const allChipRef = useRef<HTMLButtonElement>(null)
+  // 새 알림 표식 해제 = 들어올 때 · 나갈 때 마지막 확인 시각 갱신. 표식 기준은 들어올 때의 값으로 고정해
+  // 이 방문 동안은 표식이 남는다(켜 둔 채 새로 온 알림에도 붙는다) — 화면을 나가면 사라진다.
+  const { lastSeenMs, markSeen } = useUnread()
+  const [newSince] = useState(lastSeenMs)
+  useEffect(() => {
+    markSeen()
+    return markSeen
+  }, [markSeen])
   const filtering = cls !== "all" || sentOnly
   const shown = filterNotifications(notifications, cls, sentOnly)
   const clearFilter = () => {
@@ -67,6 +76,8 @@ export function NotificationsPage() {
         error={error}
         lastUpdated={lastUpdated}
         groupByDay
+        newSince={newSince}
+        collapseOther
         // 불러온 알림은 있는데 거른 결과가 0건 — 「알림이 없다」가 아니라 「불러온 것 중에 없다」.
         emptySlot={notifications.length > 0 ? <FilterEmpty onClear={clearFilter} /> : undefined}
       />
