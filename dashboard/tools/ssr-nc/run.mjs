@@ -533,6 +533,12 @@ const ASSERTIONS = [
   { fixture: "card_blocked", kind: "has", text: "거리 센서" },
   { fixture: "card_blocked", kind: "has", text: "검증 안 함" },
   { fixture: "card_token_fail", kind: "has", text: "검증 안 함" },
+  // 폰 폭 하단 탭
+  { fixture: "bottom_nav", kind: "has", text: "홈" },
+  { fixture: "bottom_nav", kind: "has", text: "알림" },
+  { fixture: "bottom_nav", kind: "has", text: "통계" },
+  { fixture: "bottom_nav", kind: "has", text: "설정" },
+  { fixture: "bottom_nav", kind: "has", text: "도움말" },
 ]
 
 const abs = (file) => path.join(ROOT, file)

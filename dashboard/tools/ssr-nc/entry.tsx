@@ -6,8 +6,10 @@
 //   비교이므로 마커가 끼면 비교 단위가 흔들린다.
 // ★ 픽스처 시각·수치는 전부 고정 주입이다 — 실 서버·실 시계 미호출(8.5(g) 동형).
 import { renderToStaticMarkup } from "react-dom/server"
+import { MemoryRouter } from "react-router-dom"
 import { StaleDataNotice } from "@/components/feedback/StaleDataNotice"
 import { StatusBanner } from "@/components/feedback/StatusBanner"
+import { BottomNav } from "@/components/layout/BottomNav"
 import { NotificationCard } from "@/components/notifications/NotificationCard"
 import { FilterEmpty, NotificationFilterBar } from "@/components/notifications/NotificationFilterBar"
 import { NotificationImage } from "@/components/notifications/NotificationImage"
@@ -425,6 +427,12 @@ export const output: Record<string, string> = {
       <li>{`제목2=${titleWithCount(2, "띵동 — 알림 대시보드")}`}</li>
       <li>{`제목0=${titleWithCount(0, "띵동 — 알림 대시보드")}`}</li>
     </ul>,
+  ),
+  // 폰 폭 하단 탭 — NAV_ITEMS 5개 글자(현재 위치 = 통계). 배치 · 겹침 · 안전 영역은 사정권 밖(화면 확인).
+  bottom_nav: renderToStaticMarkup(
+    <MemoryRouter initialEntries={["/stats"]}>
+      <BottomNav />
+    </MemoryRouter>,
   ),
   card_new: card(item("doorbell", "2020-01-01T09:00:00.000+09:00", status(true, false, "skipped", null)), true),
 }

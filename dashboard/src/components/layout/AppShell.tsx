@@ -12,6 +12,7 @@ import type { UnreadState } from "@/hooks/useUnread"
 import { deriveBanner } from "@/lib/banner"
 import { browserStorage, countNew, readLastSeen, titleWithCount, writeLastSeen } from "@/lib/unread"
 import { cn } from "@/lib/utils"
+import { BottomNav } from "./BottomNav"
 import { Header } from "./Header"
 import { Sidebar } from "./Sidebar"
 
@@ -96,7 +97,8 @@ export function AppShell() {
         <main
           id="main-content"
           tabIndex={-1}
-          className="flex-1 px-4 py-6 outline-none lg:px-8"
+          // 폰 폭 아래 여백 = 하단 탭 높이(메뉴 토큰 + 안전 영역) + 원래 여백 — 끝의 버튼 · 빈 상태가 탭에 가리지 않게.
+          className="flex-1 px-4 pt-6 pb-[calc(var(--spacing-menu)_+_env(safe-area-inset-bottom,0px)_+_1.5rem)] outline-none lg:px-8 lg:pb-6"
         >
           <div className="mx-auto w-full max-w-5xl">
             <StatusBanner kind={deriveBanner(disconnected, isOnline, health !== null, notifications)} />
@@ -106,6 +108,8 @@ export function AppShell() {
           </div>
         </main>
       </div>
+
+      <BottomNav />
 
       <OnboardingModal />
 
