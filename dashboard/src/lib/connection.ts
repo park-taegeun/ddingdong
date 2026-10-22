@@ -31,10 +31,10 @@ export function deriveConnection(
     return { label: "서버 연결 끊김", short: "끊김", Icon: ServerOff, colorClass: "text-status-failed" }
   }
   if (isOnline) {
-    return { label: "디바이스 온라인", short: "연결됨", Icon: Wifi, colorClass: "text-status-online" }
+    return { label: "현관 기기 연결됨", short: "연결됨", Icon: Wifi, colorClass: "text-status-online" }
   }
   if (hasHealth) {
-    return { label: "디바이스 오프라인", short: "기기 꺼짐", Icon: WifiOff, colorClass: "text-status-failed" }
+    return { label: "현관 기기 꺼짐", short: "기기 꺼짐", Icon: WifiOff, colorClass: "text-status-failed" }
   }
   return { label: "연결 확인 중", short: "확인 중", Icon: RefreshCw, colorClass: "text-status-processing" }
 }

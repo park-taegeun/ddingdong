@@ -25,7 +25,7 @@ export function lastSendFailed(notifications: NotificationItem[]): boolean {
   return false
 }
 
-// 기기 꺼짐 조건 = deriveConnection 의 「디바이스 오프라인」과 같다(상태를 받았는데 online 이 아님).
+// 기기 꺼짐 조건 = deriveConnection 의 「현관 기기 꺼짐」과 같다(상태를 받았는데 online 이 아님).
 // 끊김이 먼저 — 서버가 안 보이면 기기 상태도 카톡 결과도 옛 값이다.
 export function deriveBanner(
   disconnected: boolean,

@@ -92,13 +92,13 @@ const CASES = [
     patch: "return nowMs - lastUpdated.getTime() > staleAfterMs",
   },
   // AU-07 I5 — 끊김은 온라인 · 오프라인보다 먼저 본다. 결함 = 끊김 분기를 지우면 서버가 죽어도
-  // 마지막 health 가 online 이라 「디바이스 온라인」이 남는다(AU-07 원래 증상). 함정: 끊김 단독
+  // 마지막 health 가 online 이라 「현관 기기 연결됨」이 남는다(AU-07 원래 증상). 함정: 끊김 단독
   // 입력(online=false · health 없음)만 보면 「연결 확인 중」으로 떨어져도 라벨 차이를 못 볼 수
   // 있다 — 온라인+끊김 입력을 단언한다. 앵커 = 분기 조건 한 줄(NC-a 앵커와 문자열 비포함).
   {
     id: "NC-b",
     file: SRC.connection,
-    desc: "헤더 끊김 우선 제거 — 온라인+끊김에서 '디바이스 온라인' (AU-07 I5)",
+    desc: "헤더 끊김 우선 제거 — 온라인+끊김에서 '현관 기기 연결됨' (AU-07 I5)",
     anchor: "if (disconnected) {",
     patch: "if (false) {",
   },
@@ -387,8 +387,8 @@ const ASSERTIONS = [
   { fixture: "stale_boundary", kind: "has", text: "첫성공전오류=끊김" },
   { fixture: "stale_boundary", kind: "has", text: "첫성공전대기=정상" },
   { fixture: "conn_labels", kind: "has", text: "온라인+끊김=서버 연결 끊김" },
-  { fixture: "conn_labels", kind: "has", text: "온라인=디바이스 온라인" },
-  { fixture: "conn_labels", kind: "has", text: "오프라인=디바이스 오프라인" },
+  { fixture: "conn_labels", kind: "has", text: "온라인=현관 기기 연결됨" },
+  { fixture: "conn_labels", kind: "has", text: "오프라인=현관 기기 꺼짐" },
   { fixture: "conn_labels", kind: "has", text: "확인중=연결 확인 중" },
   { fixture: "image_retry_delay", kind: "has", text: "실패1=10000ms" },
   { fixture: "image_retry_delay", kind: "has", text: "실패6=10000ms" },
