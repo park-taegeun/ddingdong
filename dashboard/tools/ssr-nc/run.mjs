@@ -360,7 +360,8 @@ const CASES = [
     file: SRC.card,
     desc: "거리 센서 칸을 접힘 안으로 — 기본 카드에 '검증 안 함' 없음 (기술 정보 접기)",
     anchor: "<NotificationTof tof={notification.tof_check} />",
-    patch: "{detailsOpen && <NotificationTof tof={notification.tof_check} />}",
+    // 패치에 앵커 문자열이 남지 않게 필드를 대괄호로 읽는다(하네스 ③ 「앵커 잔존」 가드).
+    patch: '{detailsOpen && <NotificationTof tof={notification["tof_check"]} />}',
   },
   // 기술 정보 접기 — 기본은 접힘. 결함 = 펼친 채 시작하면 신뢰도 숫자가 다시 전면에 나온다.
   {
