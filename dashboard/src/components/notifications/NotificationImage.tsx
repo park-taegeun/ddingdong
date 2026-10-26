@@ -17,7 +17,8 @@ interface NotificationImageProps {
 
 // 보관 기간 안내 — 서버는 파일을 지우지 않고 서빙만 막는다(「지워졌어요」가 아닌 이유). 문구 = 후보(확정 카피 아님).
 // 일 단위는 CAPTURE_TTL_HOURS / 24 에서 만든다 — 24로 나누어떨어지지 않는 값이 되면 시간 단위 문구로 바꾼다.
-const EXPIRED_LABEL = `보관 기간(${CAPTURE_TTL_HOURS / 24}일)이 지나 볼 수 없어요`
+// 도움말 FAQ(사진 보관)가 같은 글자를 쓴다 — pages/HelpPage.tsx
+export const EXPIRED_LABEL = `보관 기간(${CAPTURE_TTL_HOURS / 24}일)이 지나 볼 수 없어요`
 
 export function NotificationImage({ src, alt, caption, expired = false }: NotificationImageProps) {
   // url = 지금 보여 줄 사진 주소(첫 요청은 원본 그대로), null = 실패 표시 중.

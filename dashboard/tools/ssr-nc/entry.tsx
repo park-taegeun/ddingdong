@@ -7,6 +7,7 @@
 // ★ 픽스처 시각·수치는 전부 고정 주입이다 — 실 서버·실 시계 미호출(8.5(g) 동형).
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter } from "react-router-dom"
+import { STEPS } from "@/components/feedback/OnboardingModal"
 import { StaleDataNotice } from "@/components/feedback/StaleDataNotice"
 import { StatusBanner } from "@/components/feedback/StatusBanner"
 import { BottomNav } from "@/components/layout/BottomNav"
@@ -20,10 +21,12 @@ import { NotificationTof } from "@/components/notifications/NotificationTof"
 import { DoorbellRegistrationView } from "@/components/settings/DoorbellRegistrationCard"
 import { SkipReasonsCard } from "@/components/stats/SkipReasonsCard"
 import { SystemHealthCard } from "@/components/stats/SystemHealthCard"
+import { OnboardingProvider } from "@/contexts/OnboardingContext"
 import { SettingsProvider } from "@/contexts/SettingsContext"
 import { deriveBanner } from "@/lib/banner"
 import { deriveConnection, isStale } from "@/lib/connection"
 import {
+  CAPTURE_TTL_HOURS,
   FIRE_MOTION_WINDOW_MS,
   IMAGE_RETRY_INTERVAL_MS,
   IMAGE_RETRY_MAX,
@@ -38,6 +41,7 @@ import { filterNotifications, filterSummary, groupByDay } from "@/lib/notificati
 import { isPhotoExpired, isWithinWindow } from "@/lib/notification-meta"
 import { countNew, readLastSeen, titleWithCount } from "@/lib/unread"
 import type { SeenStorage } from "@/lib/unread"
+import { HelpPage } from "@/pages/HelpPage"
 import type {
   NotificationItem,
   NotificationStatus,
@@ -546,3 +550,34 @@ export const output: Record<string, string> = {
   ),
   reg_over: regCard("collecting", 5, 3),
 }
+
+// 도움말 FAQ · 온보딩 단계. 온보딩 모달은 Portal 이라 SSR 이 비어 있어 STEPS 데이터를 글자로 펼친다(줄 배열은 줄마다 노드).
+output.help = renderToStaticMarkup(
+  <OnboardingProvider>
+    <HelpPage />
+  </OnboardingProvider>,
+)
+output.onboarding_steps = renderToStaticMarkup(
+  <ol>
+    {STEPS.map((s) => (
+      <li key={s.title}>
+        <p>{s.title}</p>
+        {[s.description].flat().map((line) => (
+          <p key={line}>{line}</p>
+        ))}
+      </li>
+    ))}
+  </ol>,
+)
+// FAQ 가 다른 화면 문구를 같은 글자로 인용하는지 — 따옴표 안 글자를 뽑아 실제 렌더(카드 · 상수)와 대조한다.
+// 일 수 = CAPTURE_TTL_HOURS / 24 와 같은가(손 숫자로 바뀌면 상수와 어긋난다).
+const nodes = (html: string) => html.split(/<[^>]*>/).map((t) => t.trim()).filter(Boolean)
+const pick = (re: RegExp) => output.help.match(re)?.[1] ?? null
+const same = (ok: boolean) => (ok ? "일치" : "불일치")
+output.help_copy_match = renderToStaticMarkup(
+  <ul>
+    <li>{`F3일수=${same(pick(/사진은 (\d+)일 동안/) === String(CAPTURE_TTL_HOURS / 24))}`}</li>
+    <li>{`F3만료문구=${same(nodes(output.card_photo_no_stt).includes(pick(/‘([^’]+)’로 바뀌어요/) ?? ""))}`}</li>
+    <li>{`F4카드문구=${same(nodes(output.card_photo_no_stt).includes(pick(/‘([^’]+)’라고 표시돼요/) ?? ""))}`}</li>
+  </ul>,
+)
