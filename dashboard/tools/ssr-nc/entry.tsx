@@ -571,7 +571,7 @@ output.onboarding_steps = renderToStaticMarkup(
 )
 // FAQ 가 다른 화면 문구를 같은 글자로 인용하는지 — 따옴표 안 글자를 뽑아 실제 렌더(카드 · 상수)와 대조한다.
 // 일 수 = CAPTURE_TTL_HOURS / 24 와 같은가(손 숫자로 바뀌면 상수와 어긋난다).
-const nodes = (html: string) => html.split(/<[^>]*>/).map((t) => t.trim())
+const nodes = (html: string) => html.split(/<[^>]*>/).map((t) => t.trim()).filter(Boolean)
 const pick = (re: RegExp) => output.help.match(re)?.[1] ?? null
 const same = (ok: boolean) => (ok ? "일치" : "불일치")
 output.help_copy_match = renderToStaticMarkup(
