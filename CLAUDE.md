@@ -23,6 +23,7 @@ python3 -m venv venv && source venv/bin/activate && pip install -r requirements.
 cp .env.example .env              # DEVICE_TOKEN / DASHBOARD_TOKEN — 사람이 직접 실행(훅이 차단함)
 FLASK_APP=app venv/bin/flask run --host=0.0.0.0 --port=5000   # mock ML · 보드가 붙으려면 0.0.0.0 필수(run.py는 127.0.0.1로만 띄운다) · NCP 키가 설정돼 있으면 STT는 실호출(과금)
 DDINGDONG_MODEL_PATH="$HOME/ddingdong_runs/<run 폴더>/inference_savedmodel" FLASK_APP=app venv_real/bin/flask run --host=0.0.0.0 --port=5000   # 실모델(venv_real = Python 3.11 + TensorFlow)
+# 서버를 `--debug` · `FLASK_DEBUG=1`로 띄우지 않는다(`python run.py`도 debug=True라 해당) — 응답이 보드 버퍼(767 B)를 넘을 수 있다(decisions.md 33.37(e) · 사용자 결정 2026-10-26)
 python3 -m unittest discover -s app/tests -t .          # 전체
 python3 -m unittest app.tests.test_detect_regression    # 단일 모듈
 python3 -m unittest inference.tests.test_inference_contract -v   # TF 없으면 predict 테스트 skip
