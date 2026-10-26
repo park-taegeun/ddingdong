@@ -27,6 +27,8 @@ export function useRegistration() {
         await action()
         refetch()
       } catch (err) {
+        // 화면에는 한 줄 문구만 — 기술 내용은 콘솔로(요청 실패 1회당 1줄).
+        console.error("등록 요청 실패:", err)
         setActionError(err instanceof Error ? err : new Error(String(err)))
       } finally {
         setIsSubmitting(false)

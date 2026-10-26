@@ -47,6 +47,7 @@ const SRC = {
   unread: "src/lib/unread.ts",
   skipCard: "src/components/stats/SkipReasonsCard.tsx",
   list: "src/components/notifications/NotificationList.tsx",
+  regCard: "src/components/settings/DoorbellRegistrationCard.tsx",
 }
 
 /**
@@ -444,6 +445,44 @@ const CASES = [
     anchor: "!Number.isNaN(t) &&",
     patch: "Number.isNaN(t) ||",
   },
+  // 초인종 등록 카드 — 진행은 글자로 전달한다(동그라미는 장식). 결함 = 글자 줄이 빠지면 개수가 색으로만 남는다.
+  {
+    id: "NC-R1",
+    file: SRC.regCard,
+    desc: "진행 글자 줄 제거 — '2번 확인 · 1번 남음' 없음 (등록 카드)",
+    anchor: "{COPY.progress(status.collected, status.target)}",
+    patch: "",
+  },
+  {
+    id: "NC-R2",
+    file: SRC.regCard,
+    desc: "등록 중 안내 줄 제거 — '등록하는 동안에는 초인종 알림을 보내지 않아요.' 없음 (등록 카드)",
+    anchor: "note = COPY.collectingNote",
+    patch: "",
+  },
+  // 함정: 문구 존재를 부분 문자열로 보면 앞 문장만 남은 변형이 통과한다 — 텍스트 노드 완전 일치라 잡힌다.
+  {
+    id: "NC-R3",
+    file: SRC.regCard,
+    desc: "등록됨 안내에서 '노크 · 화재경보는 그대로 알려요.' 삭제 (등록 카드)",
+    anchor: " 노크 · 화재경보는 그대로 알려요.",
+    patch: "",
+  },
+  {
+    id: "NC-R4",
+    file: SRC.regCard,
+    desc: "요청 실패 영문 기술 줄 되살림 — 'API 요청 실패 (502 …' 노출 (등록 카드)",
+    anchor: "<p>{COPY.actionError}</p>\n          </div>",
+    patch: '<p>{COPY.actionError}</p>\n<p className="text-caption">{actionError.message}</p>\n          </div>',
+  },
+  // 서버가 target 보다 많이 센 비정상 값. 결함 = 자르기가 없으면 '-2번 남음'.
+  {
+    id: "NC-R5",
+    file: SRC.regCard,
+    desc: "남은 횟수 0 자르기 제거 — 5/3 에서 '-2번 남음' (등록 카드)",
+    anchor: "Math.max(target - collected, 0)",
+    patch: "target - collected",
+  },
 ]
 
 /**
@@ -653,6 +692,19 @@ const ASSERTIONS = [
   { fixture: "photo_expired", kind: "has", text: "72시간=보관" },
   { fixture: "photo_expired", kind: "has", text: "72시간1ms=지남" },
   { fixture: "photo_expired", kind: "has", text: "잘못=보관" },
+  // 초인종 등록 카드 — ① 진행 글자 ② 등록 중 안내 ③ 등록됨 안내 ④ 실패 한 줄(영문 0) ⑤ 시간 초과 줄 · 비정상 값
+  { fixture: "reg_collecting", kind: "has", text: "2번 확인 · 1번 남음" },
+  { fixture: "reg_collecting", kind: "has", text: "등록하는 동안에는 초인종 알림을 보내지 않아요." },
+  { fixture: "reg_collecting", kind: "lacks", text: "2/3" },
+  { fixture: "reg_collecting_no_target", kind: "has", text: "0번 확인" },
+  { fixture: "reg_collecting_no_target", kind: "lacks", text: "0번 확인 · 0번 남음" },
+  { fixture: "reg_registered", kind: "has", text: "등록한 소리와 많이 다른 초인종 소리는 알리지 않아요. 노크 · 화재경보는 그대로 알려요." },
+  { fixture: "reg_registered", kind: "lacks", text: "등록하는 동안에는 초인종 알림을 보내지 않아요." },
+  { fixture: "reg_expired", kind: "has", text: "3번 중 2번 확인했어요" },
+  { fixture: "reg_action_error", kind: "has", text: "요청을 처리하지 못했어요. 잠시 후 다시 눌러 주세요." },
+  { fixture: "reg_action_error", kind: "lacks", text: "API 요청 실패 (502 Bad Gateway): /api/v1/registration/start" },
+  { fixture: "reg_over", kind: "has", text: "5번 확인 · 0번 남음" },
+  { fixture: "reg_over", kind: "lacks", text: "5번 확인 · -2번 남음" },
 ]
 
 const abs = (file) => path.join(ROOT, file)
