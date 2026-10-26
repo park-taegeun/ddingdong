@@ -17,6 +17,7 @@ import { NotificationList } from "@/components/notifications/NotificationList"
 import { NotificationStatusBadge } from "@/components/notifications/NotificationStatusBadge"
 import { NotificationSTT } from "@/components/notifications/NotificationSTT"
 import { NotificationTof } from "@/components/notifications/NotificationTof"
+import { DoorbellRegistrationView } from "@/components/settings/DoorbellRegistrationCard"
 import { SkipReasonsCard } from "@/components/stats/SkipReasonsCard"
 import { SystemHealthCard } from "@/components/stats/SystemHealthCard"
 import { SettingsProvider } from "@/contexts/SettingsContext"
@@ -45,6 +46,7 @@ import type {
   SkipReason,
   TofCheck,
 } from "@/types/notification"
+import type { RegistrationState } from "@/types/registration"
 import type { SkipReasonCounts, SystemHealth, TokenStatus } from "@/types/stats"
 
 function health(status: TokenStatus, minutes: number): SystemHealth {
@@ -237,6 +239,34 @@ const firstVisitAt = (storage: SeenStorage | null) => {
     return "오류"
   }
 }
+
+// 초인종 등록 카드 — 표시 컴포넌트만(훅 · 서버 · 시계 미호출). 시각은 고정 문자열.
+const regCard = (
+  state: RegistrationState,
+  collected: number,
+  target: number | null,
+  actionError: Error | null = null,
+) =>
+  renderToStaticMarkup(
+    <DoorbellRegistrationView
+      status={{
+        state,
+        collected,
+        target,
+        started_at: "2026-10-26T17:00:00.000+09:00",
+        expires_at: "2026-10-26T17:05:00.000+09:00",
+        registered_at: state === "registered" ? "2026-10-26T17:03:00.000+09:00" : null,
+      }}
+      isLoading={false}
+      loadError={null}
+      isSubmitting={false}
+      actionError={actionError}
+      confirming={false}
+      onStart={noop}
+      onClear={noop}
+      onConfirmingChange={noop}
+    />,
+  )
 
 export const output: Record<string, string> = {
   // 8.5(f) 실렌더 대조 픽스처 (카카오 토큰 3상태 + 만료 경과 환산)
@@ -502,4 +532,17 @@ export const output: Record<string, string> = {
       <li>{`잘못=${photoAt("x")}`}</li>
     </ul>,
   ),
+
+  // 초인종 등록 카드 — 진행 글자 · 등록 중 / 등록됨 안내 · 시간 초과 줄 · 요청 실패 한 줄 · 비정상 값
+  reg_collecting: regCard("collecting", 2, 3),
+  reg_collecting_no_target: regCard("collecting", 0, null),
+  reg_registered: regCard("registered", 3, 3),
+  reg_expired: regCard("expired", 2, 3),
+  reg_action_error: regCard(
+    "none",
+    0,
+    null,
+    new Error("API 요청 실패 (502 Bad Gateway): /api/v1/registration/start"),
+  ),
+  reg_over: regCard("collecting", 5, 3),
 }
