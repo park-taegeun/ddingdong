@@ -779,6 +779,10 @@ def _build_stats(rows, start_kst, end_kst):
         # system_health: db_status 만 아직 고정값이고 나머지는 실데이터.
         # device_* · signal_strength = heartbeat 표(_device_health), kakao_token_* = 토큰 행,
         # clova_api_status = env 게이트. device_last_seen_at = 마지막 heartbeat(없으면 null).
+        # [현재값 2026-10-26 — 사용자 결정(Claude 권고 수용) · 수용된 위험으로 닫음] db_status 고정값 유지.
+        # 근거(논증) = DB가 죽으면 /stats 자체가 실패(500)해 대시보드는 「서버 연결 끊김」을 먼저
+        # 보인다 → 이 행이 「오류」를 보일 기회가 사실상 없다. 재판정 트리거 = /stats 가 DB 실패를
+        # 삼키고 200 을 내게 바뀔 때 · DB 외부화(EC2 등).
         "system_health": {
             "device_last_seen_at": device_last_seen_at,
             "device_status": device_status,

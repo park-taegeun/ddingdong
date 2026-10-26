@@ -45,6 +45,8 @@ CAPTURE_OPAQUE_BYTES = 16
 # 캡처 이미지 TTL — 카카오가 발송 시점에 image_url 을 즉시 fetch 하지 않고 lazy 로딩하므로
 # (카테고리 7.3) 짧게 못 잡음 → 넉넉히 72시간. cleanup_expired() 수동 호출 대상
 # (스케줄러 신설 X, 스케줄링은 11주차 defer). IDEMPOTENCY_TTL 과 동일 timedelta 관례.
+# [현재값 2026-10-26 — 사용자 결정(Claude 권고 수용) · 근거 = decisions.md 33.35(k) 결정 유지]
+# 자동 정리(스케줄링)는 만들지 않는다 — 수동 정리로 닫음(정리 = 학부생 셸). 재판정 트리거 = 미지정.
 # ★ 11주차 교체 지점: 실 호스팅 이관 시 만료 정책 재확정.
 CAPTURE_TTL = timedelta(hours=72)
 
