@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { ChevronDown, TriangleAlert } from "lucide-react"
+import { ChevronDown, MessageSquareOff, TriangleAlert } from "lucide-react"
 import { useSettings } from "@/contexts/SettingsContext"
 import { FIRE_MOTION_WINDOW_MS } from "@/lib/constants"
 import { formatConfidence, formatDetectedAt } from "@/lib/format"
@@ -129,6 +129,22 @@ export function NotificationCard({
           {notification.stt && (
             <div className="mt-3">
               <NotificationSTT stt={notification.stt} />
+            </div>
+          )}
+
+          {/* 사진은 왔는데 자막이 없을 때 — 2차가 끝났다는 표시(카톡 사진 카드 「알아들은 말 없음」과 짝).
+              서버가 STT 실패와 빈 결과를 둘 다 null로 접어(7.6(e)) 「말이 없었다」로 단정하지 않는다.
+              문구 = 후보 수용(확정 카피 아님), 사용자 결정 2026-10-26. 사진 URL은 2차 처리 끝에 저장된다
+              → 처리 중엔 뜨지 않는다. */}
+          {notification.media.image_url && !notification.stt && (
+            <div className="mt-3 rounded-xl bg-background-sub p-3">
+              <p className="flex items-center gap-1.5 text-body">
+                <MessageSquareOff className="h-4 w-4 shrink-0 text-foreground-secondary" aria-hidden />
+                알아들은 말이 없어요
+              </p>
+              <p className="mt-1 text-caption text-foreground-secondary">
+                방문자가 말하지 않았거나, 소리가 작아 알아듣지 못했을 수 있어요.
+              </p>
             </div>
           )}
 

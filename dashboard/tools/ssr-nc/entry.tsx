@@ -478,4 +478,14 @@ export const output: Record<string, string> = {
     </SettingsProvider>,
   ),
   card_new: card(item("doorbell", "2020-01-01T09:00:00.000+09:00", status(true, false, "skipped", null)), true),
+  // 자막 없음 표시 — 사진 있음 + 자막 없음에서만(사진 없음 + 자막 없음 = card_blocked 재사용)
+  card_photo_no_stt: card({
+    ...item("knock", "2020-01-01T09:00:00.000+09:00", status(true, true, "completed", PHOTO_AT)),
+    media: { image_url: "/captures/abc", image_thumbnail_url: null, audio_url: null },
+  }),
+  card_photo_stt: card({
+    ...item("knock", "2020-01-01T09:00:00.000+09:00", status(true, true, "completed", PHOTO_AT)),
+    media: { image_url: "/captures/abc", image_thumbnail_url: null, audio_url: null },
+    stt: stt(null),
+  }),
 }

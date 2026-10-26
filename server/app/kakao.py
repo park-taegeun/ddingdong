@@ -28,6 +28,7 @@ from .constants import (
     KAKAO_TOKEN_URL,
     KST,
     PRIMARY_MESSAGES,
+    SECONDARY_FEED_NO_CAPTION_NOTE,
     SECONDARY_FEED_TITLES,
 )
 from .extensions import db
@@ -424,13 +425,16 @@ def send_primary_text(predicted_class, client_request_id=None):
 #   비용 = memo 왕복 p95 490ms(7.3) × 2 ≈ 1초 = 2차 15초 예산의 약 6.5%(논증, 산술).
 
 
-def _feed_description(detected_at_utc):
+def _feed_description(detected_at_utc, has_caption):
     """feed 카드 본문. 감지 시각(KST) 한 줄 — 자막은 넣지 않는다(위 절 주석).
 
     자막을 배제한 자리에 무엇을 넣을지는 "2줄 안에 확실히 들어가고, 사진만으로는 알 수
     없는 정보"를 기준으로 골랐다. 감지 시각은 카드가 늦게 열렸을 때 "언제 온 방문인지"를
     복원해 주고, 길이가 고정(약 20자)이라 어떤 렌더 폭에서도 절단 위험이 없다
     — 실측 P1(15자)이 1줄로 전문 렌더된 구간이다.
+    [현재값 2026-10-26 — 자막이 없을 때만 둘째 줄에 SECONDARY_FEED_NO_CAPTION_NOTE 를
+      붙인다(2줄 = 절단 상한 안, 실측 2026-10-26 시험 1/2: "\\n" 이 두 줄로 끝까지 렌더 ·
+      학부생 폰 1대 · 1회). 자막이 있으면 위 한 줄 그대로다. 자막 자체는 여전히 넣지 않는다.]
     ★ 길이 상한 상수를 만들지 않는 이유 = 상한이 줄 수 기준이라 서버가 글자 수로 정할
       수 없기 때문이다(카테고리 20: 실측 없는 판정 금지). 대신 서버가 만드는 문자열
       자체를 짧게 고정한다.
@@ -439,9 +443,13 @@ def _feed_description(detected_at_utc):
         # 호출부가 시각을 못 주는 경우는 현재 없다. 그래도 카드 본문을 비워 두지 않는다
         # (description 은 feed 필수 필드이고, 빈 문자열이 렌더에서 어떻게 보이는지는
         #  실측된 적이 없다).
-        return "방문자 사진이 도착했습니다."
-    kst = detected_at_utc.replace(tzinfo=timezone.utc).astimezone(KST)
-    return f"{kst.month}월 {kst.day}일 {kst.strftime('%H:%M')} 감지"
+        first = "방문자 사진이 도착했습니다."
+    else:
+        kst = detected_at_utc.replace(tzinfo=timezone.utc).astimezone(KST)
+        first = f"{kst.month}월 {kst.day}일 {kst.strftime('%H:%M')} 감지"
+    if has_caption:
+        return first
+    return f"{first}\n{SECONDARY_FEED_NO_CAPTION_NOTE}"
 
 
 def _build_secondary_title(predicted_class):
@@ -600,7 +608,7 @@ def send_secondary(predicted_class, image_url, caption, detected_at_utc):
         return result
 
     title = _build_secondary_title(predicted_class)
-    description = _feed_description(detected_at_utc)
+    description = _feed_description(detected_at_utc, has_caption)
 
     # ① 사진(feed) — 먼저. "누가 왔는지"가 "뭐라고 말했는지"보다 먼저 필요하다.
     photo_sent, photo_reason, token_dead = _send_part(
