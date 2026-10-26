@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Bell, Flame, ShieldCheck } from "lucide-react"
+import { Bell, Flame, ListChecks, ShieldCheck } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -18,11 +18,14 @@ interface Step {
   icon: LucideIcon
   iconClass: string
   title: string
-  description: string
+  // 배열 = 한 줄씩 끊어 보인다(설치 후 할 일 ①②)
+  description: string | string[]
   showClasses?: boolean
 }
 
-const STEPS: Step[] = [
+// ssr-nc 가 단계 문구를 데이터로 단언한다(모달은 Portal 이라 SSR 렌더가 비어 있다).
+// eslint-disable-next-line react-refresh/only-export-components
+export const STEPS: Step[] = [
   {
     icon: Bell,
     iconClass: "bg-primary/10 text-primary",
@@ -42,6 +45,16 @@ const STEPS: Step[] = [
     iconClass: "bg-danger/10 text-danger",
     title: "화재경보는 더 크게 알려요",
     description: "화재경보는 빨간색으로 강조하고, 대응 수칙을 함께 보여드려요.",
+  },
+  // 순서 = 알림 확인 먼저, 등록은 나중 — 등록하는 동안에는 초인종 알림이 억제된다(33.30(c)). 문구 = 후보.
+  {
+    icon: ListChecks,
+    iconClass: "bg-primary/10 text-primary",
+    title: "설치하고 꼭 해 주세요",
+    description: [
+      "① 초인종을 한 번 눌러 카카오톡 ‘나와의 채팅’에 알림이 오는지 확인해 주세요.",
+      "② 설정에서 ‘우리집 초인종’을 등록해 주세요.",
+    ],
   },
 ]
 
@@ -76,7 +89,13 @@ export function OnboardingModal() {
           </span>
           <DialogTitle className="text-h2">{current.title}</DialogTitle>
           <DialogDescription className="text-body text-foreground-secondary">
-            {current.description}
+            {typeof current.description === "string"
+              ? current.description
+              : current.description.map((line) => (
+                  <span key={line} className="block">
+                    {line}
+                  </span>
+                ))}
           </DialogDescription>
         </DialogHeader>
 

@@ -1,7 +1,9 @@
 import { TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { EXPIRED_LABEL } from "@/components/notifications/NotificationImage"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useOnboarding } from "@/contexts/OnboardingContext"
+import { CAPTURE_TTL_HOURS } from "@/lib/constants"
 import {
   CLASS_META,
   FIRE_ALARM_GUIDELINES,
@@ -16,6 +18,10 @@ const CLASS_DESCRIPTION: Record<string, string> = {
   fire_alarm: "화재경보음을 감지하면 가장 먼저, 가장 크게 알려요.",
 }
 
+// 사진 보관 일 수 — 만료 문구(NotificationImage.tsx EXPIRED_LABEL)와 같은 식
+const TTL_DAYS = CAPTURE_TTL_HOURS / 24
+
+// FAQ 문구 = 후보(확정 카피 아님)
 const FAQS = [
   {
     q: "알림은 얼마나 빨리 오나요?",
@@ -23,7 +29,21 @@ const FAQS = [
   },
   {
     q: "사진과 음성은 어떻게 보이나요?",
-    a: "2차 알림이 갈 때는 현관 카메라가 찍은 사진과, 방문자가 한 말을 글자로 바꾼 자막이 알림 카드에 함께 표시돼요.",
+    // ‘알아들은 말이 없어요’ = NotificationCard.tsx 자막 없음 문구와 같은 글자(ssr-nc 가 대조한다).
+    // 상수로 공유하지 않는 이유 = 카드 쪽 그 줄이 ssr-nc NC-K2 앵커다.
+    a: "2차 알림이 갈 때는 현관 카메라가 찍은 사진과, 방문자가 한 말을 글자로 바꾼 자막이 알림 카드에 함께 표시돼요. 알아들은 말이 없으면 ‘알아들은 말이 없어요’라고 표시돼요.",
+  },
+  {
+    q: "사진은 언제까지 볼 수 있나요?",
+    a: `사진은 ${TTL_DAYS}일 동안 볼 수 있어요. ${TTL_DAYS}일이 지나면 ‘${EXPIRED_LABEL}’로 바뀌어요. 카카오톡 사진도 ${TTL_DAYS}일이 지나면 보이지 않을 수 있어요.`,
+  },
+  {
+    q: "카카오톡 알림은 어디로 오나요?",
+    a: "카카오톡 ‘나와의 채팅’ 방으로 와요. 휴대폰 잠금 화면에는 알림이 뜨지 않을 수 있어서, 그 방을 열어 두거나 이 화면을 함께 확인해 주세요.",
+  },
+  {
+    q: "소리가 났는데 알림이 안 왔어요.",
+    a: "확실하지 않은 소리, 현관 앞에 사람이 없어 보인 초인종·노크 소리, 등록한 초인종과 많이 다른 소리, 알림 대상이 아닌 기타 소리는 보내지 않아요. 알림 화면에서 보내지 않은 기록과 이유를 볼 수 있고, 통계 화면의 ‘오늘 보내지 않은 이유’에서 하루 합계를 볼 수 있어요.",
   },
   {
     q: "화면이 잘 안 보여요.",

@@ -48,6 +48,8 @@ const SRC = {
   skipCard: "src/components/stats/SkipReasonsCard.tsx",
   list: "src/components/notifications/NotificationList.tsx",
   regCard: "src/components/settings/DoorbellRegistrationCard.tsx",
+  help: "src/pages/HelpPage.tsx",
+  onboarding: "src/components/feedback/OnboardingModal.tsx",
 }
 
 /**
@@ -483,6 +485,31 @@ const CASES = [
     anchor: "Math.max(target - collected, 0)",
     patch: "target - collected",
   },
+  // 도움말 FAQ — 알림이 안 온 이유 문답이 빠지면 미발송 경로를 설명할 곳이 없다.
+  {
+    id: "NC-H1",
+    file: SRC.help,
+    desc: "FAQ '알림이 안 왔어요' 문답 삭제 (도움말 FAQ)",
+    anchor: "  {\n    q: \"소리가 났는데 알림이 안 왔어요.\",\n    a: \"확실하지 않은 소리, 현관 앞에 사람이 없어 보인 초인종·노크 소리, 등록한 초인종과 많이 다른 소리, 알림 대상이 아닌 기타 소리는 보내지 않아요. 알림 화면에서 보내지 않은 기록과 이유를 볼 수 있고, 통계 화면의 ‘오늘 보내지 않은 이유’에서 하루 합계를 볼 수 있어요.\",\n  },\n",
+    patch: "",
+  },
+  // 사진 보관 일 수는 상수에서 만든다. 결함 = 손 숫자. 함정: 손 숫자가 지금 상수와 같은 3이면 렌더가 같아 못 잡는다
+  // (동치 변형) — 상수가 바뀐 뒤 남은 손 숫자를 7로 대리한다.
+  {
+    id: "NC-H2",
+    file: SRC.help,
+    desc: "사진 보관 일 수를 손 숫자(7)로 — FAQ 가 상수와 어긋난다 (도움말 FAQ)",
+    anchor: "const TTL_DAYS = CAPTURE_TTL_HOURS / 24",
+    patch: "const TTL_DAYS = 7",
+  },
+  // 온보딩 — 설치 직후 할 일 단계가 빠지면 알림 확인 · 등록 안내가 없다.
+  {
+    id: "NC-O1",
+    file: SRC.onboarding,
+    desc: "온보딩 '설치하고 꼭 해 주세요' 단계 삭제 (온보딩)",
+    anchor: "  {\n    icon: ListChecks,\n    iconClass: \"bg-primary/10 text-primary\",\n    title: \"설치하고 꼭 해 주세요\",\n    description: [\n      \"① 초인종을 한 번 눌러 카카오톡 ‘나와의 채팅’에 알림이 오는지 확인해 주세요.\",\n      \"② 설정에서 ‘우리집 초인종’을 등록해 주세요.\",\n    ],\n  },\n",
+    patch: "",
+  },
 ]
 
 /**
@@ -705,6 +732,32 @@ const ASSERTIONS = [
   { fixture: "reg_action_error", kind: "lacks", text: "API 요청 실패 (502 Bad Gateway): /api/v1/registration/start" },
   { fixture: "reg_over", kind: "has", text: "5번 확인 · 0번 남음" },
   { fixture: "reg_over", kind: "lacks", text: "5번 확인 · -2번 남음" },
+  // 도움말 FAQ — 문답 전부 완전 일치(기존 1 · 3번 무변경 포함) + 다른 화면 문구와 같은 글자 · 상수와 같은 일 수
+  // 온보딩 단계 — 1 ~ 3단계 무변경 + 4단계 제목 · 두 줄
+  { fixture: "help", kind: "has", text: "알림은 얼마나 빨리 오나요?" },
+  { fixture: "help", kind: "has", text: "알림이 갈 때는 보통 5초 이내에 1차 알림이, 15초 이내에 사진·자막이 담긴 2차 알림이 도착해요." },
+  { fixture: "help", kind: "has", text: "사진과 음성은 어떻게 보이나요?" },
+  { fixture: "help", kind: "has", text: "2차 알림이 갈 때는 현관 카메라가 찍은 사진과, 방문자가 한 말을 글자로 바꾼 자막이 알림 카드에 함께 표시돼요. 알아들은 말이 없으면 ‘알아들은 말이 없어요’라고 표시돼요." },
+  { fixture: "help", kind: "has", text: "사진은 언제까지 볼 수 있나요?" },
+  { fixture: "help", kind: "has", text: "사진은 3일 동안 볼 수 있어요. 3일이 지나면 ‘보관 기간(3일)이 지나 볼 수 없어요’로 바뀌어요. 카카오톡 사진도 3일이 지나면 보이지 않을 수 있어요." },
+  { fixture: "help", kind: "has", text: "카카오톡 알림은 어디로 오나요?" },
+  { fixture: "help", kind: "has", text: "카카오톡 ‘나와의 채팅’ 방으로 와요. 휴대폰 잠금 화면에는 알림이 뜨지 않을 수 있어서, 그 방을 열어 두거나 이 화면을 함께 확인해 주세요." },
+  { fixture: "help", kind: "has", text: "소리가 났는데 알림이 안 왔어요." },
+  { fixture: "help", kind: "has", text: "확실하지 않은 소리, 현관 앞에 사람이 없어 보인 초인종·노크 소리, 등록한 초인종과 많이 다른 소리, 알림 대상이 아닌 기타 소리는 보내지 않아요. 알림 화면에서 보내지 않은 기록과 이유를 볼 수 있고, 통계 화면의 ‘오늘 보내지 않은 이유’에서 하루 합계를 볼 수 있어요." },
+  { fixture: "help", kind: "has", text: "화면이 잘 안 보여요." },
+  { fixture: "help", kind: "has", text: "설정 화면에서 ‘글씨 크게’와 ‘어두운 화면’을 켜면 더 편하게 볼 수 있어요." },
+  { fixture: "help_copy_match", kind: "has", text: "F3일수=일치" },
+  { fixture: "help_copy_match", kind: "has", text: "F3만료문구=일치" },
+  { fixture: "help_copy_match", kind: "has", text: "F4카드문구=일치" },
+  { fixture: "onboarding_steps", kind: "has", text: "띵동에 오신 것을 환영합니다" },
+  { fixture: "onboarding_steps", kind: "has", text: "현관에서 나는 소리를 자동으로 감지해, 휴대폰과 이 화면으로 알려드려요." },
+  { fixture: "onboarding_steps", kind: "has", text: "세 가지 소리를 구분해요" },
+  { fixture: "onboarding_steps", kind: "has", text: "초인종, 노크, 화재경보를 구분해 표시합니다." },
+  { fixture: "onboarding_steps", kind: "has", text: "화재경보는 더 크게 알려요" },
+  { fixture: "onboarding_steps", kind: "has", text: "화재경보는 빨간색으로 강조하고, 대응 수칙을 함께 보여드려요." },
+  { fixture: "onboarding_steps", kind: "has", text: "설치하고 꼭 해 주세요" },
+  { fixture: "onboarding_steps", kind: "has", text: "① 초인종을 한 번 눌러 카카오톡 ‘나와의 채팅’에 알림이 오는지 확인해 주세요." },
+  { fixture: "onboarding_steps", kind: "has", text: "② 설정에서 ‘우리집 초인종’을 등록해 주세요." },
 ]
 
 const abs = (file) => path.join(ROOT, file)
