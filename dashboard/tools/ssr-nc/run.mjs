@@ -510,6 +510,13 @@ const CASES = [
     anchor: "  {\n    icon: ListChecks,\n    iconClass: \"bg-primary/10 text-primary\",\n    title: \"설치하고 꼭 해 주세요\",\n    description: [\n      \"① 초인종을 한 번 눌러 카카오톡 ‘나와의 채팅’에 알림이 오는지 확인해 주세요.\",\n      \"② 설정에서 ‘우리집 초인종’을 등록해 주세요.\",\n    ],\n  },\n",
     patch: "",
   },
+  {
+    id: "NC-T1",
+    file: SRC.health,
+    desc: "기기 행 「꺼짐」 → 「오프라인」 되돌림 — 헤더 · 요약 카드와 용어가 갈린다 (PoC-(76))",
+    anchor: 'label: "꺼짐"',
+    patch: 'label: "오프라인"',
+  },
 ]
 
 /**
@@ -528,6 +535,10 @@ const ASSERTIONS = [
   { fixture: "token_expired_10m", kind: "has", text: "10분 전 만료" },
   { fixture: "token_expired_10m", kind: "has", text: "만료됨" },
   { fixture: "token_expired_3d", kind: "has", text: "3일 전 만료" },
+  { fixture: "device_online", kind: "has", text: "연결됨" },
+  { fixture: "device_online", kind: "lacks", text: "온라인" },
+  { fixture: "device_offline", kind: "has", text: "꺼짐" },
+  { fixture: "device_offline", kind: "lacks", text: "오프라인" },
   { fixture: "tof_passed", kind: "has", text: "사람 확인" },
   { fixture: "tof_rejected", kind: "has", text: "사람 없음" },
   { fixture: "tof_absent", kind: "has", text: "검증 안 함" },
