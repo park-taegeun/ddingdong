@@ -404,6 +404,21 @@ const CASES = [
     anchor: "<OtherRow key={n.request_id} notification={n} />",
     patch: "null",
   },
+  // 자막 없음 표시 — 사진이 없으면(1차만 · 2차 처리 중) 뜨면 안 된다. 결함 = 처리 중에 「없어요」로 단정.
+  {
+    id: "NC-K1",
+    file: SRC.card,
+    desc: "사진 조건 제거(자막만 봄) — 사진 없는 카드에도 '알아들은 말이 없어요' (자막 없음 표시)",
+    anchor: "{notification.media.image_url && !notification.stt && (",
+    patch: "{!notification.stt && (",
+  },
+  {
+    id: "NC-K2",
+    file: SRC.card,
+    desc: "문구 줄 삭제 — 사진 있음 + 자막 없음에 '알아들은 말이 없어요' 없음 (자막 없음 표시)",
+    anchor: "                알아들은 말이 없어요\n",
+    patch: "",
+  },
 ]
 
 /**
@@ -597,6 +612,13 @@ const ASSERTIONS = [
   { fixture: "list_collapse", kind: "has", text: "기타 소리" },
   { fixture: "list_collapse", kind: "has", text: "알림 안 보냄" },
   { fixture: "list_collapse", kind: "lacks", text: "알림 대상이 아닌 소리 때문에 알림을 보내지 않았어요." },
+  // 자막 없음 표시 — ① 사진 있음 + 자막 없음 = 두 문장 ② 자막 있음 = 0 ③ 사진 없음 = 0
+  { fixture: "card_photo_no_stt", kind: "has", text: "알아들은 말이 없어요" },
+  { fixture: "card_photo_no_stt", kind: "has", text: "방문자가 말하지 않았거나, 소리가 작아 알아듣지 못했을 수 있어요." },
+  { fixture: "card_photo_stt", kind: "lacks", text: "알아들은 말이 없어요" },
+  { fixture: "card_photo_stt", kind: "lacks", text: "방문자가 말하지 않았거나, 소리가 작아 알아듣지 못했을 수 있어요." },
+  { fixture: "card_blocked", kind: "lacks", text: "알아들은 말이 없어요" },
+  { fixture: "card_blocked", kind: "lacks", text: "방문자가 말하지 않았거나, 소리가 작아 알아듣지 못했을 수 있어요." },
 ]
 
 const abs = (file) => path.join(ROOT, file)

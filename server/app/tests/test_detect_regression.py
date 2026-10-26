@@ -2197,6 +2197,45 @@ class DetectRegressionTest(_NoNetworkTestCase):
         self.assertIsNone(out["caption_sent"])
         self.assertIsNone(out["caption_reason"])
 
+    def _secondary_templates(self, caption, detected_at):
+        """send_secondary 1회 → 실린 template_object 목록(네트워크 0)."""
+        from .. import kakao
+
+        captured = []
+
+        def _capture(req, timeout=None):
+            form = urllib.parse.parse_qs(req.data.decode("utf-8"))
+            captured.append(json.loads(form["template_object"][0]))
+            return _FakeResponse({"result_code": 0})
+
+        with self.app.app_context(), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch("app.kakao.urllib.request.urlopen", side_effect=_capture):
+            kakao.send_secondary("knock", "https://example.test/c/x.jpg", caption, detected_at)
+        return captured
+
+    def test_no_caption_note_u1_caption_with_time_is_byte_identical(self) -> None:
+        """U1 — 자막 있음 + 시각 있음 = 기존 한 줄 그대로(바이트 동일)."""
+        t = self._secondary_templates("택배 왔습니다.", datetime(2026, 9, 4, 6, 30, 0))
+        self.assertEqual(t[0]["content"]["description"], "9월 4일 15:30 감지")
+
+    def test_no_caption_note_u2_no_caption_with_time(self) -> None:
+        """U2 — 자막 없음 + 시각 있음 = 둘째 줄 「알아들은 말 없음」 · feed 1건만."""
+        t = self._secondary_templates(None, datetime(2026, 9, 4, 6, 30, 0))
+        self.assertEqual([x["object_type"] for x in t], ["feed"])
+        self.assertEqual(t[0]["content"]["description"], "9월 4일 15:30 감지\n알아들은 말 없음")
+
+    def test_no_caption_note_u3_no_caption_without_time(self) -> None:
+        """U3 — 자막 없음 + 시각 None = 대체 문구 + 같은 둘째 줄."""
+        t = self._secondary_templates(None, None)
+        self.assertEqual(t[0]["content"]["description"], "방문자 사진이 도착했습니다.\n알아들은 말 없음")
+
+    def test_no_caption_note_u4_caption_has_no_note(self) -> None:
+        """U4 — 자막 있음(시각 None)이면 문구 0 — 대체 문구 한 줄 그대로."""
+        t = self._secondary_templates("택배 왔습니다.", None)
+        self.assertEqual(t[0]["content"]["description"], "방문자 사진이 도착했습니다.")
+        self.assertNotIn("알아들은 말 없음", t[0]["content"]["description"])
+
     def test_blank_transcript_is_treated_as_no_caption(self) -> None:
         """공백만 있는 transcript 는 자막 없음으로 접힌다(빈 말풍선 방지)."""
         from ..routes import _caption_from_stt
