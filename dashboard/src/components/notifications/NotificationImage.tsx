@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { ImageOff, Maximize2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import { IMAGE_RETRY_INTERVAL_MS, IMAGE_RETRY_MAX } from "@/lib/constants"
+import { CAPTURE_TTL_HOURS, IMAGE_RETRY_INTERVAL_MS, IMAGE_RETRY_MAX } from "@/lib/constants"
 import { nextRetryDelay, retryUrl } from "@/lib/image-retry"
 import { ImageLightbox } from "./ImageLightbox"
 
@@ -11,9 +11,15 @@ interface NotificationImageProps {
   alt: string
   /** 확대 화면 아래 한 줄(소리 종류 · 감지 시각 · 자막) — 라이트박스로 그대로 넘긴다 */
   caption?: string
+  /** 보관 기간(CAPTURE_TTL_HOURS)이 지난 사진 — 요청하지 않고 안내 문구만(카드가 lib/notification-meta.ts 로 판정) */
+  expired?: boolean
 }
 
-export function NotificationImage({ src, alt, caption }: NotificationImageProps) {
+// 보관 기간 안내 — 서버는 파일을 지우지 않고 서빙만 막는다(「지워졌어요」가 아닌 이유). 문구 = 후보(확정 카피 아님).
+// 일 단위는 CAPTURE_TTL_HOURS / 24 에서 만든다 — 24로 나누어떨어지지 않는 값이 되면 시간 단위 문구로 바꾼다.
+const EXPIRED_LABEL = `보관 기간(${CAPTURE_TTL_HOURS / 24}일)이 지나 볼 수 없어요`
+
+export function NotificationImage({ src, alt, caption, expired = false }: NotificationImageProps) {
   // url = 지금 보여 줄 사진 주소(첫 요청은 원본 그대로), null = 실패 표시 중.
   // 실패하면 상수 간격 · 상한만큼 화면 밖(배경 Image)에서 다시 받아 보고, 성공했을 때만 사진으로 바꾼다 —
   // 재시도마다 실패 표시 ↔ 빈 사진 상자가 깜빡이지 않게. 상한을 다 쓰면 실패 표시가 남는다
@@ -43,6 +49,17 @@ export function NotificationImage({ src, alt, caption }: NotificationImageProps)
       probe.onerror = null
     }
   }, [src, state])
+
+  // 지난 사진 — 기존 실패 상자와 같은 모양에 안내 문구. 첫 상태는 url = src 라 위 재시도가 돌지 않고,
+  // <img> 를 그리지 않으니 요청 · 실패 · 라이트박스도 0이다.
+  if (expired) {
+    return (
+      <div className="flex h-40 w-full flex-col items-center justify-center gap-1 rounded-xl bg-background-sub text-foreground-secondary">
+        <ImageOff className="h-6 w-6" aria-hidden />
+        <span className="text-caption">{EXPIRED_LABEL}</span>
+      </div>
+    )
+  }
 
   if (state.url === null) {
     return (

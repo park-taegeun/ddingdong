@@ -42,3 +42,9 @@ export const NOTIFICATIONS_PAGE_MAX = 100
 // 판정 = 감지 시각 원값과 지금의 차이(표시 반올림 무관 — 8.5(k)). 「움직임 줄이기」 설정이 항상 먼저다.
 // 재판정 = ① 부스 리허설 화면 확인 ② 화재 반복 감지 관측(경보가 이어질 때 행 간격이 이 창보다 긴지).
 export const FIRE_MOTION_WINDOW_MS = 10 * 60 * 1000
+
+// 알림 사진 보관 기간(시간) — 서버 server/app/constants.py 의 CAPTURE_TTL(72시간)과 짝이다.
+// 서버는 이 기간이 지난 사진을 404로 막고(파일은 지우지 않는다), 대시보드는 감지 시각으로 같은 판정을 해
+// 지난 사진은 요청하지 않고 안내 문구를 띄운다. 대조 가드 = server/app/tests/test_detect_regression.py
+// DashboardCaptureTtlMatchesServerTest — 한쪽만 바뀌면 FAIL하니 같이 고친다.
+export const CAPTURE_TTL_HOURS = 72

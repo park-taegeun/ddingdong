@@ -3301,6 +3301,31 @@ class DashboardPageLimitMatchesServerTest(_NoNetworkTestCase):
                 )
 
 
+class DashboardCaptureTtlMatchesServerTest(_NoNetworkTestCase):
+    """대시보드 사진 보관 기간(CAPTURE_TTL_HOURS)이 서버 CAPTURE_TTL 과 같다 — 한쪽만 바뀌면 FAIL.
+
+    대시보드는 감지 시각으로 보관 기간 경과를 판정해 지난 사진을 요청하지 않는다. 서버보다 짧으면
+    볼 수 있는 사진을 「보관 기간이 지나」로 가리고, 길면 3일 지난 카드가 다시 재시도 뒤 실패 표시가 된다.
+    서버 값 = constants 모듈 속성을 실행 시점에 읽는다. 대시보드 값 = constants.ts 정의 줄(정확히 1건).
+    """
+
+    def test_dashboard_capture_ttl_equals_server(self) -> None:
+        from .. import constants
+
+        text = DashboardPageLimitMatchesServerTest.DASHBOARD_CONSTANTS.read_text(encoding="utf-8")
+        found = re.findall(r"^export const CAPTURE_TTL_HOURS = (\d+)$", text, re.M)
+        self.assertEqual(
+            len(found), 1, f"constants.ts CAPTURE_TTL_HOURS 정의 {len(found)}건 — 정확히 1건이어야 한다"
+        )
+        server_seconds = constants.CAPTURE_TTL.total_seconds()
+        self.assertEqual(
+            int(found[0]) * 3600,
+            server_seconds,
+            f"대시보드 CAPTURE_TTL_HOURS={found[0]} · 서버 CAPTURE_TTL={constants.CAPTURE_TTL} — "
+            "dashboard/src/lib/constants.ts 와 server/app/constants.py 를 같이 고친다",
+        )
+
+
 class KakaoCopyLeadingEmojiTest(_NoNetworkTestCase):
     """카톡 문구 첫머리 기호 — 잠금 화면 미리보기에서 클래스를 가르는 첫 글자다.
 
