@@ -419,6 +419,31 @@ const CASES = [
     anchor: "                알아들은 말이 없어요\n",
     patch: "",
   },
+  // 사진 보관 기간 — 지난 사진은 요청하지 않고 안내. 결함 = 분기가 없으면 3일 지난 카드도 재시도 6회 뒤 실패 표시.
+  // 함정: 안내 문구 존재만 보면 사진과 함께 그려지는 변형을 못 잡는다 — 「크게 보기」 부재도 단언한다.
+  {
+    id: "NC-X1",
+    file: SRC.image,
+    desc: "보관 기간 분기 제거 — 2020년 사진 카드에 '크게 보기' (사진 보관 기간)",
+    anchor: "if (expired) {",
+    patch: "if (false) {",
+  },
+  // 서버 image_store 와 같은 「초과」 경계. 함정: 경계 점(정확히 72시간)을 단언하지 않으면 못 잡는다.
+  {
+    id: "NC-X2",
+    file: SRC.meta,
+    desc: "보관 기간 경계 > → >= — 정확히 72시간이 '지남' (사진 보관 기간)",
+    anchor: "nowMs - t > CAPTURE_TTL_MS",
+    patch: "nowMs - t >= CAPTURE_TTL_MS",
+  },
+  // 잘못된 시각은 지금처럼 요청해 본다. 결함 = NaN 을 지남으로 보면 시각이 깨진 행의 사진이 영영 안 보인다.
+  {
+    id: "NC-X3",
+    file: SRC.meta,
+    desc: "잘못된 시각을 지남으로 — '잘못=지남' (사진 보관 기간)",
+    anchor: "!Number.isNaN(t) &&",
+    patch: "Number.isNaN(t) ||",
+  },
 ]
 
 /**
@@ -619,6 +644,15 @@ const ASSERTIONS = [
   { fixture: "card_photo_stt", kind: "lacks", text: "방문자가 말하지 않았거나, 소리가 작아 알아듣지 못했을 수 있어요." },
   { fixture: "card_blocked", kind: "lacks", text: "알아들은 말이 없어요" },
   { fixture: "card_blocked", kind: "lacks", text: "방문자가 말하지 않았거나, 소리가 작아 알아듣지 못했을 수 있어요." },
+  // 사진 보관 기간 — ① 2020년 = 안내 문구만(사진 · 실패 문구 0) ② 2100년 = 사진 ③ 경계 · 잘못된 시각
+  { fixture: "card_photo_no_stt", kind: "has", text: "보관 기간(3일)이 지나 볼 수 없어요" },
+  { fixture: "card_photo_no_stt", kind: "lacks", text: "사진을 불러올 수 없어요" },
+  { fixture: "card_photo_no_stt", kind: "lacks", text: "크게 보기" },
+  { fixture: "card_photo_future", kind: "lacks", text: "보관 기간(3일)이 지나 볼 수 없어요" },
+  { fixture: "card_photo_future", kind: "has", text: "크게 보기" },
+  { fixture: "photo_expired", kind: "has", text: "72시간=보관" },
+  { fixture: "photo_expired", kind: "has", text: "72시간1ms=지남" },
+  { fixture: "photo_expired", kind: "has", text: "잘못=보관" },
 ]
 
 const abs = (file) => path.join(ROOT, file)

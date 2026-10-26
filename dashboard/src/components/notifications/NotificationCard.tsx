@@ -6,6 +6,7 @@ import { formatConfidence, formatDetectedAt } from "@/lib/format"
 import {
   CLASS_META,
   FIRE_ALARM_GUIDELINES,
+  isPhotoExpired,
   isWithinWindow,
   KAKAO_FAILURE_REASONS,
   SKIP_REASON_LABEL,
@@ -52,6 +53,10 @@ export function NotificationCard({
   ]
     .filter(Boolean)
     .join("\n")
+  // 사진 보관 기간이 지났는가 — 위 nowMs(카드가 처음 그려진 시각 · 화재 카드만 30초마다 갱신)로 판정, 새 타이머 0.
+  // 한계: 열어 둔 화면에서 경계를 넘은 카드는 다시 그려질 때(화면 이동 · 새로고침) 반영된다 — 그 사이엔 기존 동작.
+  // 넘는 순간 key 가 바뀌어 사진 칸이 다시 마운트되므로 진행 중이던 재시도 타이머도 함께 정리된다.
+  const photoExpired = isPhotoExpired(notification.detected_at, nowMs)
 
   return (
     <article
@@ -117,10 +122,11 @@ export function NotificationCard({
           {notification.media.image_url && (
             <div className="mt-3">
               <NotificationImage
-                key={notification.media.image_url}
+                key={photoExpired ? "expired" : notification.media.image_url}
                 src={notification.media.image_url}
                 alt={`${meta.label} 감지 사진`}
                 caption={photoCaption}
+                expired={photoExpired}
               />
             </div>
           )}

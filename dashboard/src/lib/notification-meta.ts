@@ -3,6 +3,7 @@
 
 import { AudioLines, Bell, DoorClosed, Flame } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
+import { CAPTURE_TTL_HOURS } from "@/lib/constants"
 import type { PredictedClass, SkipReason } from "@/types/notification"
 
 export interface ClassMeta {
@@ -123,4 +124,15 @@ export function isWithinWindow(iso: string, nowMs: number, windowMs: number): bo
   const t = new Date(iso).getTime()
   if (Number.isNaN(t)) return false
   return nowMs - t <= windowMs
+}
+
+// 사진 보관 기간(CAPTURE_TTL_HOURS)이 지났는가 — 서버 image_store 와 같은 「초과」 경계(정확히 72시간 = 아직 보관).
+// 잘못된 시각은 지나지 않은 것으로 본다(지금처럼 요청해 본다).
+// 한계 ① 서버 기준 = 파일 수정 시각(≈ 2차 처리 끝 = 감지 몇 초 뒤) · 여기 기준 = 감지 시각 → 경계 몇 초 동안은
+//   지나기 전으로 보고 요청했다가 기존 실패 표시가 뜰 수 있다(무해).
+// ② 브라우저 시계와 서버 시계가 어긋나면 그만큼 경계가 밀린다(lib/unread.ts 한계 ①과 같은 성격).
+const CAPTURE_TTL_MS = CAPTURE_TTL_HOURS * 3_600_000
+export function isPhotoExpired(iso: string, nowMs: number): boolean {
+  const t = new Date(iso).getTime()
+  return !Number.isNaN(t) && nowMs - t > CAPTURE_TTL_MS
 }

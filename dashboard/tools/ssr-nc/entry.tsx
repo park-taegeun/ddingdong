@@ -34,7 +34,7 @@ import { formatDayHeading, formatDetectedAt } from "@/lib/format"
 import { nextRetryDelay, retryUrl } from "@/lib/image-retry"
 import { loadMoreState, nextLimit } from "@/lib/load-more"
 import { filterNotifications, filterSummary, groupByDay } from "@/lib/notification-filter"
-import { isWithinWindow } from "@/lib/notification-meta"
+import { isPhotoExpired, isWithinWindow } from "@/lib/notification-meta"
 import { countNew, readLastSeen, titleWithCount } from "@/lib/unread"
 import type { SeenStorage } from "@/lib/unread"
 import type {
@@ -170,6 +170,7 @@ const card = (n: NotificationItem, isNew = false) =>
 const WINDOW_NOW = Date.parse("2026-10-21T09:00:00.000+09:00")
 const windowAt = (iso: string) =>
   isWithinWindow(iso, WINDOW_NOW, FIRE_MOTION_WINDOW_MS) ? "창 안" : "창 밖"
+const photoAt = (iso: string) => (isPhotoExpired(iso, WINDOW_NOW) ? "지남" : "보관")
 
 // 전역 경고 띠 — 우선순위 · 카톡 판정. 목록은 최신순(앞이 최신). 시각은 판정에 안 쓰인다.
 const SENT = item("doorbell", "2026-10-21T09:00:00.000+09:00", status(true, false, "skipped", null))
@@ -488,4 +489,17 @@ export const output: Record<string, string> = {
     media: { image_url: "/captures/abc", image_thumbnail_url: null, audio_url: null },
     stt: stt(null),
   }),
+  // 사진 보관 기간 — 미래(2100년) 사진은 요청한다(2020년 = card_photo_no_stt 재사용 → 안내 문구)
+  card_photo_future: card({
+    ...item("knock", "2100-01-01T09:00:00.000+09:00", status(true, true, "completed", PHOTO_AT)),
+    media: { image_url: "/captures/abc", image_thumbnail_url: null, audio_url: null },
+  }),
+  // 사진 보관 기간 경계 — 정확히 72시간 = 보관(서버와 같은 「초과」) · 1ms 더 = 지남 · 잘못된 시각 = 보관
+  photo_expired: renderToStaticMarkup(
+    <ul>
+      <li>{`72시간=${photoAt("2026-10-18T09:00:00.000+09:00")}`}</li>
+      <li>{`72시간1ms=${photoAt("2026-10-18T08:59:59.999+09:00")}`}</li>
+      <li>{`잘못=${photoAt("x")}`}</li>
+    </ul>,
+  ),
 }
