@@ -278,6 +278,11 @@ export const output: Record<string, string> = {
   token_expiring: renderToStaticMarkup(<SystemHealthCard health={health("expiring", 5)} />),
   token_expired_10m: renderToStaticMarkup(<SystemHealthCard health={health("expired", -10)} />),
   token_expired_3d: renderToStaticMarkup(<SystemHealthCard health={health("expired", -4320)} />),
+  // 기기 행 용어 — 헤더 · 요약 카드 · 경고 띠의 「연결됨 / 꺼짐」과 맞춘다(PoC-(76) 사용자 결정 2026-10-26)
+  device_online: renderToStaticMarkup(<SystemHealthCard health={health("valid", 360)} />),
+  device_offline: renderToStaticMarkup(
+    <SystemHealthCard health={{ ...health("valid", 360), device_status: "offline" }} />,
+  ),
 
   // 8.4(b) ToF 3상태 (6.4(c) "구분 가능" 불변식의 화면 판)
   tof_passed: renderToStaticMarkup(

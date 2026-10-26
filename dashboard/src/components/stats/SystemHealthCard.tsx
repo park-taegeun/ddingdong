@@ -6,9 +6,9 @@ import type { SystemHealth, TokenStatus } from "@/types/stats"
 function statusInfo(status: string): { color: string; label: string } {
   switch (status) {
     case "online":
-      return { color: "bg-status-online", label: "온라인" }
+      return { color: "bg-status-online", label: "연결됨" }
     case "offline":
-      return { color: "bg-status-offline", label: "오프라인" }
+      return { color: "bg-status-offline", label: "꺼짐" }
     case "processing":
       return { color: "bg-status-processing", label: "처리 중" }
     case "ok":
