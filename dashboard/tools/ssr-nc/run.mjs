@@ -406,14 +406,14 @@ const CASES = [
   },
   // 자막 없음 표시 — 사진이 없으면(1차만 · 2차 처리 중) 뜨면 안 된다. 결함 = 처리 중에 「없어요」로 단정.
   {
-    id: "NC-F1",
+    id: "NC-K1",
     file: SRC.card,
     desc: "사진 조건 제거(자막만 봄) — 사진 없는 카드에도 '알아들은 말이 없어요' (자막 없음 표시)",
     anchor: "{notification.media.image_url && !notification.stt && (",
     patch: "{!notification.stt && (",
   },
   {
-    id: "NC-F2",
+    id: "NC-K2",
     file: SRC.card,
     desc: "문구 줄 삭제 — 사진 있음 + 자막 없음에 '알아들은 말이 없어요' 없음 (자막 없음 표시)",
     anchor: "                알아들은 말이 없어요\n",
