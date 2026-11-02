@@ -297,6 +297,9 @@ class DetectWiringTest(_NoNetworkTestCase):
             # 바인딩) — _make_app 이 패치하는 constants 값이 아니다. 하드코딩 3개면 4클래스(#83)에서 IndexError.
             n = len(model_serving.PREDICTED_CLASSES)
             return np.full((1, n), 0.1, dtype=np.float32)  # 저신뢰 → 발송 없음
+            # [현재값 2026-11-02 — 근거 = decisions.md 33.27(b) NC-2] 「발송 없음」은 이 대역의 의도일 뿐
+            # 이 테스트의 불변식이 아니다 — 고신뢰(0.99)로 바꿔도 테스트 설정의 빈 카카오 자격증명에서
+            # 발송이 건너뛰어져 201로 통과한다. 단언 대상은 predict · 등록 판정 입력 waveform 이다.
 
         with app.app_context(), mock.patch(
             "app.routes.model_serving.is_real_mode", return_value=True

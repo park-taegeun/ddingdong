@@ -5,6 +5,8 @@
 
 frozen YAMNet 임베딩 위에서 head 만 학습. class_weight 는 실측 train 배분에서 자동 산출.
 best val_loss 체크포인트 + fit history(json) 저장. 실데이터는 학부생 로컬(EPERM).
+  [현재값 2026-11-02 — 근거 = decisions.md 5.1 · 33.8] EPERM은 옛 형제 폴더 위치의 사정이다 — 실데이터는
+  학부생 홈으로 옮겼고, 지금 이유는 아래 「데이터 루트 필수」(repo 밖 데이터 · PR #60)다.
 
 `--data-root` 또는 `DDINGDONG_DATA_ROOT` 는 **필수** — 둘 다 없으면 기본값 fallback 없이
 `ValueError`로 즉시 실패한다(PR #60, `ml.pipeline.config.resolve_data_root`).

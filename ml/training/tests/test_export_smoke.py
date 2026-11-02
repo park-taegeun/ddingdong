@@ -5,6 +5,8 @@ resource' 로 실패한다. 이 테스트는 (1) 그 실패를 재현하고 (2) 
 model.export() 경로가 성공 + 재로드 + 서빙 시그니처 추론까지 되는지 고정한다.
 
 실 YAMNet/실데이터 없이(EPERM·네트워크 무관) 결정적 더미 backbone 을 주입해 관통한다.
+  [현재값 2026-11-02 — 근거 = decisions.md 5.1 · 33.8] 「EPERM」은 옛 데이터 위치의 사정이다 — 지금 실데이터를
+  안 쓰는 이유는 데이터가 repo 밖이고 데이터 루트 지정이 필수(PR #60)이기 때문이다.
 
   python -m ml.training.tests.test_export_smoke
   pytest ml/training/tests/test_export_smoke.py

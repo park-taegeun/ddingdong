@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 🔴 작업 규칙
 
-- **`docs/decisions.md`가 모든 결정의 SSoT**(6,600줄+). 코드 주석·PR이 「카테고리 N.M」으로 이 문서를 인용한다. 핀 표·상수·정책을 바꾸려면 decisions.md를 먼저 고친다. 변경 이력은 `docs/decisions-log.md`.
+- **`docs/decisions.md`가 모든 결정의 SSoT**(대형 문서). 코드 주석·PR이 「카테고리 N.M」으로 이 문서를 인용한다. 핀 표·상수·정책을 바꾸려면 decisions.md를 먼저 고친다. 변경 이력은 `docs/decisions-log.md`.
   - `decisions-rag` MCP(`search_decisions` / `get_section`)로 찾을 수 있지만 결과는 힌트다. 인용 전에 원문을 `grep`으로 다시 확인한다.
   - 평가 질문·정답을 decisions.md에 쓰지 않는다(RAG 인덱스 오염).
 - **커밋 메시지**: 한국어 + 이모지, `{이모지} {Type}: {한국어 설명}` (예: `🐛 Fix: …`, `✨ Feat: …`). 상세 = `docs/git-convention.md`. 한 커밋 = 한 목적.

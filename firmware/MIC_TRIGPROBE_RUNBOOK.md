@@ -104,6 +104,7 @@ script -a -F ~/ddingdong-측정결과/$(date +%F)/mic_trigprobe/trigprobe_runtim
 
 - a) 부팅 줄 `tof=FAIL` 또는 health `tstk=na` — ToF 가 안 돈다 = **제품 조건이 아니다**. 이 세션 로그를 ⓑ 입력으로 쓰지 말 것.
 - b) health `drop` > 0 또는 데이터 줄 순번 틈 — 큐가 넘쳤다. 원인(loop 정체)을 먼저 본다. `q` 가 32/32 에 닿았는지 같이 기록.
+  - [현재값 2026-11-02 — 근거 = decisions.md 6.3(r)] 플래시 직후 모니터를 붙이기 전에도 출력이 막혀 `drop` 이 오른다(2026-09-23 세션 `drop` 11 → 11 = 부착 전 발생분). 그래서 측정 시작 전 첫 health 줄의 `drop` 을 기준값으로 적고, b) 는 「부착 중 `drop` 증가 > 0」으로 판정한다(기준값 자체는 정지 사유가 아니다).
 - c) health `gaps` 증가 — i2s_read 실패(DMA 오버런 성격). 그 구간은 쓰지 말 것.
 - d) `[t] fmt_err` 1줄이라도 — 값이 필드 폭 도메인을 벗어났다(설계상 도달 불가). 설계 전제가 깨진 것이므로 즉시 보고.
 - e) `[t] FAIL` — setup 실패. 부팅 로그의 `[BOOT] …실패` 줄을 같이 보고.

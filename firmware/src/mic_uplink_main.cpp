@@ -74,6 +74,10 @@ static volatile uint32_t g_ringGaps      = 0;  // task → loop : ring.gaps 누�
 //     [defer] age_ms 임계 도입 여부 판정 방법: Runbook 9절 (b) 에서 age_ms 분포를 수집한다.
 //       15Hz 정상이면 상시 < 100ms. 수백 ms 이상이 반복되면 I2C 정체(getRangingData 지연)가
 //       실재하는 것이고, 그때 "age_ms > N 이면 4필드 미전송" 규칙을 근거(분포)와 함께 도입한다.
+//     [현재값 2026-11-02 — 근거 = decisions.md 6.4 현재값 줄 · PR #120 `56bb9fb`] 이 규칙은 enrich 계열
+//       (enrich_uplink_main.cpp = env:enrich_uplink · env:enrich_autotrig)에만 들어갔다 — tof_fresh.h
+//       TOF_STALE_MS 1000(잠정) 초과면 4필드 미전송(fail-open). 이 env(mic_uplink)는 무변경이라
+//       g_tofLatestMs 는 지금도 age_ms 관측 전용이다.
 static portMUX_TYPE   g_tofMux      = portMUX_INITIALIZER_UNLOCKED;
 static TofFrameResult g_tofLatest   = {};  // g_tofMux 보호
 static uint32_t       g_tofLatestMs = 0;   // g_tofMux 보호. 0 = 아직 프레임 없음(millis 0ms 에 프레임 불가)
