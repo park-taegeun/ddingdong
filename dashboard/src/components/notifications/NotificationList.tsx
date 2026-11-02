@@ -55,7 +55,7 @@ export function NotificationList({
         tone="error"
         icon={TriangleAlert}
         title="알림을 불러오지 못했어요"
-        description="잠시 후 다시 시도합니다."
+        description="잠시 후 다시 시도해요."
       />
     )
   }
