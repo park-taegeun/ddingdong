@@ -1,12 +1,12 @@
 """합성 더미 SavedModel 생성기 (실데이터·실 best.keras·실 YAMNet 불필요).
 
 카테고리 33.2 서빙 시그니처와 **shape/dtype 만 일치**하는 random-init 스텁:
-  입력 waveform (1, None) float32 → 출력 (1, 3) float32 softmax(sum≈1).
+  입력 waveform (1, None) float32 → 출력 (1, NUM_CLASSES) float32 softmax(sum≈1). NUM_CLASSES = constants.py(현재 4).
 분류 성능은 무의미(random projection). 목적 = MCP 자기검증·CI 에서 서빙/벤치/계약
 테스트의 **코드 경로**를 실 모델 없이 태우기 위함(§2 스코프 1층).
 
 가변 길이(1, None) 안전: waveform 을 고정 5개 통계(mean/std/max/min/rms)로 pool 한 뒤
-random dense(5→3) + softmax. 어떤 길이 입력도 (1, 3) 로 매핑.
+random dense(5→NUM_CLASSES) + softmax. 어떤 길이 입력도 (1, NUM_CLASSES) 로 매핑.
 
 실행(server/ 에서):  python3 -m inference.make_dummy_savedmodel --out-dir <경로>
 """
@@ -49,8 +49,8 @@ def build_dummy_savedmodel(out_dir: str, seed: int = 0) -> str:
             mn = tf.reduce_min(waveform, axis=1)
             rms = tf.sqrt(tf.reduce_mean(tf.square(waveform), axis=1) + 1e-12)
             feat = tf.stack([mean, std, mx, mn, rms], axis=1)  # (1, 5)
-            logits = tf.matmul(feat, self.w) + self.b          # (1, 3)
-            probs = tf.nn.softmax(logits, axis=1)              # (1, 3), sum≈1
+            logits = tf.matmul(feat, self.w) + self.b          # (1, NUM_CLASSES)
+            probs = tf.nn.softmax(logits, axis=1)              # (1, NUM_CLASSES), sum≈1
             return {"scores": probs}
 
     module = _DummyServing()

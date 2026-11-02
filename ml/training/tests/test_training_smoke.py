@@ -1,4 +1,6 @@
 """Step 6 — 합성 더미 관통 (실데이터 EPERM 무관, repo 안에서 실행).
+  [현재값 2026-11-02 — 근거 = decisions.md 5.1 · 33.8] 「EPERM」은 옛 데이터 위치의 사정이다 — 지금 이 테스트가
+  실데이터를 안 쓰는 이유는 데이터가 repo 밖이고 데이터 루트 지정이 필수(PR #60)이기 때문이다.
 
 더미 01_clips → 파이프라인(run_all, auto-clean 포함) → 05 → 학습(head fit 2ep, 더미 backbone)
 → 체크포인트 → test 평가까지 전관통. + SpecAugment train-only + clean 가드 stale 방지 검증.

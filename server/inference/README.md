@@ -9,6 +9,7 @@
 > - **1층 (이 PR, 지금)**: 합성 더미 SavedModel → 코드 경로 검증.
 > - **2층 (학부생 로컬 M4 venv)**: 실 SavedModel 로 RSS·M4 지연 실측 (아래 커맨드).
 > - **3층 (11주차 EC2)**: 진짜 t3.small 지연 확정.
+>   - [현재값 2026-11-02 — 근거 = decisions.md 33.18(g)] EC2는 이번 개발 범위에서 제외됐다(발표 서빙 = Cloudflare 터널). 3층은 실행하지 않았다.
 
 ## 구성
 | 파일 | 역할 |
@@ -20,8 +21,11 @@
 | `bench_inference.py` | RSS 4-체크포인트 분해 + 지연 p50/p95 + verdict |
 | `tests/test_inference_contract.py` | decode/predict 계약 + 에러케이스 |
 
+[현재값 2026-11-02 — 근거 = decisions.md 33.13 · `constants.py` `NUM_CLASSES`] 위 표의 `predict → (1,3)` = 지금 `(1, NUM_CLASSES)`(현재 4 — `other` 추가).
+
 ## 오디오 계약 (★ 가정 — ASSUMPTION)
 라이브 `/detect`는 현재 **mock-only** → 오디오 바이트를 받지 않아 wire 계약이 코드에 미정의.
+[현재값 2026-11-02 — 근거 = decisions.md 6.2 · 6.3(m)] `/detect`는 multipart/form-data `audio` 파트로 int16 PCM을 받는다(transport A안 · PR #24). 보드 송신 = PR #52(M5-d) · ToF 메타 송신 = PR #53. `DDINGDONG_MODEL_PATH`를 주면 실추론이다(PR #28) — 이제 mock-only가 아니다.
 아래는 카테고리 4(16kHz mono waveform) + 33.2(입력 `(1,None)` f32) + ml/pipeline
 `SAMPLE_RATE=16000` + PCM 관행(int16 LE)에서 추론한 합리적 기본값이다.
 
@@ -34,6 +38,7 @@
 | 출력 shape | `(1, N)` (배치 1 고정, 카테고리 33.2) |
 
 wire envelope(multipart / base64-in-JSON / raw body)는 **11주차 ESP32 통합에서 확정**.
+[현재값 2026-11-02 — 근거 = decisions.md 6.2] multipart로 확정됐다(2026-07-09 transport A안 · wire 계약 갭 전체 CLOSE).
 `audio_decode`는 transport-agnostic(이미 디코딩된 `bytes`만 받음).
 
 ## 실행 (모두 `server/` 디렉터리에서)

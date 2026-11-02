@@ -9,12 +9,18 @@
 //   자막 말풍선은 `### 7.7` (g) ④런타임 실측에서 실제 CSR 이 뱉고 카카오톡에 도착한
 //   문장 그대로다(구두점 없음 = STT 출력 원형). mock 문구가 아니다.
 // 문구 원칙: 제품에 없는 기능(초인종 등록/해제)은 쓰지 않는다. 성능 수치 인용 없음.
+//   [현재값 2026-11-02 — 근거 = decisions.md 33.19(c) · 33.30(c)] 초인종 등록 · 해제는 제품에
+//   재도입됐다(PR #85 ~ #88 · 판정 PR #100). 위 줄은 작성 시점 사실이다 — 랜딩 문구에 등록을
+//   넣을지는 결정 없음.
 // 카카오 로고·브랜드 자산은 쓰지 않는다 — 말풍선 레이아웃만 재현한다(상표).
 
 // ⚠️ `cn()` = twMerge 라 `text-caption` 류 토큰 유틸이 뒤따르는 `text-<색>` 과 같은 그룹으로
 // 묶여 **지워진다**(실측: twMerge("text-caption font-bold text-lp-blue") → "font-bold text-lp-blue").
 // 그래서 cn() 안에서 글자 크기를 줄 때는 `text-(length:--text-*)` 로 쓴다. 평범한 문자열
 // className 은 twMerge 를 안 거치므로 `text-body` 그대로 써도 된다.
+//   [현재값 2026-11-02 — 근거 = decisions.md 8.7(c-1) · PR #68] cn() 이 커스텀 글자 크기 토큰을
+//   지우던 결함은 `lib/utils.ts` 의 tailwind-merge 토큰 등록으로 전역 해소됐다. 길이 타입 우회
+//   표기 6곳(이 파일 4 · Sidebar 1 · NotificationCard 1)은 그대로 둔다(정리 대상 아님 — 8.7(c-1) ③).
 
 import { Bell } from "lucide-react"
 import { Link } from "react-router-dom"
