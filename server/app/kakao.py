@@ -19,6 +19,7 @@ from flask import current_app
 
 from .constants import (
     KAKAO_FEED_BUTTON_TITLE,
+    KAKAO_FEED_HTTP_TIMEOUT_SECONDS,
     KAKAO_FIRE_PRIMARY_MAX_ATTEMPTS,
     KAKAO_HTTP_TIMEOUT_SECONDS,
     KAKAO_LINK_URL,
@@ -499,7 +500,8 @@ def _post_memo_feed(access_token, title, description, image_url):
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=KAKAO_HTTP_TIMEOUT_SECONDS) as resp:
+        # 대기 시간만 feed 전용 상수(constants 주석 — 카카오가 응답 전에 사진을 가져간다).
+        with urllib.request.urlopen(req, timeout=KAKAO_FEED_HTTP_TIMEOUT_SECONDS) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
@@ -517,7 +519,7 @@ def _post_memo_feed(access_token, title, description, image_url):
         raise KakaoSendError(f"feed 발송 실패: result_code={detail}")
 
 
-def _send_part(part, send_call):
+def _send_part(part, send_call, retry_response_timeout=True):
     """2차 발송 1건을 최대 KAKAO_SECONDARY_MAX_ATTEMPTS 회 시도.
 
     반환 (sent, reason, token_dead):
@@ -540,6 +542,12 @@ def _send_part(part, send_call):
       기각한 대안 = 상태 코드별 분류(4xx 는 결정론적이니 재시도 제외). 그렇게 하려면
       _post_memo 가 상태 코드를 노출하도록 고쳐야 하는데 그 함수는 무변경 대상이고,
       결정론적 4xx 를 한 번 더 쏘는 비용(약 490ms)은 15초 예산에서 무해하다.
+
+    ★ retry_response_timeout=False(사진 feed 만 — 사용자 결정 2026-11-02, 7.6(j)) = 원인이
+      **감싸지지 않은 TimeoutError** 면 재시도하지 않는다. urllib do_open 은 h.request(전송) 단계
+      OSError 를 URLError 로 감싸고, h.getresponse() · read(요청이 이미 넘어간 뒤) 타임아웃은 그대로
+      올린다 → 이 경우는 카카오가 이미 받아 처리했을 수 있어, 재시도하면 같은 카드가 두 번 간다.
+      URLError · HTTP 오류 · result_code≠0 은 지금처럼 1회 재시도. 자막(text)은 기본값 True 로 무변경.
     """
     for attempt in range(1, KAKAO_SECONDARY_MAX_ATTEMPTS + 1):
         try:
@@ -549,6 +557,13 @@ def _send_part(part, send_call):
             current_app.logger.warning("kakao secondary %s failed: %s", part, exc)
             return False, SKIP_REASON_TOKEN_EXPIRED, True
         except KakaoSendError as exc:
+            if not retry_response_timeout and isinstance(exc.__cause__, TimeoutError):
+                current_app.logger.warning(
+                    "kakao secondary %s failed: %s (응답 대기 시간 초과 — 도착 여부 불명이라 재시도 안 함)",
+                    part,
+                    exc,
+                )
+                return False, SKIP_REASON_KAKAO_API_ERROR, False
             if attempt < KAKAO_SECONDARY_MAX_ATTEMPTS:
                 current_app.logger.warning(
                     "kakao secondary %s retrying (%d/%d): %s",
@@ -614,6 +629,7 @@ def send_secondary(predicted_class, image_url, caption, detected_at_utc):
     photo_sent, photo_reason, token_dead = _send_part(
         "photo",
         lambda: _post_memo_feed(access_token, title, description, image_url),
+        retry_response_timeout=False,
     )
     result["photo_sent"] = photo_sent
     result["photo_reason"] = photo_reason

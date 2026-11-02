@@ -2403,6 +2403,68 @@ class DetectRegressionTest(_NoNetworkTestCase):
         self.assertFalse(out["caption_sent"])
         self.assertEqual(out["photo_reason"], "kakao_api_error")
 
+    # ── 사진 카드 중복 방지(7.6(j) · 사용자 결정 2026-11-02) ──────────────────
+    def _send_with_failures(self, fail):
+        """fail = {object_type: 1회차에 올릴 예외}. 2회차부터는 성공. → (out, [(kind, timeout)], 로그)."""
+        from .. import kakao
+
+        seq = []
+
+        def _capture(req, timeout=None):
+            form = urllib.parse.parse_qs(req.data.decode("utf-8"))
+            kind = json.loads(form["template_object"][0])["object_type"]
+            seq.append((kind, timeout))
+            if kind in fail and [k for k, _ in seq].count(kind) == 1:
+                raise fail[kind]
+            return _FakeResponse({"result_code": 0})
+
+        with self.app.app_context(), mock.patch(
+            "app.kakao.get_access_token", return_value=_FAKE_ACCESS_TOKEN
+        ), mock.patch(
+            "app.kakao.urllib.request.urlopen", side_effect=_capture
+        ), self.assertLogs(self.app.logger, level="INFO") as logs:
+            out = kakao.send_secondary("knock", "https://e.test/a.jpg", "자막", None)
+        return out, seq, "\n".join(logs.output)
+
+    def test_photo_response_timeout_is_not_retried(self) -> None:
+        """NC-A1 · NC-A4 대상 — 사진 응답 대기 TimeoutError(감싸지지 않음) = 도착했을 수 있다 → 재시도 0.
+
+        자막은 그대로 시도된다(사진 실패와 무관 — send_secondary ② 주석).
+        """
+        out, seq, logs = self._send_with_failures({"feed": TimeoutError("timed out")})
+        self.assertEqual([k for k, _ in seq], ["feed", "text"])
+        self.assertFalse(out["photo_sent"])
+        self.assertEqual(out["photo_reason"], "kakao_api_error")
+        self.assertTrue(out["caption_sent"])
+        self.assertIn("재시도 안 함", logs)
+        self.assertNotIn("photo retrying", logs)
+
+    def test_photo_urlerror_is_still_retried(self) -> None:
+        """NC-A2 대상 — 전송 단계 실패(URLError, 안에 든 것이 timeout 이어도)는 지금처럼 1회 재시도."""
+        out, seq, logs = self._send_with_failures(
+            {"feed": urllib.error.URLError(TimeoutError("timed out"))}
+        )
+        self.assertEqual([k for k, _ in seq], ["feed", "feed", "text"])
+        self.assertTrue(out["photo_sent"])
+        self.assertIn("kakao secondary photo retrying (1/2)", logs)
+
+    def test_feed_uses_its_own_timeout_and_caption_keeps_kakao_timeout(self) -> None:
+        """NC-A3 대상 — 사진 feed 는 KAKAO_FEED_HTTP_TIMEOUT_SECONDS, 자막 text 는 1.5 그대로."""
+        from ..constants import KAKAO_FEED_HTTP_TIMEOUT_SECONDS, KAKAO_HTTP_TIMEOUT_SECONDS
+
+        self.assertNotEqual(KAKAO_FEED_HTTP_TIMEOUT_SECONDS, KAKAO_HTTP_TIMEOUT_SECONDS)  # 단언이 가르는 전제
+        _, seq, _ = self._send_with_failures({})
+        self.assertEqual(
+            seq, [("feed", KAKAO_FEED_HTTP_TIMEOUT_SECONDS), ("text", KAKAO_HTTP_TIMEOUT_SECONDS)]
+        )
+
+    def test_caption_response_timeout_is_still_retried(self) -> None:
+        """NC-A4 대상 — 자막 응답 대기 TimeoutError 는 무변경(1회 재시도). 같은 규칙 확대는 후속 후보."""
+        out, seq, logs = self._send_with_failures({"text": TimeoutError("timed out")})
+        self.assertEqual([k for k, _ in seq], ["feed", "text", "text"])
+        self.assertTrue(out["caption_sent"])
+        self.assertIn("kakao secondary caption retrying (1/2)", logs)
+
     def test_secondary_401_does_not_resend_in_same_request(self) -> None:
         """401 은 재시도하지 않는다 — 1차가 확립한 자기 치유 규약(다음 이벤트에서 갱신).
 
@@ -2940,12 +3002,19 @@ class DetectRegressionTest(_NoNetworkTestCase):
         입력은 전부 실측·문서 인용값이다(7.6(f) 7.5초 / 7.6(h) 2.61초 / 7.3 490ms).
         ⚠️ ESP32 캡처·업로드 구간은 미측정이라 이 검산은 **서버측 구간 기준**이다.
         """
-        from ..constants import KAKAO_HTTP_TIMEOUT_SECONDS, STT_HTTP_TIMEOUT_SECONDS
+        from ..constants import (
+            KAKAO_FEED_HTTP_TIMEOUT_SECONDS,
+            KAKAO_HTTP_TIMEOUT_SECONDS,
+            STT_HTTP_TIMEOUT_SECONDS,
+        )
 
-        kakao_worst = KAKAO_HTTP_TIMEOUT_SECONDS * 5      # 토큰 1 + 사진 2 + 자막 2
+        # 토큰 1 + 자막 2 (1.5 각) + 사진 2 (feed 전용 대기 — 2026-11-02 분리)
+        kakao_worst = KAKAO_HTTP_TIMEOUT_SECONDS * 3 + KAKAO_FEED_HTTP_TIMEOUT_SECONDS * 2
         server_side = 2.61 - 0.49 * 2                     # 7.6(h) − 카카오 정상 왕복분
         worst = kakao_worst + server_side + STT_HTTP_TIMEOUT_SECONDS
         self.assertLess(worst, 15.0)
+        # 사진 대기 = 산술이 허용하는 최대값(0.1s 단위) — 0.1 올리면(사진 2회) 예산을 넘는다(사용자 결정 2026-11-02)
+        self.assertGreaterEqual(worst + 0.1 * 2, 15.0)
         self.assertGreater(STT_HTTP_TIMEOUT_SECONDS, 0.892)  # CSR 왕복 실측을 자르지 않는다
 
     def test_caption_always_passes_through_caption_from_stt(self) -> None:
