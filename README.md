@@ -1,66 +1,122 @@
 # 띵동 (DdingDong)
 
-청각장애인용 현관 부착형 소리 분류 알림 시스템 - 졸업작품
+> **English summary** — DdingDong is a door-mounted sound-alert system for Deaf and hard-of-hearing people (a university capstone project).
+> An ESP32-S3 board listens at the front door, sends a short audio snapshot to a Flask server, and a YAMNet-based classifier sorts it into doorbell / knock / fire alarm / other.
+> The user gets a KakaoTalk text first, then a follow-up with a door camera photo and a speech-to-text caption of what the visitor said.
+> A ToF sensor (VL53L5CX) checks whether someone is actually at the door, and an optional doorbell sound registration filters out different-sounding bells.
+> Status: end-to-end runs have been observed on the real board, but this is not a validated product. Features are frozen as of 2026-11-02.
+> Documentation is in Korean; `docs/decisions.md` is the single source of truth for every decision.
 
-> **운영 정책**: 본 repo는 졸업작품 시연 전까지 **private**으로 운영하며, 시연 종료 후 **public** 전환 예정.
+청각장애인을 위한 현관 부착형 소리 분류 알림 시스템. 졸업작품이다.
 
----
-
-## 22주 일정 요약
-
-| 주차 | 기간 | 단계 | 핵심 작업 |
-|------|------|------|-----------|
-| 사전 | 5/7~5/17 | 준비 | 펌웨어 골격 / 외부 계정 / 부품 검수 |
-| 1 | 5/18~5/24 | PoC 1주차 | 단독 모듈 검증 + RMS 임계값 측정 |
-| 2~7 | 5/25~7/5 | 본 개발 (펌웨어) | 통합 펌웨어 / VL53L5CX 검증 |
-| 8~10 | 7/6~7/26 | 본 개발 (ML) | YAMNet Fine-tuning / 데이터 수집 |
-| 11~14 | 7/27~8/23 | 본 개발 (서버) | Flask + EC2 + STT + 카카오톡 |
-| 15~18 | 8/24~9/20 | 본 개발 (대시보드) | React + 접근성 UI |
-| 19~22 | 9/21~10/18 | 통합 + 시연 | 통합 테스트 / 시연 / 회고 |
-
-> 상세 일정·결정은 `docs/decisions.md` 참조.
+기존 초인종 알림이 「띵동」 한 번으로 끝났다면, 띵동은 **누가 왔고 뭐라고 말했는지**까지 알려 주는 것을 목표로 한다.
 
 ---
 
-## 기술 스택
+## 동작 흐름
 
-- **펌웨어**: ESP32-S3 (XIAO Sense Pre-Soldered, OV3660) + INMP441 + VL53L5CX
-- **ML**: YAMNet Fine-tuning (raw waveform 16kHz mono) + FastDTW SP/DTW (초인종 개인 등록)
-- **서버**: AWS EC2 t3.small + Nginx + Gunicorn + Flask + SQLite
-- **STT**: Naver Clova Speech (CSR)
-- **알림**: 카카오톡 '나에게 보내기' (memo API)
-- **대시보드**: Vite + React + shadcn/ui (Tailwind)
+```
+현관 보드 (ESP32-S3)                 서버 (Flask)                     사용자
+───────────────────                 ────────────                     ──────
+소리 감지 (자동 감지 또는 수동 's')
+  └─ 오디오 스냅샷 + ToF ──▶ 1차 /api/v1/detect
+                               소리 분류 → 판정 규칙 ──────▶ 카카오톡 텍스트
+  ◀── request_id · enrich_status
+카메라 1장 + 5.12초 녹음
+  └──────────────────────▶ 2차 /api/v1/enrich
+                               사진 저장 · STT 자막 ──────▶ 카카오톡 사진 카드 + 자막
+```
 
----
+- **1차 ≤ 5초 · 2차 ≤ 15초**는 설계 목표 예산이다(카테고리 3). 보장 수치가 아니다.
+- 2차는 1차 판정이 발송일 때만 진행한다. `fire_alarm`은 1차 텍스트만 보내고 2차는 없다(8.7(a)).
+- 카카오 「나에게 보내기」(memo) API에는 이미지 업로드가 없다. 그래서 서버가 사진을 직접 public 주소로 서빙하고, 카드는 그 주소를 가리킨다.
+
+## 구성
+
+| 영역 | 내용 |
+|---|---|
+| 하드웨어 | XIAO ESP32-S3 Sense(OV3660 카메라 · 8MB PSRAM) · INMP441 마이크(I2S) · VL53L5CX 8x8 ToF(I2C) — 카테고리 1 · 핀 표 = 카테고리 2 |
+| 펌웨어 | PlatformIO · Arduino-ESP32 2.0.17. 제품 경로 = `env:enrich_uplink`(수동 트리거) · `env:enrich_autotrig`(같은 소스 + 자동 감지). 나머지 env는 단계별 계측 · 진단용 |
+| 서버 | Flask + Flask-SQLAlchemy + SQLite. 실모델 · STT · 카카오는 환경변수가 없으면 mock으로 동작한다 |
+| ML | YAMNet frozen 임베딩 + 분류 head. 4클래스 `doorbell` · `knock` · `fire_alarm` · `other`(33.13) |
+| 대시보드 | Vite + React + Tailwind. 알림 목록 · 통계 · 초인종 소리 등록 · 시스템 상태 |
+| 알림 · STT | 카카오톡 「나에게 보내기」(memo) · Naver CSR(Clova Speech Recognition) |
+| 발표 서빙 | Cloudflare 터널. EC2는 이번 개발 범위에서 제외했다(33.18(g)) |
+
+## 판정 규칙 요약
+
+서버는 아래 순서로 게이트를 통과시킨다(33.30(c) · PR #100). 하나라도 막히면 그 뒤는 보지 않는다.
+
+1. **`other`** → 알리지 않는다(`not_target` · 33.13 · PR #83).
+2. **신뢰도 0.7 미만** → 알리지 않는다. 클래스와 무관해서 `fire_alarm`도 이 게이트를 받는다(8.7(a)).
+3. **`fire_alarm`** → ToF 확인을 건너뛰고 바로 알린다(1차만).
+4. **ToF** → 현관 앞에 사람이 없으면 알리지 않는다. ToF 값이 없으면(센서 초기화 실패 등) 게이트를 적용하지 않고 통과시킨다(fail-open · 6.4).
+5. **초인종 소리 등록**(선택) → 등록돼 있고 예측이 `doorbell`이면, 등록한 소리와 거리를 재서 기준을 넘으면 막는다. 기준값 0.20은 잠정이다(33.30(c)).
+
+소리 등록은 **종류가 다른 소리를 거르는 2차 층**이다. 같은 제품의 옆집 벨은 칩 · 멜로디가 같아 소리로 가르기 어렵고, 옆집 구분의 1차는 ToF가 맡는다(33.19(c)).
+
+## 현황
+
+기능 동결 = 2026-11-02(사용자 결정). 지금부터는 버그 수정 · 문구 확정 · 문서 · 발표 준비만 한다.
+
+| 구분 | 내용 |
+|---|---|
+| 관통 확인 | 2026-10-26 랩실 보드 세션에서 시연 기동 도구(`demo_up` live) · 자동 감지 · 카카오 실발송 · 대시보드 육안 확인이 한 세션에 함께 관통했다(경로당 n 1 ~ 2 · 1세션 · 1인 — 26.12 · 33.45(j)) |
+| 검증 예정 | 부스 리허설. 위 관통은 검증이 아니다 |
+| 서빙 모델 | p15(4차 재학습 · patience 15). 데이터셋 4차 상태 test 703건 한 세트의 오프라인 평가에서 acc 644 / 703 · macro F1 0.8204(33.2 현재값 줄). 현장 성능 수치가 아니다 |
+
+## 알려진 한계
+
+- **학습 분포 밖 입력** — 학습에 없던 소리가 엉뚱한 클래스로 높게 나올 수 있다. 3클래스 시절 실측(조건마다 n 1)에서 분포 밖 입력이 `fire_alarm`으로 쏠렸고(33.6(a)(f)), `other` 클래스로 대응했지만(33.13) 모든 생활 소리를 막는다는 보장은 없다.
+- **자막 잘림** — 방문자가 말하다 쉬면 자막이 앞 구절만 나올 수 있다. 원인 해석 = CSR이 쉼에서 인식을 끝낸다(유력 · 미확정 — 7.7(n)).
+- **ToF 초기화 실패 부팅** — 보드 R 버튼 리셋 뒤 ToF 초기화가 실패하는 부팅이 관측됐다(원인 미규명 · 33.31(f)). 이때는 ToF 게이트 없이 통과한다(fail-open). 운영 대응 = R 버튼 대신 USB 재연결(33.33(b)).
+- **잠금 화면 배너** — 「나에게 보내기」 경로는 아이폰 잠금 화면에 배너가 뜨지 않았다(대리 시험 n 1 · 33.42(c)). 실서비스 알림 경로는 미정이다.
+- **2차 사진 카드 중복 도착** — 카카오 응답이 타임아웃으로 처리된 뒤 재시도하면 카드가 두 번 올 수 있다(n 2 · 원인 해석 미확정 · 7.6(j)).
 
 ## 폴더 구조
 
 ```
 ddingdong/
-├── firmware/        # ESP32-S3 펌웨어 (PlatformIO)
-├── server/          # Flask 서버 (11주차 진입 시 채움)
-├── dashboard/       # React 대시보드 (15주차 진입 시 채움)
-├── ml/              # YAMNet 학습 코드 (8주차 진입 시 채움)
-├── docs/
-│   ├── decisions.md         # 🔴 SSoT (모든 결정의 단일 진실 원천)
-│   ├── decisions-log.md     # 🔴 결정 변경 이력
-│   ├── git-convention.md    # 🔴 한국어 + 이모지 commit 규칙
-│   ├── poc-week1-plan.md
-│   ├── research/            # 호환성/사양 검증 리서치
-│   └── hardware/            # 결선도 / 부품 사양
-├── .env.example
-└── README.md
+├── firmware/   # ESP32-S3 펌웨어 (PlatformIO) · 장비 절차 = *_RUNBOOK.md
+├── server/     # Flask API 서버 · server/inference/ = 오디오 디코드 · SavedModel 로더
+├── dashboard/  # React 대시보드
+├── ml/         # 데이터 파이프라인(pipeline) · 학습(training) · 네거티브 선별(curation) · 실험(experiments)
+├── tools/
+│   └── decisions-rag/  # decisions.md 검색 도구 (개발용 · 제품과 무관)
+├── docs/       # decisions.md(SSoT) · decisions-log.md · git-convention.md · 발표 대본
+└── CLAUDE.md   # 코딩 에이전트용 작업 안내
 ```
+
+데이터셋 · 학습된 모델 파일은 repo에 없다(오디오 미커밋 = 5.1 · 모델 파일도 커밋하지 않았다). 학습은 데이터 경로를 `--data-root` 또는 `DDINGDONG_DATA_ROOT`로 지정해야 돈다.
+
+## 실행
+
+영역마다 하위 README를 따른다.
+
+- 서버 — [`server/README.md`](server/README.md)
+- 펌웨어 — [`firmware/README.md`](firmware/README.md)
+- 대시보드 — [`dashboard/README.md`](dashboard/README.md)
+- ML — [`ml/pipeline/README.md`](ml/pipeline/README.md) · [`ml/training/README.md`](ml/training/README.md) · [`ml/curation/README.md`](ml/curation/README.md)
+- decisions 검색 도구 — [`tools/decisions-rag/README.md`](tools/decisions-rag/README.md)
+
+⚠️ 서버를 debug 모드(`--debug` · `FLASK_DEBUG=1` · `python run.py`)로 띄우지 않는다. debug 모드는 JSON 응답에 들여쓰기를 붙여, `/detect` 응답이 보드 수신 한도 767 B를 넘을 수 있다(33.37(e)).
+
+## 문서
+
+- [`docs/decisions.md`](docs/decisions.md) — 모든 결정의 단일 출처(SSoT). 코드 주석과 PR은 「카테고리 N.M」으로 이 문서를 인용한다.
+- [`docs/decisions-log.md`](docs/decisions-log.md) — decisions.md 변경 이력.
+- [`docs/git-convention.md`](docs/git-convention.md) — 커밋 규칙(한국어 + 이모지, `{이모지} {Type}: {설명}`).
+
+## 데이터 출처 · 라이선스
+
+학습 데이터는 repo에 포함하지 않는다. 사용한 공개 데이터와 표기는 다음과 같다.
+
+- **FSD50K** — 데이터셋 = CC BY 4.0(Zenodo record 4060432). 인용 = Eduardo Fonseca, Xavier Favory, Jordi Pons, Frederic Font, Xavier Serra, "FSD50K: an open dataset of human-labeled sound events", IEEE/ACM Transactions on Audio, Speech, and Language Processing, vol. 30, pp. 829–852, 2022. 클립마다 라이선스가 다르다(예: 추가 네거티브 160클립 = CC0 · CC BY 3.0 · CC BY-NC 3.0 · Sampling+ 1.0 — 33.32). 인용할 때는 클립별 라이선스를 표기한다.
+- **Zeroth-Korean** — 「Zeroth-Korean (OpenSLR SLR40, https://www.openslr.org/40/) — Lucas Jo (Atlas Guide Inc.) · Wonkyum Lee (Gridspace Inc.), CC BY 4.0 — 3초 조각 · PCM16 wav 변환 등 가공함」(표기문 원문 = [`ml/curation/README.md`](ml/curation/README.md)).
+- **AI Hub · AudioSet** — 이용 조건 = 각 배포처 약관.
+
+코드 라이선스는 아직 정하지 않았다.
 
 ---
 
-> 🔴 **코드 작업 전 필독**
-> 모든 코드/펌웨어 작업은 `docs/decisions.md` 최신본을 git pull로 받은 후 시작.
-> 결정 변경 시 본 채팅방(전략) → decisions.md 갱신 → 채팅방 2(구현) 순서.
-> 채팅방 2에서 구현 중 새 이슈 발견 시 본 채팅방으로 escalate.
-
-> 🔴 **Commit 메시지 규칙**
-> 모든 commit은 한국어 + 이모지 컨벤션을 따른다.
-> 상세: `docs/git-convention.md`
-> 형식: `{이모지} {Type}: {한국어 설명}`
-> 예: `✨ Feat: camera_test.cpp 골격 추가`
+작성: [park-taegeun](https://github.com/park-taegeun)
