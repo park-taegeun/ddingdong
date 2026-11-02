@@ -635,7 +635,7 @@ const ASSERTIONS = [
   { fixture: "card_fire_low", kind: "has", text: "화재경보일 수 있지만 확실하지 않아 카카오톡은 보내지 않았어요. 주변을 확인해 주세요." },
   { fixture: "card_blocked", kind: "lacks", text: "카카오톡으로 보내지 못했어요." },
   { fixture: "card_knock_single", kind: "has", text: "보내지 않은 이유: 한 번만 난 소리" },
-  { fixture: "card_knock_single", kind: "lacks", text: "기타 이유" },
+  { fixture: "card_knock_single", kind: "lacks", text: "보내지 않은 이유: 기타 이유" }, // 텍스트 조각 완전 일치 — 문장 전체로
   // B10 화재 모션 창
   { fixture: "fire_window", kind: "has", text: "10분=창 안" },
   { fixture: "fire_window", kind: "has", text: "10분1ms=창 밖" },
