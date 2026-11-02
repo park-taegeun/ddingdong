@@ -1,4 +1,6 @@
 """Step 6 — 합성 더미 관통 검증 (실제 데이터 EPERM 무관, repo 안에서 실행).
+  [현재값 2026-11-02 — 근거 = decisions.md 5.1 · 33.8] 「EPERM」은 옛 데이터 위치의 사정이다 — 지금 이 테스트가
+  실데이터를 안 쓰는 이유는 데이터가 repo 밖이고 데이터 루트 지정이 필수(PR #60)이기 때문이다.
 
 클래스당 6개 더미 16k mono wav 생성 → Step1~5 전관통 → 출력/manifest/개수/누수가드 확인.
 pytest 로도, 단독(`python -m ml.pipeline.tests.test_pipeline`)으로도 실행 가능.
