@@ -18,6 +18,7 @@ from sqlalchemy import select
 from . import (
     image_store,
     kakao,
+    knock_gate,
     knock_rhythm,
     model_serving,
     rate_limit,
@@ -41,6 +42,7 @@ from .constants import (
     KST,
     MAX_PAGE_LIMIT,
     PREDICTED_CLASSES,
+    SKIP_REASON_KNOCK_SINGLE_HIT,
     SKIP_REASON_REGISTRATION_COLLECTING,
     SKIP_REASON_REGISTRATION_MISMATCH,
     STATS_PERIOD,
@@ -210,6 +212,15 @@ def detect():
     if reg.skip_reason is not None:
         primary_sent = False
         skip_reason = reg.skip_reason
+        enrich_status = "skipped"
+    # 4-2) 노크 단일 타격 차단 — 등록 판정 바로 뒤 · 카카오 앞(같은 이유). 이미 미발송이면 판정하지
+    # 않는다(앞선 사유 보존). 차단 = 1 · 2차 모두 없음. 계측 행은 아래 knock_rhythm.record 가 그대로 남긴다.
+    knock_skip = knock_gate.before_send(
+        audio_bytes, client_request_id, pred["predicted_class"], primary_sent
+    )
+    if knock_skip is not None:
+        primary_sent = False
+        skip_reason = knock_skip
         enrich_status = "skipped"
     if primary_sent:
         send_skip_reason = kakao.send_primary_text(pred["predicted_class"], client_request_id)
@@ -691,7 +702,7 @@ def _build_stats(rows, start_kst, end_kst):
             "notifications_sent": sum(1 for n in group if n.primary_sent),
         }
 
-    # skip 사유별 집계 (SkipReasonCounts 7종 키 고정)
+    # skip 사유별 집계 (SkipReasonCounts 8종 키 고정)
     skip_reasons = {
         "not_target": 0,
         "low_confidence": 0,
@@ -700,6 +711,7 @@ def _build_stats(rows, start_kst, end_kst):
         "token_expired": 0,
         SKIP_REASON_REGISTRATION_COLLECTING: 0,
         SKIP_REASON_REGISTRATION_MISMATCH: 0,
+        SKIP_REASON_KNOCK_SINGLE_HIT: 0,
     }
     for n in skipped:
         if n.skip_reason in skip_reasons:

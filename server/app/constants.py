@@ -383,3 +383,32 @@ SKIP_REASON_REGISTRATION_MISMATCH = "registration_mismatch"
 # 재판정 트리거: 같은 방 녹음 세션(spisafe · 폰 재생 각 10회) / 부스 리허설 /
 #   보드 · 마이크 교체.
 REGISTRATION_MATCH_MAX_DISTANCE = 0.20
+
+# ── 노크 단일 타격 차단 (knock_gate.py — /detect 카카오 앞 판정) ─────────────────
+# 판정은 예측 knock + 그때까지 「발송」(정책 · 등록 판정 뒤)일 때만 돈다. 먼저 걸린 사유
+#   (low_confidence · tof_rejected · not_target 등)는 덮어쓰지 않는다. doorbell · fire_alarm 무관.
+# 뚜렷한 타격(knock_gate.strong_hits)이 KNOCK_MIN_STRONG_HITS 미만이면 1 · 2차 모두 없음
+#   (enrich_status = skipped, skip_reason = knock_single_hit).
+# 계산 실패는 막지 않는다(fail-open) — 발송 + ERROR 1줄. 등록 판정과 같은 원칙(33.30(c)).
+# 근거유형 = 사용자 결정(2026-11-02 18:48 KST — Claude 권고 수용 · 33.46 기능 동결의 예외) + 실측.
+SKIP_REASON_KNOCK_SINGLE_HIT = "knock_single_hit"
+
+# 「뚜렷한 타격」 정의 값 3개. 🔴 잠정.
+#   정의 = knock_rhythm.measure 의 봉우리 후보(창 최대 대비 비율 ≥ R_MIN 0.1 · 억제 없음 —
+#   33.42 · PR #139) 중 비율 ≥ RATIO 인 것을 높이 내림차순으로 훑어, 이미 남긴 봉우리와
+#   GAP_MS 미만으로 붙은 것은 버린다(탐욕 억제). 남은 개수 = 뚜렷한 타격 수(s50).
+#   ※ 이 규칙은 기록 파라미터 안쪽이어야 다시 셀 수 있다: RATIO ≥ knock_rhythm.R_MIN (test_knock_gate 가 단언).
+# 근거 = 2026-11-02 랩실 리허설 대조 측정(1세션 · 1인 · 책상 · 정면 착석 · n 20, 원본 = repo 밖
+#   ~/ddingdong-측정결과/2026-11-02/lab_rehearsal/knock_contrast_out.txt). 20건 전부 예측 knock ·
+#   신뢰도 0.78 ~ 1.00 · 전부 발송 → 모델 · 신뢰도로는 못 막는다.
+#     진짜 노크 3타 8건 = s50 3 ×7 · 2 ×1, 간격 280 ~ 360 ms
+#     노크 1타 5건      = s50 1 ×5
+#     툭(폰 내려놓기 · 책상 치기) 7건 = s50 1 ×7
+#   raw 후보 수(노크 6 ~ 9 · 툭 3 ~ 10) · env_max(노크 4002 ~ 5868 · 툭 4805 ~ 10098)로는 못 가른다.
+# 한계: 1세션 · 1인 · 책상(실제 문 아님). 2타 · 살살 · 1m 거리는 실측 0. 2타 노크는 s50 2 로 통과하는 설계지만
+#   3타 중 1건이 s50 2 였다 — 2타 노크가 1 로 떨어질 여지가 있다.
+# 재판정 트리거: 랩실 재확인 세션(2타 · 살살 · 실제 문 · 1m · 툭 재현) / 부스 / 보드 · 마이크 교체 /
+#   1차 오디오 창(길이 · 자동 트리거) 변경.
+KNOCK_STRONG_HIT_RATIO = 0.5
+KNOCK_STRONG_HIT_GAP_MS = 150
+KNOCK_MIN_STRONG_HITS = 2

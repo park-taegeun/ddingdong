@@ -20,6 +20,8 @@ export type SkipReason =
   // 초인종 등록 판정(서버 registration_observe) — 예측 doorbell + 발송 판정 건에만 붙는다.
   | "registration_collecting"
   | "registration_mismatch"
+  // 노크 단일 타격 차단(서버 knock_gate) — 예측 knock + 발송 판정 건에만 붙는다.
+  | "knock_single_hit"
 
 export interface AllScores {
   doorbell: number
