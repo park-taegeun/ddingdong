@@ -102,13 +102,16 @@ export const SKIP_REASON_LABEL: Record<string, string> = {
   // 카드 문장 = 「보내지 않은 이유: {라벨}」 — 저장 · 출처를 단정하지 않는다.
   registration_collecting: "초인종 등록 중에 들어온 소리",
   registration_mismatch: "등록한 초인종과 다른 소리",
+  // 라벨 후보(확정 카피 아님 — 2026-11-02 사용자 결정 D-B3).
+  knock_single_hit: "한 번만 난 소리",
 }
 
-// 스크린리더 announcer 가 읽지 않는 사유 — 등록 판정이 막은 행(other 미announce 와 같은 축).
+// 스크린리더 announcer 가 읽지 않는 사유 — 등록 판정 · 노크 단일 타격 판정이 막은 행(other 미announce 와 같은 축).
 // 목록 행 표시는 유지한다.
 export const SILENT_SKIP_REASONS: ReadonlySet<SkipReason> = new Set<SkipReason>([
   "registration_collecting",
   "registration_mismatch",
+  "knock_single_hit",
 ])
 
 // 카카오 발송 실패 사유 — 위 다른 사유(의도된 차단)와 달리 보내려다 못 보낸 것이다.

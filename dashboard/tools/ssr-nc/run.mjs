@@ -213,6 +213,14 @@ const CASES = [
     anchor: ') : isFire && status.skip_reason === "low_confidence" ? (',
     patch: ") : false ? (",
   },
+  // 노크 단일 타격 차단 사유 라벨(후보 「한 번만 난 소리」). 결함 = 키가 빠지면 카드 · 통계가 「기타 이유」로 뭉갠다.
+  {
+    id: "NC-KG6",
+    file: SRC.meta,
+    desc: "knock_single_hit 라벨 키 누락 — '기타 이유'로 표시",
+    anchor: '  knock_single_hit: "한 번만 난 소리",\n',
+    patch: "",
+  },
   // B3 — 날짜는 달력(자정) 기준. 결함 = 경과 시간으로 세면 어제 23:59(9시간 전)가 「오늘」이 된다.
   // 함정: 어제 0시(33시간 전)만 보면 경과 시간으로도 「어제」라 같다 — 자정 바로 전 시각을 단언한다.
   {
@@ -626,6 +634,8 @@ const ASSERTIONS = [
   { fixture: "card_blocked", kind: "has", text: "보내지 않은 이유: 알림 대상이 아닌 소리" },
   { fixture: "card_fire_low", kind: "has", text: "화재경보일 수 있지만 확실하지 않아 카카오톡은 보내지 않았어요. 주변을 확인해 주세요." },
   { fixture: "card_blocked", kind: "lacks", text: "카카오톡으로 보내지 못했어요." },
+  { fixture: "card_knock_single", kind: "has", text: "보내지 않은 이유: 한 번만 난 소리" },
+  { fixture: "card_knock_single", kind: "lacks", text: "보내지 않은 이유: 기타 이유" }, // 텍스트 조각 완전 일치 — 문장 전체로
   // B10 화재 모션 창
   { fixture: "fire_window", kind: "has", text: "10분=창 안" },
   { fixture: "fire_window", kind: "has", text: "10분1ms=창 밖" },
@@ -711,6 +721,9 @@ const ASSERTIONS = [
   { fixture: "skip_some", kind: "lacks", text: "문 앞에 사람이 안 보임" },
   { fixture: "skip_some", kind: "lacks", text: "초인종 등록 중에 들어온 소리" },
   { fixture: "skip_some", kind: "has", text: "모두 8건" },
+  { fixture: "skip_knock", kind: "has", text: "한 번만 난 소리" },
+  { fixture: "skip_knock", kind: "lacks", text: "기타 이유" },
+  { fixture: "skip_knock", kind: "has", text: "모두 1건" },
   { fixture: "skip_some_class", kind: "has", text: "text-danger-deep" },
   { fixture: "skip_some_class", kind: "has", text: "lucide-triangle-alert" },
   { fixture: "skip_no_fail_class", kind: "lacks", text: "text-danger-deep" },

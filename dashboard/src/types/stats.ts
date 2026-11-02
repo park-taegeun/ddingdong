@@ -42,6 +42,7 @@ export interface SkipReasonCounts {
   token_expired: number
   registration_collecting: number
   registration_mismatch: number
+  knock_single_hit: number
 }
 
 export interface SystemHealth {

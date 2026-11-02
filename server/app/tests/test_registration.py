@@ -989,6 +989,7 @@ class DetectJudgmentTest(_DetectCase):
             sorted([
                 "not_target", "low_confidence", "tof_rejected", "kakao_api_error",
                 "token_expired", "registration_collecting", "registration_mismatch",
+                "knock_single_hit",  # 노크 단일 타격 차단(2026-11-02) — 키 전수 계약에 1개 추가
             ]),
         )
         self._collecting(target=1)

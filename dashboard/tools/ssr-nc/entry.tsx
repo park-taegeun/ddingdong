@@ -207,6 +207,7 @@ const SKIP_ZERO: SkipReasonCounts = {
   token_expired: 0,
   registration_collecting: 0,
   registration_mismatch: 0,
+  knock_single_hit: 0,
 }
 // 카톡 실패 = 1 + 1(합쳐 2) · 0건 = 문 앞에 사람이 안 보임 · 등록 중 · 합계 8
 const SKIP_SOME: SkipReasonCounts = {
@@ -404,6 +405,8 @@ export const output: Record<string, string> = {
   card_blocked: card(item("other", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "not_target"))),
   // 저신뢰 화재(G12 — 신뢰도 미달이면 화재도 미발송) — 화재 카드 그대로, 사유 문장만 따로
   card_fire_low: card(item("fire_alarm", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "low_confidence"))),
+  // 노크 단일 타격 차단(서버 knock_gate) — 사유 라벨이 카드 문장에 나온다
+  card_knock_single: card(item("knock", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "knock_single_hit"))),
 
   // B10 화재 모션 창 — 경계 포함 · 미래 · 잘못된 시각
   fire_window: renderToStaticMarkup(
@@ -502,6 +505,7 @@ export const output: Record<string, string> = {
   skip_some_class: classTokens(renderToStaticMarkup(<SkipReasonsCard counts={SKIP_SOME} />)),
   skip_no_fail_class: classTokens(renderToStaticMarkup(<SkipReasonsCard counts={{ ...SKIP_ZERO, not_target: 2 }} />)),
   skip_zero: renderToStaticMarkup(<SkipReasonsCard counts={SKIP_ZERO} />),
+  skip_knock: renderToStaticMarkup(<SkipReasonsCard counts={{ ...SKIP_ZERO, knock_single_hit: 1 }} />),
   // 기타 소리 한 줄 — 화재 · 초인종은 전체 카드, 기타 소리는 한 줄(숨김 0 · 기본 접힘)
   list_collapse: renderToStaticMarkup(
     <SettingsProvider>

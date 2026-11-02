@@ -4,7 +4,7 @@
 //   - fire_alarm → role="alert"(aria-live=assertive): 긴급, 진행 중 발화 가로채 즉시 announce
 //   - doorbell/knock → role="status"(aria-live=polite): 대기 후 announce
 //   - other → announce 안 함: 33.13 「other = 알림 차단」을 이 알림 채널도 따른다(목록 행 표시는 유지).
-//   - 등록 판정이 막은 행(SILENT_SKIP_REASONS — 수집 중 억제 · 소리 불일치) → announce 안 함(같은 이유).
+//   - 등록 판정 · 노크 단일 타격 판정이 막은 행(SILENT_SKIP_REASONS — 수집 중 억제 · 소리 불일치 · 한 번만 난 소리) → announce 안 함(같은 이유).
 // 폴링 훅(usePolling/useNotifications) 무수정 — 소비 측 additive. 폴링 구독 1개는 AppShell이 들고
 // (전역 경고 띠와 공유) props로 넘긴다. 상시 마운트라 어느 페이지에 있든(설정/통계 화면 포함) 신규 알림을 announce.
 // "신규만" 보장: seenRef로 announce 완료 ID 추적 + 첫 성공 로드 시 기존 ID 전량 seed(초기 무announce).
