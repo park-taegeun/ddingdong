@@ -14,7 +14,7 @@ import type { RegistrationState, RegistrationStatus } from "@/types/registration
 const COPY = {
   title: "우리집 초인종",
   loading: "등록 상태를 불러오는 중이에요.",
-  loadError: "등록 상태를 불러오지 못했어요. 잠시 후 다시 시도합니다.",
+  loadError: "등록 상태를 불러오지 못했어요. 잠시 후 다시 시도해요.",
   staleError: STALE_NOTICE,
   actionError: "요청을 처리하지 못했어요. 잠시 후 다시 눌러 주세요.",
   none: "등록된 초인종 소리가 없어요.",

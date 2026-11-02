@@ -20,7 +20,7 @@ function reasonRows(counts: SkipReasonCounts): Row[] {
     { key: "kakao_failed", label: "카카오톡으로 보내지 못했어요", count: failed, failure: true },
     ...keys
       .filter((k) => !KAKAO_FAILURE_REASONS.has(k))
-      .map((k) => ({ key: k, label: SKIP_REASON_LABEL[k] ?? "발송 제외", count: counts[k], failure: false })),
+      .map((k) => ({ key: k, label: SKIP_REASON_LABEL[k] ?? "기타 이유", count: counts[k], failure: false })),
   ].filter((r) => r.count > 0)
 }
 

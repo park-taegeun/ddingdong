@@ -53,7 +53,13 @@ export function SystemHealthCard({ health }: { health: SystemHealth }) {
         health.kakao_token_expires_in_minutes,
       ),
     },
-    { label: "음성 인식(Clova)", status: health.clova_api_status, extra: undefined },
+    // degraded = 서버가 STT 키 없이 mock 으로 도는 상태(routes.py clova_api_status) — 느린 게 아니라 안 쓴다.
+    {
+      label: "음성 인식(Clova)",
+      status: health.clova_api_status,
+      extra: undefined,
+      degradedLabel: "사용 안 함",
+    },
     { label: "데이터베이스", status: health.db_status, extra: undefined },
   ]
 
@@ -68,6 +74,8 @@ export function SystemHealthCard({ health }: { health: SystemHealth }) {
       <CardContent className="space-y-1">
         {rows.map((row) => {
           const info = statusInfo(row.status)
+          const label =
+            row.status === "degraded" && "degradedLabel" in row ? row.degradedLabel : info.label
           return (
             <div
               key={row.label}
@@ -85,7 +93,7 @@ export function SystemHealthCard({ health }: { health: SystemHealth }) {
                   aria-hidden
                 />
                 <span className="text-body font-medium tabular-nums">
-                  {info.label}
+                  {label}
                 </span>
               </span>
             </div>

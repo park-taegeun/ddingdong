@@ -24,7 +24,7 @@ export function StatsCardsSection() {
         tone="error"
         icon={TriangleAlert}
         title="통계를 불러오지 못했어요"
-        description="잠시 후 다시 시도합니다."
+        description="잠시 후 다시 시도해요."
       />
     )
   }

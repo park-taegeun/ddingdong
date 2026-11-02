@@ -76,7 +76,7 @@ export function SettingsPage() {
           <SettingRow
             id="dark-mode"
             title="어두운 화면"
-            description="눈부심을 줄이는 어두운 테마로 바꿔요."
+            description="눈부심을 줄이는 어두운 화면으로 바꿔요."
             checked={theme === "dark"}
             onCheckedChange={(v) => setTheme(v ? "dark" : "light")}
           />

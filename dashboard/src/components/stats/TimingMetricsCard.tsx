@@ -6,14 +6,14 @@ import type { TimingMetrics } from "@/types/stats"
 export function TimingMetricsCard({ metrics }: { metrics: TimingMetrics }) {
   const columns = [
     {
-      title: "1차 알림",
+      title: "첫 알림",
       avg: metrics.primary_notification_avg_ms,
       max: metrics.primary_notification_max_ms,
       rate: metrics.primary_under_5s_rate,
       slaLabel: "5초 이내",
     },
     {
-      title: "2차 알림",
+      title: "사진 알림",
       avg: metrics.secondary_notification_avg_ms,
       max: metrics.secondary_notification_max_ms,
       rate: metrics.secondary_under_15s_rate,

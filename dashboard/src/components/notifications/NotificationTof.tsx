@@ -20,7 +20,7 @@ function derive(tof: TofCheck): {
     // tof_absent(필드 부재) / tof_invalid(이탈) / fire_alarm_bypass(화재경보 우회) 공통.
     // 세 경우의 차이는 아래 reason 원문이 그대로 드러낸다.
     return {
-      label: "검증 안 함",
+      label: "확인 안 함",
       className: "text-foreground-secondary",
       Icon: CircleSlash,
     }

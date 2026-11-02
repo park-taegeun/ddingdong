@@ -209,7 +209,7 @@ c++ -std=c++17 -Wall -I firmware/include -o /tmp/att firmware/tools/auto_trig_te
 
 무엇: ToF 센서가 동작 중에 멈추면 보드가 마지막 판정값(대개 「사람 없음」)을 계속 실어 초인종 · 노크가 서버에서
 `tof_rejected` 로 조용히 막힐 수 있다(감사 AU-01). 그래서 트리거 시점에 마지막 프레임 뒤 경과가 **1,000ms 초과**면
-「첫 프레임 전」과 같이 ToF 4필드를 빼고 보낸다(서버 `tof_absent` → fail-open, 카드 「검증 안 함」).
+「첫 프레임 전」과 같이 ToF 4필드를 빼고 보낸다(서버 `tof_absent` → fail-open, 카드 「확인 안 함」(2026-11-02 전 표기 「검증 안 함」)).
 판정 = `firmware/include/tof_fresh.h`, 배선 = `enrich_uplink_main.cpp` 의 `captureTofAtTrigger`.
 
 센서를 실제로 멈출 수 없으므로(재결선 금지) **시험 임계 빌드**로 배선만 확인한다. 서버 없이 시리얼만으로 판정한다

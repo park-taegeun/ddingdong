@@ -179,31 +179,39 @@ const CASES = [
     patch: "if (false) {",
   },
   // 8.4 · 7.6(d) — 뱃지는 secondary_sent 를 enrich_status 보다 먼저 본다. 결함 = 두 분기 순서를 바꾸면
-  // 엇갈린 입력(전송 완료인데 처리 중 표기)이 「2차 처리 중」이 된다. 함정: 정상 조합만 보면 순서와 무관하게 같다.
+  // 엇갈린 입력(사진까지 보냄인데 처리 중 표기)이 「사진 보내는 중」이 된다. 함정: 정상 조합만 보면 순서와 무관하게 같다.
   {
     id: "NC-B1",
     file: SRC.badge,
     desc: "뱃지 읽는 순서 뒤집기 — secondary_sent 보다 처리 중을 먼저 (7.6(d))",
     anchor:
-      '  if (status.secondary_sent) {\n    return { label: "전송 완료", tone: "success", Icon: CircleCheck }\n  }\n  if (status.enrich_status === "processing" || status.enrich_status === "pending") {\n    return { label: "2차 처리 중", tone: "processing", Icon: Clock }\n  }',
+      '  if (status.secondary_sent) {\n    return { label: "사진까지 보냄", tone: "success", Icon: CircleCheck }\n  }\n  if (status.enrich_status === "processing" || status.enrich_status === "pending") {\n    return { label: "사진 보내는 중", tone: "processing", Icon: Clock }\n  }',
     patch:
-      '  if (status.enrich_status === "processing" || status.enrich_status === "pending") {\n    return { label: "2차 처리 중", tone: "processing", Icon: Clock }\n  }\n  if (status.secondary_sent) {\n    return { label: "전송 완료", tone: "success", Icon: CircleCheck }\n  }',
+      '  if (status.enrich_status === "processing" || status.enrich_status === "pending") {\n    return { label: "사진 보내는 중", tone: "processing", Icon: Clock }\n  }\n  if (status.secondary_sent) {\n    return { label: "사진까지 보냄", tone: "success", Icon: CircleCheck }\n  }',
   },
-  // B4 — 카톡 실패는 「보내기 실패」. 결함 = 분기가 없으면 실패가 회색 「발송 제외」로 숨는다(감사 D02 원래 증상).
+  // B4 — 카톡 실패는 「못 보냄」. 결함 = 분기가 없으면 실패가 회색 「안 보냄」으로 숨는다(감사 D02 원래 증상).
   {
     id: "NC-B2",
     file: SRC.badge,
-    desc: "뱃지 카톡 실패 분기 제거 — token_expired 가 '발송 제외' (B4)",
+    desc: "뱃지 카톡 실패 분기 제거 — token_expired 가 '안 보냄' (B4)",
     anchor: "if (status.skip_reason && KAKAO_FAILURE_REASONS.has(status.skip_reason)) {",
     patch: "if (false) {",
   },
-  // B4 — 카드 문장도 실패를 원인 없이 알린다. 결함 = 분기가 없으면 「토큰 만료 때문에 …」 내부 어휘가 보인다.
+  // B4 — 카드 문장도 실패를 원인 없이 알린다. 결함 = 분기가 없으면 「보내지 않은 이유: 토큰 만료」 내부 어휘가 보인다.
   {
     id: "NC-B3",
     file: SRC.card,
-    desc: "카드 카톡 실패 문장 분기 제거 — '토큰 만료 때문에 …' 노출 (B4)",
+    desc: "카드 카톡 실패 문장 분기 제거 — '보내지 않은 이유: 토큰 만료' 노출 (B4)",
     anchor: "(KAKAO_FAILURE_REASONS.has(status.skip_reason) ? (",
     patch: "(false ? (",
+  },
+  // 저신뢰 화재 사유 문장. 결함 = 분기가 없으면 화재 카드가 「보내지 않은 이유: 확실하지 않은 소리」로 가능한 화재를 약하게 말한다.
+  {
+    id: "NC-B3F",
+    file: SRC.card,
+    desc: "저신뢰 화재 사유 분기 제거 — 화재 카드에 일반 사유 문장 (G12)",
+    anchor: ') : isFire && status.skip_reason === "low_confidence" ? (',
+    patch: ") : false ? (",
   },
   // B3 — 날짜는 달력(자정) 기준. 결함 = 경과 시간으로 세면 어제 23:59(9시간 전)가 「오늘」이 된다.
   // 함정: 어제 0시(33시간 전)만 보면 경과 시간으로도 「어제」라 같다 — 자정 바로 전 시각을 단언한다.
@@ -357,11 +365,11 @@ const CASES = [
     patch: '    throw new Error("NC-E1c-write")',
   },
   // 기술 정보 접기 — 거리 센서 칸은 접힘 밖. 결함 = 칸이 접힘 안으로 들어가면 3상태 라벨이 기본 화면에서 사라져
-  // 부스 리셋 뒤 「검증 안 함」(ToF 초기화 실패)을 첫 카드에서 못 본다(6.4(c) · 33.33(b)).
+  // 부스 리셋 뒤 「확인 안 함」(ToF 초기화 실패)을 첫 카드에서 못 본다(6.4(c) · 33.33(b)).
   {
     id: "NC-E2",
     file: SRC.card,
-    desc: "거리 센서 칸을 접힘 안으로 — 기본 카드에 '검증 안 함' 없음 (기술 정보 접기)",
+    desc: "거리 센서 칸을 접힘 안으로 — 기본 카드에 '확인 안 함' 없음 (기술 정보 접기)",
     anchor: "<NotificationTof tof={notification.tof_check} />",
     // 패치에 앵커 문자열이 남지 않게 필드를 대괄호로 읽는다(하네스 ③ 「앵커 잔존」 가드).
     patch: '{detailsOpen && <NotificationTof tof={notification["tof_check"]} />}',
@@ -375,11 +383,11 @@ const CASES = [
     patch: "const [detailsOpen, setDetailsOpen] = useState(true)",
   },
   // 오늘 보내지 않은 이유 — 0건 줄은 숨긴다. 결함 = 걸러내지 않으면 7줄이 늘 보여 실제 사유가 묻힌다.
-  // 함정: 픽스처 키가 전부 1 이상이면 같다 — 사람 감지 실패 · 등록 중 = 0.
+  // 함정: 픽스처 키가 전부 1 이상이면 같다 — 문 앞에 사람이 안 보임 · 등록 중 = 0.
   {
     id: "NC-E4a",
     file: SRC.skipCard,
-    desc: "0건 줄 숨김 제거 — '사람 감지 실패' 0건 줄 노출 (보내지 않은 이유)",
+    desc: "0건 줄 숨김 제거 — '문 앞에 사람이 안 보임' 0건 줄 노출 (보내지 않은 이유)",
     anchor: "].filter((r) => r.count > 0)",
     patch: "].filter(() => true)",
   },
@@ -407,7 +415,7 @@ const CASES = [
     anchor: "<OtherRow key={n.request_id} notification={n} />",
     patch: "null",
   },
-  // 자막 없음 표시 — 사진이 없으면(1차만 · 2차 처리 중) 뜨면 안 된다. 결함 = 처리 중에 「없어요」로 단정.
+  // 자막 없음 표시 — 사진이 없으면(1차만 · 사진 보내는 중) 뜨면 안 된다. 결함 = 처리 중에 「없어요」로 단정.
   {
     id: "NC-K1",
     file: SRC.card,
@@ -541,7 +549,7 @@ const ASSERTIONS = [
   { fixture: "device_offline", kind: "lacks", text: "오프라인" },
   { fixture: "tof_passed", kind: "has", text: "사람 확인" },
   { fixture: "tof_rejected", kind: "has", text: "사람 없음" },
-  { fixture: "tof_absent", kind: "has", text: "검증 안 함" },
+  { fixture: "tof_absent", kind: "has", text: "확인 안 함" },
   { fixture: "tof_absent", kind: "lacks", text: "사람 없음" },
   { fixture: "tof_absent", kind: "has", text: "tof_absent" },
   { fixture: "stt_conf_zero", kind: "has", text: "0%" },
@@ -594,18 +602,18 @@ const ASSERTIONS = [
   { fixture: "detected_at", kind: "has", text: "작년=2025년 12월 31일 오후 11:00" },
   { fixture: "detected_at", kind: "has", text: "잘못=-" },
   // B4 · 8.4 뱃지 6상태 + 읽는 순서
-  { fixture: "badge_blocked", kind: "has", text: "발송 제외" },
-  { fixture: "badge_blocked", kind: "lacks", text: "보내기 실패" },
-  { fixture: "badge_token_fail", kind: "has", text: "보내기 실패" },
-  { fixture: "badge_token_fail", kind: "lacks", text: "발송 제외" },
-  { fixture: "badge_api_fail", kind: "has", text: "보내기 실패" },
-  { fixture: "badge_complete", kind: "has", text: "전송 완료" },
-  { fixture: "badge_processing", kind: "has", text: "2차 처리 중" },
-  { fixture: "badge_partial", kind: "has", text: "2차 실패" },
-  { fixture: "badge_partial", kind: "lacks", text: "전송 완료" },
-  { fixture: "badge_primary_only", kind: "has", text: "1차 발송" },
-  { fixture: "badge_order", kind: "has", text: "전송 완료" },
-  { fixture: "badge_order", kind: "lacks", text: "2차 처리 중" },
+  { fixture: "badge_blocked", kind: "has", text: "안 보냄" },
+  { fixture: "badge_blocked", kind: "lacks", text: "못 보냄" },
+  { fixture: "badge_token_fail", kind: "has", text: "못 보냄" },
+  { fixture: "badge_token_fail", kind: "lacks", text: "안 보냄" },
+  { fixture: "badge_api_fail", kind: "has", text: "못 보냄" },
+  { fixture: "badge_complete", kind: "has", text: "사진까지 보냄" },
+  { fixture: "badge_processing", kind: "has", text: "사진 보내는 중" },
+  { fixture: "badge_partial", kind: "has", text: "사진 못 보냄" },
+  { fixture: "badge_partial", kind: "lacks", text: "사진까지 보냄" },
+  { fixture: "badge_primary_only", kind: "has", text: "알림 보냄" },
+  { fixture: "badge_order", kind: "has", text: "사진까지 보냄" },
+  { fixture: "badge_order", kind: "lacks", text: "사진 보내는 중" },
   // B5 뱃지 클래스 실물
   { fixture: "badge_class", kind: "has", text: "text-caption" },
   { fixture: "badge_class", kind: "lacks", text: "text-xs" },
@@ -613,9 +621,10 @@ const ASSERTIONS = [
   { fixture: "badge_class", kind: "lacks", text: "text-success" },
   // B4 카드 문장
   { fixture: "card_token_fail", kind: "has", text: "카카오톡으로 보내지 못했어요." },
-  { fixture: "card_token_fail", kind: "lacks", text: "토큰 만료 때문에 알림을 보내지 않았어요." },
-  { fixture: "card_token_fail", kind: "has", text: "보내기 실패" },
-  { fixture: "card_blocked", kind: "has", text: "알림 대상이 아닌 소리 때문에 알림을 보내지 않았어요." },
+  { fixture: "card_token_fail", kind: "lacks", text: "보내지 않은 이유: 토큰 만료" },
+  { fixture: "card_token_fail", kind: "has", text: "못 보냄" },
+  { fixture: "card_blocked", kind: "has", text: "보내지 않은 이유: 알림 대상이 아닌 소리" },
+  { fixture: "card_fire_low", kind: "has", text: "화재경보일 수 있지만 확실하지 않아 카카오톡은 보내지 않았어요. 주변을 확인해 주세요." },
   { fixture: "card_blocked", kind: "lacks", text: "카카오톡으로 보내지 못했어요." },
   // B10 화재 모션 창
   { fixture: "fire_window", kind: "has", text: "10분=창 안" },
@@ -684,8 +693,8 @@ const ASSERTIONS = [
   { fixture: "card_blocked", kind: "has", text: "자세히" },
   { fixture: "card_blocked", kind: "lacks", text: "신뢰도 90%" },
   { fixture: "card_blocked", kind: "has", text: "거리 센서" },
-  { fixture: "card_blocked", kind: "has", text: "검증 안 함" },
-  { fixture: "card_token_fail", kind: "has", text: "검증 안 함" },
+  { fixture: "card_blocked", kind: "has", text: "확인 안 함" },
+  { fixture: "card_token_fail", kind: "has", text: "확인 안 함" },
   // 폰 폭 하단 탭
   { fixture: "bottom_nav", kind: "has", text: "홈" },
   { fixture: "bottom_nav", kind: "has", text: "알림" },
@@ -699,7 +708,7 @@ const ASSERTIONS = [
   { fixture: "skip_some", kind: "lacks", text: "카카오 전송 오류" },
   { fixture: "skip_some", kind: "has", text: "알림 대상이 아닌 소리" },
   { fixture: "skip_some", kind: "has", text: "등록한 초인종과 다른 소리" },
-  { fixture: "skip_some", kind: "lacks", text: "사람 감지 실패" },
+  { fixture: "skip_some", kind: "lacks", text: "문 앞에 사람이 안 보임" },
   { fixture: "skip_some", kind: "lacks", text: "초인종 등록 중에 들어온 소리" },
   { fixture: "skip_some", kind: "has", text: "모두 8건" },
   { fixture: "skip_some_class", kind: "has", text: "text-danger-deep" },
@@ -713,7 +722,7 @@ const ASSERTIONS = [
   { fixture: "list_collapse", kind: "has", text: "초인종" },
   { fixture: "list_collapse", kind: "has", text: "기타 소리" },
   { fixture: "list_collapse", kind: "has", text: "알림 안 보냄" },
-  { fixture: "list_collapse", kind: "lacks", text: "알림 대상이 아닌 소리 때문에 알림을 보내지 않았어요." },
+  { fixture: "list_collapse", kind: "lacks", text: "보내지 않은 이유: 알림 대상이 아닌 소리" },
   // 자막 없음 표시 — ① 사진 있음 + 자막 없음 = 두 문장 ② 자막 있음 = 0 ③ 사진 없음 = 0
   { fixture: "card_photo_no_stt", kind: "has", text: "알아들은 말이 없어요" },
   { fixture: "card_photo_no_stt", kind: "has", text: "방문자가 말하지 않았거나, 소리가 작아 알아듣지 못했을 수 있어요." },
@@ -746,9 +755,9 @@ const ASSERTIONS = [
   // 도움말 FAQ — 문답 전부 완전 일치(기존 1 · 3번 무변경 포함) + 다른 화면 문구와 같은 글자 · 상수와 같은 일 수
   // 온보딩 단계 — 1 ~ 3단계 무변경 + 4단계 제목 · 두 줄
   { fixture: "help", kind: "has", text: "알림은 얼마나 빨리 오나요?" },
-  { fixture: "help", kind: "has", text: "알림이 갈 때는 보통 5초 이내에 1차 알림이, 15초 이내에 사진·자막이 담긴 2차 알림이 도착해요." },
+  { fixture: "help", kind: "has", text: "알림이 갈 때는 먼저 짧은 알림이 오고, 이어서 사진과 자막이 담긴 알림이 와요. 목표 시간은 첫 알림 5초, 사진 알림 15초예요. 네트워크 상태에 따라 늦을 수 있어요." },
   { fixture: "help", kind: "has", text: "사진과 음성은 어떻게 보이나요?" },
-  { fixture: "help", kind: "has", text: "2차 알림이 갈 때는 현관 카메라가 찍은 사진과, 방문자가 한 말을 글자로 바꾼 자막이 알림 카드에 함께 표시돼요. 알아들은 말이 없으면 ‘알아들은 말이 없어요’라고 표시돼요." },
+  { fixture: "help", kind: "has", text: "사진 알림이 갈 때는 현관 카메라가 찍은 사진과, 현관에서 들린 말을 글자로 바꾼 자막이 알림 카드에 함께 표시돼요. 알아들은 말이 없으면 ‘알아들은 말이 없어요’라고 표시돼요." },
   { fixture: "help", kind: "has", text: "사진은 언제까지 볼 수 있나요?" },
   { fixture: "help", kind: "has", text: "사진은 3일 동안 볼 수 있어요. 3일이 지나면 ‘보관 기간(3일)이 지나 볼 수 없어요’로 바뀌어요. 카카오톡 사진도 3일이 지나면 보이지 않을 수 있어요." },
   { fixture: "help", kind: "has", text: "카카오톡 알림은 어디로 오나요?" },
@@ -760,10 +769,10 @@ const ASSERTIONS = [
   { fixture: "help_copy_match", kind: "has", text: "F3일수=일치" },
   { fixture: "help_copy_match", kind: "has", text: "F3만료문구=일치" },
   { fixture: "help_copy_match", kind: "has", text: "F4카드문구=일치" },
-  { fixture: "onboarding_steps", kind: "has", text: "띵동에 오신 것을 환영합니다" },
+  { fixture: "onboarding_steps", kind: "has", text: "띵동에 오신 것을 환영해요" },
   { fixture: "onboarding_steps", kind: "has", text: "현관에서 나는 소리를 자동으로 감지해, 휴대폰과 이 화면으로 알려드려요." },
   { fixture: "onboarding_steps", kind: "has", text: "세 가지 소리를 구분해요" },
-  { fixture: "onboarding_steps", kind: "has", text: "초인종, 노크, 화재경보를 구분해 표시합니다." },
+  { fixture: "onboarding_steps", kind: "has", text: "초인종, 노크, 화재경보를 구분해 표시해요." },
   { fixture: "onboarding_steps", kind: "has", text: "화재경보는 더 크게 알려요" },
   { fixture: "onboarding_steps", kind: "has", text: "화재경보는 빨간색으로 강조하고, 대응 수칙을 함께 보여드려요." },
   { fixture: "onboarding_steps", kind: "has", text: "설치하고 꼭 해 주세요" },

@@ -47,7 +47,7 @@ _IMG_KNOCK = "/static/captures/demo-knock.svg"
 # 삽입 명세 5건 — 오래된 순(minutes_ago 큰 값)으로 나열해 뒤에 삽입될수록
 # id(=cursor 정렬 키)가 커지고, 대시보드(id desc)에서 최신이 위로 온다.
 _SEED_SPECS = [
-    # 1) 초인종 · 2차 완료(사진 + 자막) → 배지 "전송 완료"
+    # 1) 초인종 · 2차 완료(사진 + 자막) → 배지 "사진까지 보냄"(옛 「전송 완료」)
     {
         "minutes_ago": 200,
         "client_request_id": "seed_demo_0001",
@@ -68,7 +68,7 @@ _SEED_SPECS = [
         "stt_transcript": "택배 왔습니다. 문 앞에 두고 갈게요.",
         "stt_confidence": 0.94,
     },
-    # 2) 노크 · 2차 완료(사진 + 자막) → 배지 "전송 완료"
+    # 2) 노크 · 2차 완료(사진 + 자막) → 배지 "사진까지 보냄"(옛 「전송 완료」)
     {
         "minutes_ago": 150,
         "client_request_id": "seed_demo_0002",
@@ -89,7 +89,7 @@ _SEED_SPECS = [
         "stt_transcript": "계세요? 옆집인데요.",
         "stt_confidence": 0.90,
     },
-    # 3) 화재경보 · ToF 우회, 1차만 발송(enrich skipped) → 배지 "1차 발송"
+    # 3) 화재경보 · ToF 우회, 1차만 발송(enrich skipped) → 배지 "알림 보냄"(옛 「1차 발송」)
     #    4단계 대응 수칙은 UI 가 데이터 무관 정적 렌더(카테고리 7.1) → 미디어/STT 불필요
     {
         "minutes_ago": 95,
@@ -111,7 +111,7 @@ _SEED_SPECS = [
         "stt_transcript": None,
         "stt_confidence": None,
     },
-    # 4) 초인종 · 신뢰도 부족 → 1차 미발송 → 배지 "발송 제외" + 사유 "신뢰도 부족"
+    # 4) 초인종 · 신뢰도 부족 → 1차 미발송 → 배지 "안 보냄"(옛 「발송 제외」) + 사유 "확실하지 않은 소리"(옛 「신뢰도 부족」)
     {
         "minutes_ago": 45,
         "client_request_id": "seed_demo_0004",
@@ -132,7 +132,7 @@ _SEED_SPECS = [
         "stt_transcript": None,
         "stt_confidence": None,
     },
-    # 5) 노크 · 2차 처리중(사진/자막 대기) → 배지 "2차 처리 중" (최신 = 목록 최상단)
+    # 5) 노크 · 2차 처리중(사진/자막 대기) → 배지 "사진 보내는 중"(옛 「2차 처리 중」) (최신 = 목록 최상단)
     {
         "minutes_ago": 12,
         "client_request_id": "seed_demo_0005",

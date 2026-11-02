@@ -56,7 +56,7 @@ export function Header({ onMenuClick, menuButtonRef, isOnline, hasHealth, discon
           type="button"
           onClick={toggleTheme}
           className="flex h-touch w-touch items-center justify-center rounded-xl text-foreground-secondary hover:bg-background-sub"
-          aria-label={theme === "dark" ? "밝은 테마로 전환" : "어두운 테마로 전환"}
+          aria-label={theme === "dark" ? "밝은 화면으로 바꾸기" : "어두운 화면으로 바꾸기"}
         >
           {theme === "dark" ? (
             <Sun className="h-5 w-5" />

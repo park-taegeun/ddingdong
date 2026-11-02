@@ -55,7 +55,7 @@ export function NotificationList({
         tone="error"
         icon={TriangleAlert}
         title="알림을 불러오지 못했어요"
-        description="잠시 후 다시 시도합니다."
+        description="잠시 후 다시 시도해요."
       />
     )
   }
@@ -66,7 +66,7 @@ export function NotificationList({
       <EmptyState
         icon={BellOff}
         title="아직 알림이 없어요"
-        description="현관에서 소리가 감지되면 여기에 표시됩니다."
+        description="현관에서 소리가 감지되면 여기에 표시돼요."
       />
     )
   }

@@ -5,8 +5,8 @@ import type { StatsSummary } from "@/types/stats"
 
 export function TotalDetectionsCard({ summary }: { summary: StatsSummary }) {
   const subStats = [
-    { label: "알림 발송", value: `${summary.total_notifications_sent}건` },
-    { label: "발송 제외", value: `${summary.skip_count}건` },
+    { label: "보낸 알림", value: `${summary.total_notifications_sent}건` },
+    { label: "안 보낸 알림", value: `${summary.skip_count}건` },
     { label: "평균 신뢰도", value: formatConfidence(summary.average_confidence) },
   ]
 

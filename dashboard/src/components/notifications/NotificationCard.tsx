@@ -18,6 +18,9 @@ import { NotificationStatusBadge } from "./NotificationStatusBadge"
 import { NotificationSTT } from "./NotificationSTT"
 import { NotificationTof } from "./NotificationTof"
 
+// 저신뢰 화재 — 확인되지 않은 화재를 단정하지도, 가능한 화재를 약하게 말하지도 않는다(원칙 ① · 안전 축).
+const FIRE_LOW_CONFIDENCE_NOTE = "화재경보일 수 있지만 확실하지 않아 카카오톡은 보내지 않았어요. 주변을 확인해 주세요."
+
 export function NotificationCard({
   notification,
   isNew = false,
@@ -111,10 +114,13 @@ export function NotificationCard({
                 <TriangleAlert className="h-4 w-4 shrink-0" aria-hidden />
                 카카오톡으로 보내지 못했어요.
               </p>
+            ) : isFire && status.skip_reason === "low_confidence" ? (
+              <p className="mt-2 text-caption text-foreground-secondary">
+                {FIRE_LOW_CONFIDENCE_NOTE}
+              </p>
             ) : (
               <p className="mt-2 text-caption text-foreground-secondary">
-                {SKIP_REASON_LABEL[status.skip_reason] ?? "발송 제외"} 때문에 알림을
-                보내지 않았어요.
+                보내지 않은 이유: {SKIP_REASON_LABEL[status.skip_reason] ?? "기타 이유"}
               </p>
             ))}
 

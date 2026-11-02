@@ -91,6 +91,9 @@
 body {
   font-family: 'Pretendard Variable', system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
+  /* 한글은 어절 단위로 줄바꿈, 긴 토큰만 쪼갠다(anywhere 금지 — flex 최소 폭 계산을 바꾼다) */
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
 
 @media (prefers-reduced-motion: reduce) {
