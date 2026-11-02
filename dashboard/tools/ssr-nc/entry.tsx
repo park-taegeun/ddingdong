@@ -208,7 +208,7 @@ const SKIP_ZERO: SkipReasonCounts = {
   registration_collecting: 0,
   registration_mismatch: 0,
 }
-// 카톡 실패 = 1 + 1(합쳐 2) · 0건 = 사람 감지 실패 · 등록 중 · 합계 8
+// 카톡 실패 = 1 + 1(합쳐 2) · 0건 = 문 앞에 사람이 안 보임 · 등록 중 · 합계 8
 const SKIP_SOME: SkipReasonCounts = {
   ...SKIP_ZERO,
   not_target: 3,
@@ -385,7 +385,7 @@ export const output: Record<string, string> = {
     </ul>,
   ),
 
-  // B4 · 8.4 뱃지 — 6상태(발송 제외 · 보내기 실패 · 전송 완료 · 2차 처리 중 · 2차 실패 · 1차 발송)
+  // B4 · 8.4 뱃지 — 6상태(안 보냄 · 못 보냄 · 사진까지 보냄 · 사진 보내는 중 · 사진 못 보냄 · 알림 보냄)
   badge_blocked: badge(status(false, false, "skipped", null, "not_target")),
   badge_token_fail: badge(status(false, false, "skipped", null, "token_expired")),
   badge_api_fail: badge(status(false, false, "skipped", null, "kakao_api_error")),
@@ -394,7 +394,7 @@ export const output: Record<string, string> = {
   badge_partial: badge(status(true, false, "failed", PHOTO_AT)),
   badge_primary_only: badge(status(true, false, "skipped", null)),
   // 7.6(d) 읽는 순서 — secondary_sent 를 enrich_status 보다 먼저 본다. 둘이 엇갈리는 입력에서만
-  // 순서가 결과를 가른다(전송 완료 + 아직 처리 중 표기).
+  // 순서가 결과를 가른다(사진까지 보냄 + 아직 처리 중 표기).
   badge_order: badge(status(true, true, "processing", PHOTO_AT)),
   // B5 뱃지 클래스 실물(twMerge 병합 뒤) — 15px 토큰이 남고 12px 기본은 지워졌는가
   badge_class: classTokens(badge(status(true, true, "completed", PHOTO_AT))),
@@ -402,6 +402,8 @@ export const output: Record<string, string> = {
   // B4 카드 문장 — 카톡 실패는 원인 없이 「카카오톡으로 보내지 못했어요.」, 차단은 기존 문장
   card_token_fail: card(item("knock", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "token_expired"))),
   card_blocked: card(item("other", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "not_target"))),
+  // 저신뢰 화재(G12 — 신뢰도 미달이면 화재도 미발송) — 화재 카드 그대로, 사유 문장만 따로
+  card_fire_low: card(item("fire_alarm", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "low_confidence"))),
 
   // B10 화재 모션 창 — 경계 포함 · 미래 · 잘못된 시각
   fire_window: renderToStaticMarkup(

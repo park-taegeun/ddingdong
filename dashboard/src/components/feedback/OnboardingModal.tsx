@@ -29,7 +29,7 @@ export const STEPS: Step[] = [
   {
     icon: Bell,
     iconClass: "bg-primary/10 text-primary",
-    title: "띵동에 오신 것을 환영합니다",
+    title: "띵동에 오신 것을 환영해요",
     description:
       "현관에서 나는 소리를 자동으로 감지해, 휴대폰과 이 화면으로 알려드려요.",
   },
@@ -37,7 +37,7 @@ export const STEPS: Step[] = [
     icon: ShieldCheck,
     iconClass: "bg-success/10 text-success",
     title: "세 가지 소리를 구분해요",
-    description: "초인종, 노크, 화재경보를 구분해 표시합니다.",
+    description: "초인종, 노크, 화재경보를 구분해 표시해요.",
     showClasses: true,
   },
   {

@@ -66,7 +66,7 @@ export function NotificationList({
       <EmptyState
         icon={BellOff}
         title="아직 알림이 없어요"
-        description="현관에서 소리가 감지되면 여기에 표시됩니다."
+        description="현관에서 소리가 감지되면 여기에 표시돼요."
       />
     )
   }
