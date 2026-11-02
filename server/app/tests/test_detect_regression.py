@@ -2281,7 +2281,7 @@ class DetectRegressionTest(_NoNetworkTestCase):
     def test_photo_ok_caption_failed_is_not_full_success(self) -> None:
         """S3 (2/4) — 사진O 자막X. 완전 성공과 반드시 달라야 한다.
 
-        ★ secondary_sent 를 "사진 성공"으로 두면 대시보드 뱃지가 이 건을 "전송 완료"로
+        ★ secondary_sent 를 "사진 성공"으로 두면 대시보드 뱃지가 이 건을 "사진까지 보냄"(옛 「전송 완료」)으로
           렌더한다(derive 가 secondary_sent 를 enrich_status 보다 먼저 본다) — §2-E 가
           금지한 "부분 성공이 완전 성공처럼 보이는" 상태다. 그래서 False 다.
         """

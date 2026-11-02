@@ -388,11 +388,11 @@ def enrich():
     #   enrich_status     = 자막 발송이 실패했는가("failed") / 아닌가("completed")
     # 왜 secondary_sent 가 "사진 성공"이 아니라 "전부 성공"인가:
     #   NotificationStatusBadge.derive() 가 secondary_sent 를 enrich_status 보다 **먼저**
-    #   보고 "전송 완료"를 띄운다(dashboard/src/components/notifications/…Badge.tsx).
+    #   보고 "사진까지 보냄"(옛 「전송 완료」)을 띄운다(dashboard/src/components/notifications/…Badge.tsx).
     #   사진만 간 부분 성공에 True 를 넣으면 화면이 완전 성공으로 보인다 — §2-E 가
     #   금지한 바로 그 상태다.
     # enrich_status="failed" 는 프론트 EnrichStatus 에 이미 선언돼 있으나 서버가 한 번도
-    # 낸 적 없던 값이다(Badge 에 "2차 실패" 분기도 이미 있다) — PR #43 의 tof_check.passed
+    # 낸 적 없던 값이다(Badge 에 "사진 못 보냄"(옛 「2차 실패」) 분기도 이미 있다) — PR #43 의 tof_check.passed
     # null 선례와 같은 "선언돼 있던 값 형태를 처음 쓰는" 확장이라 프론트 수정이 없다.
     notif.secondary_sent = send["photo_sent"] and send["caption_sent"] is not False
     notif.secondary_sent_at = utc_now() if send["photo_sent"] else None
