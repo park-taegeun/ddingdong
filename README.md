@@ -18,7 +18,7 @@
 ```
 현관 보드 (ESP32-S3)                 서버 (Flask)                     사용자
 ───────────────────                 ────────────                     ──────
-소리 감지 (RMS 트리거)
+소리 감지 (자동 감지 또는 수동 's')
   └─ 오디오 스냅샷 + ToF ──▶ 1차 /api/v1/detect
                                소리 분류 → 판정 규칙 ──────▶ 카카오톡 텍스트
   ◀── request_id · enrich_status
@@ -111,7 +111,7 @@ ddingdong/
 
 학습 데이터는 repo에 포함하지 않는다. 사용한 공개 데이터와 표기는 다음과 같다.
 
-- **FSD50K** — 클립마다 라이선스가 다르다(예: 추가 네거티브 160클립 = CC0 · CC BY 3.0 · CC BY-NC 3.0 · Sampling+ 1.0 — 33.32). 인용할 때는 클립별 라이선스를 표기한다.
+- **FSD50K** — 데이터셋 = CC BY 4.0(Zenodo record 4060432). 인용 = Eduardo Fonseca, Xavier Favory, Jordi Pons, Frederic Font, Xavier Serra, "FSD50K: an open dataset of human-labeled sound events", IEEE/ACM Transactions on Audio, Speech, and Language Processing, vol. 30, pp. 829–852, 2022. 클립마다 라이선스가 다르다(예: 추가 네거티브 160클립 = CC0 · CC BY 3.0 · CC BY-NC 3.0 · Sampling+ 1.0 — 33.32). 인용할 때는 클립별 라이선스를 표기한다.
 - **Zeroth-Korean** — 「Zeroth-Korean (OpenSLR SLR40, https://www.openslr.org/40/) — Lucas Jo (Atlas Guide Inc.) · Wonkyum Lee (Gridspace Inc.), CC BY 4.0 — 3초 조각 · PCM16 wav 변환 등 가공함」(표기문 원문 = [`ml/curation/README.md`](ml/curation/README.md)).
 - **AI Hub · AudioSet** — 이용 조건 = 각 배포처 약관.
 
