@@ -54,6 +54,19 @@ export const CLASS_META: Record<PredictedClass, ClassMeta> = {
   },
 }
 
+// 카드 표시용 메타 — 제목 = 최종 판단. 노크 단일 타격 차단(knock_single_hit) 행은 모델 예측이 노크여도
+// 최종 판단이 「노크 아님」이라, 제목을 노크로 두면 뱃지 「안 보냄」과 서로 반대 말이 된다
+// (2026-11-03 사용자 결정). 아이콘은 노크와 같은 문 · 색 3종만 기타 소리의 중립 토큰(새 토큰 0).
+// 조건 = 사유 하나: 서버가 이 사유를 예측 노크 + 발송 판정 건에만 붙인다(server/app/knock_gate.py).
+// 필터 · 통계 클래스 분포 · announcer 는 예측 기준 CLASS_META 를 그대로 쓴다(이 행은 「노크」 필터에 보인다).
+const KNOCK_SINGLE_HIT_LABEL = "한 번 난 소리"
+export function cardMeta(predictedClass: PredictedClass, skipReason?: SkipReason | null): ClassMeta {
+  const knockSingle = skipReason === "knock_single_hit"
+  if (!knockSingle) return CLASS_META[predictedClass]
+  const { iconColor, bgColor, dotColor } = CLASS_META.other
+  return { ...CLASS_META.knock, label: KNOCK_SINGLE_HIT_LABEL, iconColor, bgColor, dotColor }
+}
+
 export const PREDICTED_CLASS_ORDER: PredictedClass[] = [
   "doorbell",
   "knock",
@@ -102,7 +115,7 @@ export const SKIP_REASON_LABEL: Record<string, string> = {
   // 카드 문장 = 「보내지 않은 이유: {라벨}」 — 저장 · 출처를 단정하지 않는다.
   registration_collecting: "초인종 등록 중에 들어온 소리",
   registration_mismatch: "등록한 초인종과 다른 소리",
-  // 라벨 후보(확정 카피 아님 — 2026-11-02 사용자 결정 D-B3).
+  // 확정(통계 화면용 · 2026-11-03 사용자 결정). 카드는 이 라벨 대신 제목 「한 번 난 소리」 + 설명 문장을 쓴다.
   knock_single_hit: "한 번만 난 소리",
 }
 

@@ -4,7 +4,7 @@ import { useSettings } from "@/contexts/SettingsContext"
 import { FIRE_MOTION_WINDOW_MS } from "@/lib/constants"
 import { formatConfidence, formatDetectedAt } from "@/lib/format"
 import {
-  CLASS_META,
+  cardMeta,
   FIRE_ALARM_GUIDELINES,
   isPhotoExpired,
   isWithinWindow,
@@ -20,6 +20,8 @@ import { NotificationTof } from "./NotificationTof"
 
 // 저신뢰 화재 — 확인되지 않은 화재를 단정하지도, 가능한 화재를 약하게 말하지도 않는다(원칙 ① · 안전 축).
 const FIRE_LOW_CONFIDENCE_NOTE = "화재경보일 수 있지만 확실하지 않아 카카오톡은 보내지 않았어요. 주변을 확인해 주세요."
+// 노크 단일 타격 차단 — 제목(「한 번 난 소리」)과 같은 쪽으로 왜 안 보냈는지를 문장으로(2026-11-03 사용자 결정).
+const KNOCK_SINGLE_HIT_NOTE = "노크는 보통 여러 번 두드려서, 한 번만 난 소리는 알리지 않아요."
 
 export function NotificationCard({
   notification,
@@ -30,7 +32,8 @@ export function NotificationCard({
   isNew?: boolean
 }) {
   const { reduceMotion } = useSettings()
-  const meta = CLASS_META[notification.predicted_class]
+  // 제목 · 아이콘 · 사진 맥락 줄 · alt = 최종 판단 기준(cardMeta). 화재 판정(isFire)은 예측 클래스 그대로.
+  const meta = cardMeta(notification.predicted_class, notification.notification_status.skip_reason)
   const Icon = meta.icon
   const isFire = notification.predicted_class === "fire_alarm"
   // 화재 카드만 지금 시각을 들고 있다가 창이 지나면 다시 그려 모션을 멈춘다(30초 해상도 — 판정은 원값).
@@ -117,6 +120,10 @@ export function NotificationCard({
             ) : isFire && status.skip_reason === "low_confidence" ? (
               <p className="mt-2 text-caption text-foreground-secondary">
                 {FIRE_LOW_CONFIDENCE_NOTE}
+              </p>
+            ) : status.skip_reason === "knock_single_hit" ? (
+              <p className="mt-2 text-caption text-foreground-secondary">
+                {KNOCK_SINGLE_HIT_NOTE}
               </p>
             ) : (
               <p className="mt-2 text-caption text-foreground-secondary">

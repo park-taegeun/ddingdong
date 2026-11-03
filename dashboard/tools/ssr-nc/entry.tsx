@@ -38,7 +38,7 @@ import { formatDayHeading, formatDetectedAt } from "@/lib/format"
 import { nextRetryDelay, retryUrl } from "@/lib/image-retry"
 import { loadMoreState, nextLimit } from "@/lib/load-more"
 import { filterNotifications, filterSummary, groupByDay } from "@/lib/notification-filter"
-import { isPhotoExpired, isWithinWindow } from "@/lib/notification-meta"
+import { CLASS_META, cardMeta, isPhotoExpired, isWithinWindow } from "@/lib/notification-meta"
 import { countNew, readLastSeen, titleWithCount } from "@/lib/unread"
 import type { SeenStorage } from "@/lib/unread"
 import { HelpPage } from "@/pages/HelpPage"
@@ -405,8 +405,25 @@ export const output: Record<string, string> = {
   card_blocked: card(item("other", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "not_target"))),
   // 저신뢰 화재(G12 — 신뢰도 미달이면 화재도 미발송) — 화재 카드 그대로, 사유 문장만 따로
   card_fire_low: card(item("fire_alarm", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "low_confidence"))),
-  // 노크 단일 타격 차단(서버 knock_gate) — 사유 라벨이 카드 문장에 나온다
+  // 노크 단일 타격 차단(서버 knock_gate) — 제목 = 최종 판단(「한 번 난 소리」) · 사유는 설명 문장
   card_knock_single: card(item("knock", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "knock_single_hit"))),
+  // 대조 — 예측 노크 발송 · 예측 노크 저신뢰 미발송은 제목 「노크」 그대로(덮어쓰기는 knock_single_hit 하나만)
+  card_knock_sent: card(item("knock", "2020-01-01T09:00:00.000+09:00", status(true, false, "skipped", null))),
+  card_knock_low: card(item("knock", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "low_confidence"))),
+  // 카드 메타 색 · 아이콘(SSR 라벨 축 밖이라 순수 함수 결과를 글자로) — 한 번 난 소리 = 기타 소리 중립 색 · 노크 아이콘
+  card_meta: renderToStaticMarkup(
+    <ul>
+      {(
+        [
+          ["한번", cardMeta("knock", "knock_single_hit")],
+          ["노크발송", cardMeta("knock", undefined)],
+          ["노크저신뢰", cardMeta("knock", "low_confidence")],
+        ] as const
+      ).map(([k, m]) => (
+        <li key={k}>{`${k}=${m.label} | ${m.iconColor} ${m.bgColor} ${m.dotColor} | ${m.icon === CLASS_META.knock.icon ? "문" : "다른"}`}</li>
+      ))}
+    </ul>,
+  ),
 
   // B10 화재 모션 창 — 경계 포함 · 미래 · 잘못된 시각
   fire_window: renderToStaticMarkup(
