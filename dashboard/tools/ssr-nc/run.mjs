@@ -213,13 +213,47 @@ const CASES = [
     anchor: ') : isFire && status.skip_reason === "low_confidence" ? (',
     patch: ") : false ? (",
   },
-  // 노크 단일 타격 차단 사유 라벨(후보 「한 번만 난 소리」). 결함 = 키가 빠지면 카드 · 통계가 「기타 이유」로 뭉갠다.
+  // 노크 단일 타격 차단 사유 라벨(확정 「한 번만 난 소리」 — 통계 화면용). 결함 = 키가 빠지면 통계가 「기타 이유」로 뭉갠다.
+  // 카드는 2026-11-03부터 이 라벨을 쓰지 않는다 → 검출 = 통계 skip_knock 단언.
   {
     id: "NC-KG6",
     file: SRC.meta,
-    desc: "knock_single_hit 라벨 키 누락 — '기타 이유'로 표시",
+    desc: "knock_single_hit 라벨 키 누락 — 통계에 '기타 이유'로 표시",
     anchor: '  knock_single_hit: "한 번만 난 소리",\n',
     patch: "",
+  },
+  // 한 번 난 소리 카드(2026-11-03 사용자 결정) — 제목 = 최종 판단 · 회색 · 설명 문장.
+  // KC1 결함 = 덮어쓰기가 안 걸리면 「노크」 제목 + 「안 보냄」이 서로 반대 말.
+  {
+    id: "NC-KC1",
+    file: SRC.meta,
+    desc: "한 번 난 소리 덮어쓰기 조건 영원히 거짓 — 제목 '노크'",
+    anchor: "  if (!knockSingle) return CLASS_META[predictedClass]\n",
+    patch: "  if (true) return CLASS_META[predictedClass]\n",
+  },
+  // KC2 결함 = 조건을 노크 미발송 전부로 넓히면 저신뢰 · 카톡 실패 노크까지 「한 번 난 소리」가 된다.
+  {
+    id: "NC-KC2",
+    file: SRC.meta,
+    desc: "덮어쓰기 조건을 노크 미발송 전부로 넓힘 — 저신뢰 노크도 '한 번 난 소리'",
+    anchor: '  const knockSingle = skipReason === "knock_single_hit"\n',
+    patch: '  const knockSingle = predictedClass === "knock" && skipReason != null\n',
+  },
+  // KC3 결함 = 문장 분기가 없으면 「보내지 않은 이유: 한 번만 난 소리」로 돌아간다.
+  {
+    id: "NC-KC3",
+    file: SRC.card,
+    desc: "한 번 난 소리 설명 문장 분기 제거 — 일반 사유 문장",
+    anchor: ') : status.skip_reason === "knock_single_hit" ? (',
+    patch: ") : false ? (",
+  },
+  // KC4 결함 = 제목만 바뀌고 색은 노크 경고색 그대로(제목 단언은 통과한다 — 순수 함수 색 단언만 잡는다).
+  {
+    id: "NC-KC4",
+    file: SRC.meta,
+    desc: "한 번 난 소리 색 덮어쓰기 제거 — 노크 경고색 그대로",
+    anchor: "label: KNOCK_SINGLE_HIT_LABEL, iconColor, bgColor, dotColor }",
+    patch: "label: KNOCK_SINGLE_HIT_LABEL }",
   },
   // B3 — 날짜는 달력(자정) 기준. 결함 = 경과 시간으로 세면 어제 23:59(9시간 전)가 「오늘」이 된다.
   // 함정: 어제 0시(33시간 전)만 보면 경과 시간으로도 「어제」라 같다 — 자정 바로 전 시각을 단언한다.
@@ -506,7 +540,7 @@ const CASES = [
     id: "NC-H1",
     file: SRC.help,
     desc: "FAQ '알림이 안 왔어요' 문답 삭제 (도움말 FAQ)",
-    anchor: "  {\n    q: \"소리가 났는데 알림이 안 왔어요.\",\n    a: \"확실하지 않은 소리, 현관 앞에 사람이 없어 보인 초인종·노크 소리, 등록한 초인종과 많이 다른 소리, 알림 대상이 아닌 기타 소리는 보내지 않아요. 알림 화면에서 보내지 않은 기록과 이유를 볼 수 있고, 통계 화면의 ‘오늘 보내지 않은 이유’에서 하루 합계를 볼 수 있어요.\",\n  },\n",
+    anchor: "  {\n    q: \"소리가 났는데 알림이 안 왔어요.\",\n    a: \"확실하지 않은 소리, 현관 앞에 사람이 없어 보인 초인종·노크 소리, 등록한 초인종과 많이 다른 소리, 한 번만 난 노크 같은 소리, 알림 대상이 아닌 기타 소리는 보내지 않아요. 알림 화면에서 보내지 않은 기록과 이유를 볼 수 있고, 통계 화면의 ‘오늘 보내지 않은 이유’에서 하루 합계를 볼 수 있어요.\",\n  },\n",
     patch: "",
   },
   // 사진 보관 일 수는 상수에서 만든다. 결함 = 손 숫자. 함정: 손 숫자가 지금 상수와 같은 3이면 렌더가 같아 못 잡는다
@@ -634,8 +668,23 @@ const ASSERTIONS = [
   { fixture: "card_blocked", kind: "has", text: "보내지 않은 이유: 알림 대상이 아닌 소리" },
   { fixture: "card_fire_low", kind: "has", text: "화재경보일 수 있지만 확실하지 않아 카카오톡은 보내지 않았어요. 주변을 확인해 주세요." },
   { fixture: "card_blocked", kind: "lacks", text: "카카오톡으로 보내지 못했어요." },
-  { fixture: "card_knock_single", kind: "has", text: "보내지 않은 이유: 한 번만 난 소리" },
+  // 한 번 난 소리 카드(2026-11-03 사용자 결정) — 「보내지 않은 이유: 한 번만 난 소리」 has → lacks(문장 분기로 교체)
+  { fixture: "card_knock_single", kind: "has", text: "한 번 난 소리" },
+  { fixture: "card_knock_single", kind: "has", text: "노크는 보통 여러 번 두드려서, 한 번만 난 소리는 알리지 않아요." },
+  { fixture: "card_knock_single", kind: "lacks", text: "보내지 않은 이유: 한 번만 난 소리" },
+  { fixture: "card_knock_single", kind: "lacks", text: "노크" },
+  { fixture: "card_knock_single", kind: "has", text: "안 보냄" },
   { fixture: "card_knock_single", kind: "lacks", text: "보내지 않은 이유: 기타 이유" }, // 텍스트 조각 완전 일치 — 문장 전체로
+  { fixture: "card_knock_sent", kind: "has", text: "노크" },
+  { fixture: "card_knock_sent", kind: "lacks", text: "한 번 난 소리" },
+  { fixture: "card_knock_low", kind: "has", text: "노크" },
+  { fixture: "card_knock_low", kind: "has", text: "보내지 않은 이유: 확실하지 않은 소리" },
+  { fixture: "card_knock_low", kind: "lacks", text: "한 번 난 소리" },
+  { fixture: "card_knock_low", kind: "lacks", text: "노크는 보통 여러 번 두드려서, 한 번만 난 소리는 알리지 않아요." },
+  { fixture: "card_token_fail", kind: "lacks", text: "한 번 난 소리" },
+  { fixture: "card_meta", kind: "has", text: "한번=한 번 난 소리 | text-foreground-secondary bg-foreground-secondary/10 bg-foreground-secondary | 문" },
+  { fixture: "card_meta", kind: "has", text: "노크발송=노크 | text-lp-amber bg-warning/10 bg-warning | 문" },
+  { fixture: "card_meta", kind: "has", text: "노크저신뢰=노크 | text-lp-amber bg-warning/10 bg-warning | 문" },
   // B10 화재 모션 창
   { fixture: "fire_window", kind: "has", text: "10분=창 안" },
   { fixture: "fire_window", kind: "has", text: "10분1ms=창 밖" },
@@ -776,7 +825,7 @@ const ASSERTIONS = [
   { fixture: "help", kind: "has", text: "카카오톡 알림은 어디로 오나요?" },
   { fixture: "help", kind: "has", text: "카카오톡 ‘나와의 채팅’ 방으로 와요. 휴대폰 잠금 화면에는 알림이 뜨지 않을 수 있어서, 그 방을 열어 두거나 이 화면을 함께 확인해 주세요." },
   { fixture: "help", kind: "has", text: "소리가 났는데 알림이 안 왔어요." },
-  { fixture: "help", kind: "has", text: "확실하지 않은 소리, 현관 앞에 사람이 없어 보인 초인종·노크 소리, 등록한 초인종과 많이 다른 소리, 알림 대상이 아닌 기타 소리는 보내지 않아요. 알림 화면에서 보내지 않은 기록과 이유를 볼 수 있고, 통계 화면의 ‘오늘 보내지 않은 이유’에서 하루 합계를 볼 수 있어요." },
+  { fixture: "help", kind: "has", text: "확실하지 않은 소리, 현관 앞에 사람이 없어 보인 초인종·노크 소리, 등록한 초인종과 많이 다른 소리, 한 번만 난 노크 같은 소리, 알림 대상이 아닌 기타 소리는 보내지 않아요. 알림 화면에서 보내지 않은 기록과 이유를 볼 수 있고, 통계 화면의 ‘오늘 보내지 않은 이유’에서 하루 합계를 볼 수 있어요." },
   { fixture: "help", kind: "has", text: "화면이 잘 안 보여요." },
   { fixture: "help", kind: "has", text: "설정 화면에서 ‘글씨 크게’와 ‘어두운 화면’을 켜면 더 편하게 볼 수 있어요." },
   { fixture: "help_copy_match", kind: "has", text: "F3일수=일치" },
