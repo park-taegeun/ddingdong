@@ -45,7 +45,7 @@ export const CLASS_META: Record<PredictedClass, ClassMeta> = {
   // 알림 대상이 아닌 소리(33.13(a)) — 경보 톤을 피해 기존 중립 토큰(foreground-secondary
   // = chart-5)만 쓴다. 아이콘은 기존 lucide 세트의 일반 "소리" 기호.
   other: {
-    label: "기타 소리",
+    label: "생활 소음",
     icon: AudioLines,
     iconColor: "text-foreground-secondary",
     bgColor: "bg-foreground-secondary/10",
