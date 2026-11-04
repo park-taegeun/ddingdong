@@ -70,8 +70,11 @@ constexpr int32_t AUTO_TRIG_SCAN_MARGIN = AUTO_TRIG_MASK_HALF + AUTO_TRIG_MAX_RU
 static_assert(AUTO_TRIG_SCAN_MARGIN <= AUTO_TRIG_BUF_SAMPLES, "이웃 훑기 폭은 한 버퍼 이내");
 
 // ── 불응기 = 5,000ms → 79버퍼 (16:21 결정 1, 발화 기준 = 17:05 결정) ────────────
-// 근거: 6.1 rate limit = 같은 device 5초당 1회(넘으면 429). 오프라인 규칙 = 트리거 버퍼 끝 시각이
+// 근거(작성 당시): 6.1 rate limit = 같은 device 5초당 1회(넘으면 429). 오프라인 규칙 = 트리거 버퍼 끝 시각이
 //   직전 트리거 끝 + 5000ms 이하이면 차단 → 버퍼 차 d 가 d·64 ≤ 5000 ⇔ d ≤ 78 이면 차단, 79(5,056ms)부터 허용.
+// 현재값: 서버 rate limit = 2.5초(2026-11-04 · PR #155 · 6.1 현재값 줄). 불응기 5,000ms 는 그대로다.
+//   서버 테스트 DeviceRateLimitTest.test_t2_limit_fits_board_refractory 가 이 헤더를 읽어
+//   「한도 + 여유 2,500ms ≤ 보드 불응기」를 지킨다 → 불응기를 줄이면 그 테스트가 먼저 FAIL 한다.
 // 발화 기준: 무시된(처리 중 · 링 미충전 등) 발화도 불응기를 시작시킨다 = 오프라인 규칙과 같다(교차 대조 (b)).
 //   대가 = 이벤트 처리가 끝난 직후 최대 5초 동안 새 사건(노크 · 벨)을 놓칠 수 있다.
 // 재판정 트리거: ④런타임 또는 부스 리허설에서 이벤트 직후 노크 · 벨 놓침이 관측될 때.

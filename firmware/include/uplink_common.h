@@ -47,7 +47,8 @@ constexpr const char* UPLINK_BOUNDARY          = "ddingdongMicUplinkBoundary5C1E
 constexpr const char* UPLINK_AUDIO_FIELD       = "audio";
 constexpr const char* UPLINK_AUDIO_CONTENT_TYPE = "application/octet-stream";
 
-// device_id 는 rate limit 키다(5초당 1회, decisions.md 6.3(l) ④). upload_spike 하네스와
+// device_id 는 rate limit 키다(서버 DEVICE_RATE_LIMIT_SECONDS — 2026-11-04부터 2.5초당 1회(PR #155),
+// 작성 당시 5초 · decisions.md 6.3(l) ④ · 6.1 현재값 줄). upload_spike 하네스와
 // 같은 값을 쓰면 두 env가 서로의 429를 유발하므로 분리한다(하네스가 분리한 것과 동형).
 constexpr const char* UPLINK_DEVICE_ID = "ddingdong-mic-uplink-001";
 
