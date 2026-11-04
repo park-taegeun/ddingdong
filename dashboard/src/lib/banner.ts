@@ -5,7 +5,7 @@ import type { NotificationItem } from "@/types/notification"
 
 export type BannerKind = "server" | "device" | "kakao"
 
-// 「발송 시도」 행 = 1차 카톡을 보냈거나 보내려다 실패한 행. 의도된 차단(기타 소리 · 신뢰도 · ToF · 등록)은
+// 「발송 시도」 행 = 1차 카톡을 보냈거나 보내려다 실패한 행. 의도된 차단(생활 소음 · 신뢰도 · ToF · 등록)은
 // 시도가 아니다. 띠의 카톡 실패 판정과 새 알림 표식(lib/unread.ts)이 같은 정의를 쓴다.
 export function isSendAttempt(n: NotificationItem): boolean {
   const s = n.notification_status

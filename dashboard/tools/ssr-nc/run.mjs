@@ -313,7 +313,7 @@ const CASES = [
     anchor: "if (s.skip_reason && KAKAO_FAILURE_REASONS.has(s.skip_reason)) return true",
     patch: "if (false) return true",
   },
-  // 전역 경고 띠 — 의도된 차단 행은 건너뛰고 첫 발송 시도 행을 본다. 결함 = 맨 위 행만 보면 실패 뒤 기타 소리
+  // 전역 경고 띠 — 의도된 차단 행은 건너뛰고 첫 발송 시도 행을 본다. 결함 = 맨 위 행만 보면 실패 뒤 생활 소음
   // 한 건이 띠를 지운다. 함정: 실패 행이 맨 위인 입력만 보면 같다 — 차단 뒤 실패 입력을 단언한다.
   {
     id: "NC-G3",
@@ -373,12 +373,12 @@ const CASES = [
     anchor: '(cls === "all" || n.predicted_class === cls)',
     patch: "true",
   },
-  // 새 알림 — 발송 시도 행만 센다. 결함 = 조건이 빠지면 기타 소리 · 차단 행도 「새」가 되어 탭 제목이 부푼다.
+  // 새 알림 — 발송 시도 행만 센다. 결함 = 조건이 빠지면 생활 소음 · 차단 행도 「새」가 되어 탭 제목이 부푼다.
   // 함정: 확인 시각 뒤에 차단 행이 없으면 결과가 같다 — 픽스처의 기타 차단 행(10시)이 9시 확인보다 뒤다.
   {
     id: "NC-E1a",
     file: SRC.unread,
-    desc: "새 알림에 차단 행 섞기 — 9시 확인 뒤 기타 소리가 '새' (새 알림 표식)",
+    desc: "새 알림에 차단 행 섞기 — 9시 확인 뒤 생활 소음이 '새' (새 알림 표식)",
     anchor: "isSendAttempt(n) && ",
     patch: "",
   },
@@ -441,21 +441,31 @@ const CASES = [
     anchor: "{r.failure ? (",
     patch: "{false ? (",
   },
-  // 기타 소리 한 줄 — 줄이는 것은 기타 소리뿐. 결함 = 화재까지 줄이면 대응 수칙이 접힌 채 지나간다.
+  // 생활 소음 한 줄 — 줄이는 것은 생활 소음뿐. 결함 = 화재까지 줄이면 대응 수칙이 접힌 채 지나간다.
   {
     id: "NC-E5",
     file: SRC.list,
-    desc: "화재 행도 한 줄로 — '화재 시 대응 수칙' 없음 (기타 소리 축약)",
+    desc: "화재 행도 한 줄로 — '화재 시 대응 수칙' 없음 (생활 소음 축약)",
     anchor: 'collapseOther && n.predicted_class === "other" ? (',
     patch: 'collapseOther && (n.predicted_class === "other" || n.predicted_class === "fire_alarm") ? (',
   },
-  // 기타 소리 한 줄 — 숨기지 않는다(33.17(f)①). 결함 = 줄이는 대신 빼면 목록에서 기타 소리가 사라진다.
+  // 생활 소음 한 줄 — 숨기지 않는다(33.17(f)①). 결함 = 줄이는 대신 빼면 목록에서 생활 소음이 사라진다.
   {
     id: "NC-E5b",
     file: SRC.list,
-    desc: "기타 소리 행 숨김 — '기타 소리' · '알림 안 보냄' 없음 (33.17(f)①)",
+    desc: "생활 소음 행 숨김 — '생활 소음' · '알림 안 보냄' 없음 (33.17(f)①)",
     anchor: "<OtherRow key={n.request_id} notification={n} />",
     patch: "null",
+  },
+  // other 표시 이름 = 「생활 소음」(2026-11-04 사용자 결정 — 「기타」는 악기로 읽힐 수 있다). 결함 = 기각된 옛 이름으로
+  // 되돌리면 필터 버튼 · 알림 한 줄에 옛 이름이 뜬다. 함정: FAQ 문장에도 「생활 소음」이 있지만 단언은 텍스트 조각
+  // 전체 일치라 help 픽스처는 이 변형에 반응하지 않는다 — 검출은 filter_bar · list_collapse 단언이 맡는다.
+  {
+    id: "NC-L1",
+    file: SRC.meta,
+    desc: "other 표시 이름을 옛 이름 '기타 소리'로 — '생활 소음' 없음 (필터 버튼 · 알림 한 줄)",
+    anchor: '    label: "생활 소음",',
+    patch: '    label: "기타 소리",',
   },
   // 자막 없음 표시 — 사진이 없으면(1차만 · 사진 보내는 중) 뜨면 안 된다. 결함 = 처리 중에 「없어요」로 단정.
   {
@@ -540,7 +550,7 @@ const CASES = [
     id: "NC-H1",
     file: SRC.help,
     desc: "FAQ '알림이 안 왔어요' 문답 삭제 (도움말 FAQ)",
-    anchor: "  {\n    q: \"소리가 났는데 알림이 안 왔어요.\",\n    a: \"확실하지 않은 소리, 현관 앞에 사람이 없어 보인 초인종·노크 소리, 등록한 초인종과 많이 다른 소리, 한 번만 난 노크 같은 소리, 알림 대상이 아닌 기타 소리는 보내지 않아요. 알림 화면에서 보내지 않은 기록과 이유를 볼 수 있고, 통계 화면의 ‘오늘 보내지 않은 이유’에서 하루 합계를 볼 수 있어요.\",\n  },\n",
+    anchor: "  {\n    q: \"소리가 났는데 알림이 안 왔어요.\",\n    a: \"확실하지 않은 소리, 현관 앞에 사람이 없어 보인 초인종·노크 소리, 등록한 초인종과 많이 다른 소리, 한 번만 난 노크 같은 소리, 알림 대상이 아닌 생활 소음은 보내지 않아요. 알림 화면에서 보내지 않은 기록과 이유를 볼 수 있고, 통계 화면의 ‘오늘 보내지 않은 이유’에서 하루 합계를 볼 수 있어요.\",\n  },\n",
     patch: "",
   },
   // 사진 보관 일 수는 상수에서 만든다. 결함 = 손 숫자. 함정: 손 숫자가 지금 상수와 같은 3이면 렌더가 같아 못 잡는다
@@ -733,7 +743,7 @@ const ASSERTIONS = [
   { fixture: "filter_bar", kind: "has", text: "초인종" },
   { fixture: "filter_bar", kind: "has", text: "노크" },
   { fixture: "filter_bar", kind: "has", text: "화재경보" },
-  { fixture: "filter_bar", kind: "has", text: "기타 소리" },
+  { fixture: "filter_bar", kind: "has", text: "생활 소음" },
   { fixture: "filter_bar", kind: "has", text: "보낸 알림만" },
   { fixture: "filter_empty", kind: "has", text: "불러온 알림 중에는 맞는 알림이 없어요" },
   { fixture: "filter_empty", kind: "has", text: "필터 해제" },
@@ -779,10 +789,10 @@ const ASSERTIONS = [
   { fixture: "skip_no_fail_class", kind: "lacks", text: "lucide-triangle-alert" },
   { fixture: "skip_zero", kind: "has", text: "오늘은 보내지 않은 알림이 없어요." },
   { fixture: "skip_zero", kind: "lacks", text: "모두 0건" },
-  // 기타 소리 한 줄
+  // 생활 소음 한 줄
   { fixture: "list_collapse", kind: "has", text: "화재 시 대응 수칙" },
   { fixture: "list_collapse", kind: "has", text: "초인종" },
-  { fixture: "list_collapse", kind: "has", text: "기타 소리" },
+  { fixture: "list_collapse", kind: "has", text: "생활 소음" },
   { fixture: "list_collapse", kind: "has", text: "알림 안 보냄" },
   { fixture: "list_collapse", kind: "lacks", text: "보내지 않은 이유: 알림 대상이 아닌 소리" },
   // 자막 없음 표시 — ① 사진 있음 + 자막 없음 = 두 문장 ② 자막 있음 = 0 ③ 사진 없음 = 0
@@ -825,7 +835,7 @@ const ASSERTIONS = [
   { fixture: "help", kind: "has", text: "카카오톡 알림은 어디로 오나요?" },
   { fixture: "help", kind: "has", text: "카카오톡 ‘나와의 채팅’ 방으로 와요. 휴대폰 잠금 화면에는 알림이 뜨지 않을 수 있어서, 그 방을 열어 두거나 이 화면을 함께 확인해 주세요." },
   { fixture: "help", kind: "has", text: "소리가 났는데 알림이 안 왔어요." },
-  { fixture: "help", kind: "has", text: "확실하지 않은 소리, 현관 앞에 사람이 없어 보인 초인종·노크 소리, 등록한 초인종과 많이 다른 소리, 한 번만 난 노크 같은 소리, 알림 대상이 아닌 기타 소리는 보내지 않아요. 알림 화면에서 보내지 않은 기록과 이유를 볼 수 있고, 통계 화면의 ‘오늘 보내지 않은 이유’에서 하루 합계를 볼 수 있어요." },
+  { fixture: "help", kind: "has", text: "확실하지 않은 소리, 현관 앞에 사람이 없어 보인 초인종·노크 소리, 등록한 초인종과 많이 다른 소리, 한 번만 난 노크 같은 소리, 알림 대상이 아닌 생활 소음은 보내지 않아요. 알림 화면에서 보내지 않은 기록과 이유를 볼 수 있고, 통계 화면의 ‘오늘 보내지 않은 이유’에서 하루 합계를 볼 수 있어요." },
   { fixture: "help", kind: "has", text: "화면이 잘 안 보여요." },
   { fixture: "help", kind: "has", text: "설정 화면에서 ‘글씨 크게’와 ‘어두운 화면’을 켜면 더 편하게 볼 수 있어요." },
   { fixture: "help_copy_match", kind: "has", text: "F3일수=일치" },

@@ -1,4 +1,4 @@
-// 알림 클래스 4종(알림 대상 3종 + other) 메타데이터 — 초인종/노크/화재경보/기타 소리 분기 DRY 단일 출처.
+// 알림 클래스 4종(알림 대상 3종 + other) 메타데이터 — 초인종/노크/화재경보/생활 소음 분기 DRY 단일 출처.
 // NotificationCard / ClassDistributionCard / 차트 등에서 공통 참조.
 
 import { AudioLines, Bell, DoorClosed, Flame } from "lucide-react"
@@ -45,7 +45,7 @@ export const CLASS_META: Record<PredictedClass, ClassMeta> = {
   // 알림 대상이 아닌 소리(33.13(a)) — 경보 톤을 피해 기존 중립 토큰(foreground-secondary
   // = chart-5)만 쓴다. 아이콘은 기존 lucide 세트의 일반 "소리" 기호.
   other: {
-    label: "기타 소리",
+    label: "생활 소음",
     icon: AudioLines,
     iconColor: "text-foreground-secondary",
     bgColor: "bg-foreground-secondary/10",
@@ -56,7 +56,7 @@ export const CLASS_META: Record<PredictedClass, ClassMeta> = {
 
 // 카드 표시용 메타 — 제목 = 최종 판단. 노크 단일 타격 차단(knock_single_hit) 행은 모델 예측이 노크여도
 // 최종 판단이 「노크 아님」이라, 제목을 노크로 두면 뱃지 「안 보냄」과 서로 반대 말이 된다
-// (2026-11-03 사용자 결정). 아이콘은 노크와 같은 문 · 색 3종만 기타 소리의 중립 토큰(새 토큰 0).
+// (2026-11-03 사용자 결정). 아이콘은 노크와 같은 문 · 색 3종만 생활 소음의 중립 토큰(새 토큰 0).
 // 조건 = 사유 하나: 서버가 이 사유를 예측 노크 + 발송 판정 건에만 붙인다(server/app/knock_gate.py).
 // 필터 · 통계 클래스 분포 · announcer 는 예측 기준 CLASS_META 를 그대로 쓴다(이 행은 「노크」 필터에 보인다).
 const KNOCK_SINGLE_HIT_LABEL = "한 번 난 소리"
