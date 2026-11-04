@@ -7,7 +7,7 @@ API 가 내보내는 상태 코드:
   401 Unauthorized    Device / Dashboard 토큰 검증 실패
   404 Not Found       존재하지 않는 request_id / 라우트
   409 Conflict        이미 처리된 알림에 대한 enrich 재요청 / 수집 중·등록 완료 상태에서 등록 시작
-  429 Too Many Requests  device 5초당 1회 초과 (Retry-After 헤더)
+  429 Too Many Requests  device 2.5초당 1회 초과 (Retry-After 헤더)
   500 Internal Server Error  예기치 못한 서버 오류
 """
 

@@ -7,8 +7,22 @@ from datetime import timedelta, timezone
 # inference.constants.CLASSES 의 리터럴 복제 — 두 값의 일치는 회귀 스위트가 매 실행 대조한다.
 PREDICTED_CLASSES = ("doorbell", "knock", "fire_alarm", "other")
 
-# 카테고리 6.1: device_id 5초당 1회 (초과 시 429 + Retry-After)
-DEVICE_RATE_LIMIT_SECONDS = 5
+# 카테고리 6.1: device_id 2.5초당 1회 (초과 시 429 + Retry-After) — ★ 잠정.
+# 값 2.5 = 사용자 결정 2026-11-04(5초 → 2.5초). 서버는 본문 업로드가 끝난 뒤 시각을 찍으므로
+#   서버가 보는 간격 = 보드 발화 간격 − (직전 업로드 시간 − 이번 업로드 시간)이다. 보드 자동 트리거
+#   불응기(firmware/include/auto_trig.h, 79버퍼 = 5,056 ms)와 5초가 56 ms 차이로 붙어 있어
+#   직전 업로드가 늦으면 정당한 감지가 429 로 버려졌다.
+# 산술(2026-11-03 시연 보드 monitor.log, 429 33건): 간격 하한 = 발화 간격 − (직전 rtt − 이번 rtt).
+#   간격 하한 최솟값 3,026 ms · 모형 오차 ≥ 26 ms(5초 조건식과 실제 429가 1건에서 26 ms 어긋남).
+#   한도별 「반드시 통과」 = 5초 1/33 · 4초 22/33 · 3.5초 28/33 · 3초 33/33(여유 26 ms = 모형 오차와
+#   같은 크기라 기각) · 2.5초 33/33(여유 526 ms). 4초는 11건이 남아 기각.
+# 역할: 보드는 불응기 5,056 ms + 직렬 loop 라 원래 이보다 자주 못 보낸다 → 이 값은 고장 난 기기의
+#   연타를 막는 안전장치다. 근본 원인(시각을 찍는 위치)은 고치지 않았다.
+# 재판정 트리거: ① 보드 불응기 값이 바뀔 때 ② 수동 's' 펌웨어로 운영할 때 ③ 다중 워커 배포
+#   ④ 2.5초로도 망 지연 429 가 관측될 때.
+# float 다. 소비처 = rate_limit.check_and_register(Retry-After 는 정수 초로 올림) ·
+#   routes.detect 429 메시지(「2.5초당 1회만」).
+DEVICE_RATE_LIMIT_SECONDS = 2.5
 
 # 카테고리 6.1: idempotency_keys 24시간 TTL
 IDEMPOTENCY_TTL = timedelta(hours=24)
@@ -374,7 +388,7 @@ REGISTRATION_GUARD_MIN = 1
 REGISTRATION_TARGET_COUNT_MAX = 10
 
 # 수집 만료 상한 600초(10분).
-# 산술: 10회 × rate limit 5초(DEVICE_RATE_LIMIT_SECONDS) = 50초가 물리적 최소다. 사람이
+# 산술: 10회 × rate limit 2.5초(DEVICE_RATE_LIMIT_SECONDS) = 25초가 물리적 최소다. 사람이
 #   벨 앞으로 오가는 여유를 둬도 10분이면 충분하다. 목적 = 방치된 수집 모드가 무관한
 #   소리를 템플릿으로 빨아들이지 않게 하는 것.
 # 재판정 트리거: 목표 개수 상한이 바뀔 때 / 벨 녹음 뒤 실제 등록 동선을 잴 때.

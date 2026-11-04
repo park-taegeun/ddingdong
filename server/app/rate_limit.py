@@ -1,4 +1,4 @@
-"""device_id 단위 rate limit (카테고리 6.1: 5초당 1회).
+"""device_id 단위 rate limit (카테고리 6.1: 2.5초당 1회 — 값 근거는 constants.py).
 
 Phase 2-1 로컬 단일 프로세스 전제의 in-memory 구현이다.
 11주차 다중 워커(Gunicorn) 배포 시에는 Redis 등 공유 저장소로 교체해야 한다.
@@ -15,7 +15,7 @@ _lock = Lock()
 
 
 def check_and_register(device_id):
-    """허용이면 None, 초과면 Retry-After 초(int, >=1) 반환.
+    """허용이면 None, 초과면 Retry-After 초(int, >=1, 남은 시간 이상으로 올림) 반환.
 
     차단된 요청은 타이머를 갱신하지 않는다(고정 윈도우).
     """

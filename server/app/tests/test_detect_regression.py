@@ -376,7 +376,7 @@ class DetectRegressionTest(_NoNetworkTestCase):
         first = self._detect("regr-order-1", dev)
         self.assertEqual(first.status_code, 201)
 
-        blocked = self._detect("regr-order-2", dev)  # 새 키 + 5초 이내 → rate limit
+        blocked = self._detect("regr-order-2", dev)  # 새 키 + 한도 이내 → rate limit
         self.assertEqual(blocked.status_code, 429)
         self.assertIn("Retry-After", blocked.headers)
 
@@ -3333,6 +3333,69 @@ class TofStructureConstantsMatchFirmwareTest(_NoNetworkTestCase):
                     "firmware/include/tof_common.h 와 server/app/constants.py 를 같이 고친다",
                 )
 
+
+class DeviceRateLimitTest(_NoNetworkTestCase):
+    """rate limit 경계(T1)와 보드 불응기 대조(T2). 값 근거 = constants.DEVICE_RATE_LIMIT_SECONDS 주석."""
+
+    AUTO_TRIG_HEADER = Path(__file__).resolve().parents[3] / "firmware" / "include" / "auto_trig.h"
+    # 여유 2,500 ms 근거(2026-11-03 시연 보드 monitor.log 429 33건 산술):
+    #   관측 최대 압축 = 5,056 − 간격 하한 최솟값 3,026 = 2,030 ms + 모형 오차 26 ms = 2,056 ms → 반올림 2,500.
+    #   한도 2,500 + 2,500 = 5,000 ≤ 5,056. 한도 3초(5,500) · 4초 · 5초는 FAIL 한다.
+    MARGIN_MS = 2500
+
+    def _check_at(self, device_id, elapsed):
+        """t0 에 한 번 허용시킨 뒤 t0 + elapsed 에서의 check_and_register 결과."""
+        from types import SimpleNamespace
+
+        from .. import rate_limit
+
+        clock = SimpleNamespace(t=1000.0)
+        # 모듈의 time 이름만 바꾼다 — 전역 time.monotonic 은 건드리지 않는다.
+        with mock.patch.object(rate_limit, "time", SimpleNamespace(monotonic=lambda: clock.t)):
+            self.assertIsNone(rate_limit.check_and_register(device_id))
+            clock.t += elapsed
+            return rate_limit.check_and_register(device_id)
+
+    def test_t1_boundary(self) -> None:
+        from .. import constants
+
+        limit = constants.DEVICE_RATE_LIMIT_SECONDS
+        for i, elapsed in enumerate((0.0, limit - 0.001)):
+            with self.subTest(elapsed=elapsed):
+                retry = self._check_at(f"rl-t1-block-{i}", elapsed)
+                self.assertIsInstance(retry, int)
+                self.assertGreaterEqual(retry, 1)
+                self.assertGreaterEqual(retry, limit - elapsed)  # 남은 시간보다 짧게 알려 주지 않는다
+        for i, elapsed in enumerate((limit, 5.056)):  # 정확히 한도 = 허용 · 보드 최소 간격 = 허용
+            with self.subTest(elapsed=elapsed):
+                self.assertIsNone(self._check_at(f"rl-t1-allow-{i}", elapsed))
+
+    def test_t2_limit_fits_board_refractory(self) -> None:
+        from .. import constants
+
+        text = self.AUTO_TRIG_HEADER.read_text(encoding="utf-8")
+
+        def one(pattern, what):
+            found = re.findall(pattern, text, re.M)
+            self.assertEqual(len(found), 1, f"auto_trig.h {what} {len(found)}건 — 정확히 1건이어야 한다")
+            return found[0]
+
+        refr_ms = int(one(r"^\s*constexpr\s+uint32_t\s+AUTO_TRIG_REFRACTORY_MS\s*=\s*(\d+)\s*;", "REFRACTORY_MS"))
+        buf_ms = int(one(r"^\s*constexpr\s+uint32_t\s+AUTO_TRIG_BUF_MS\s*=\s*(\d+)\s*;", "BUF_MS"))
+        # 헤더 식이 바뀌면 아래 계산이 헤더와 어긋나므로 정의 줄 글자도 대조한다.
+        one(
+            r"^\s*constexpr\s+uint32_t\s+(AUTO_TRIG_REFRACTORY_BUFS)\s*=\s*"
+            r"AUTO_TRIG_REFRACTORY_MS\s*/\s*AUTO_TRIG_BUF_MS\s*\+\s*1\s*;",
+            "REFRACTORY_BUFS 정의(MS / BUF_MS + 1)",
+        )
+        board_ms = (refr_ms // buf_ms + 1) * buf_ms
+        self.assertEqual(board_ms, 5056, "보드 불응기가 바뀌었다 — DEVICE_RATE_LIMIT_SECONDS 재판정 트리거 ①")
+        self.assertLessEqual(
+            constants.DEVICE_RATE_LIMIT_SECONDS * 1000 + self.MARGIN_MS,
+            board_ms,
+            f"한도 {constants.DEVICE_RATE_LIMIT_SECONDS}초 + 여유 {self.MARGIN_MS} ms > 보드 불응기 {board_ms} ms — "
+            "정당한 감지가 429 로 버려진다(2026-11-03 산술, constants.py 주석)",
+        )
 
 
 class DashboardPageLimitMatchesServerTest(_NoNetworkTestCase):

@@ -210,7 +210,11 @@ def token_key_rows(env_text, environ):
 
 def child_env_overrides(mode, tunnel_url, run_dir, model_path):
     """모드별 서버 자식 환경 덮어쓰기. 값 None = 상속 환경에서 지운다."""
-    o = {"FLASK_APP": "app", ENV_MODEL_PATH: str(model_path), "PYTHONDONTWRITEBYTECODE": "1"}
+    o = {"FLASK_APP": "app", ENV_MODEL_PATH: str(model_path), "PYTHONDONTWRITEBYTECODE": "1",
+         # debug 기동 금지(33.45(g)): debug면 /detect 보수 최악 890 B > 보드 버퍼 767 B(33.37(e)).
+         # None(지우기)이 아니라 "0" — 지우면 flask run 의 load_dotenv 가 .env · .flaskenv 값으로 다시 채운다.
+         "FLASK_DEBUG": "0",
+         }
     if mode == "dry":
         o.update({k: "" for k in SILENCED_KEYS})
         o[ENV_DB] = "sqlite:///" + str(Path(run_dir) / "ddingdong.db")
@@ -678,6 +682,9 @@ def _body_checks(tmp, secret):
                      live[ENV_CAPTURE_URL_BASE] == "https://a-b.trycloudflare.com/captures", "슬래시 중복 없음")
     ok &= _check("live 6키 덮지 않음(문자열 주입 0)", all(live.get(k) is None for k in SILENCED_KEYS), "")
     ok &= _check("live 셸 빈 값 제거 → .env 가 이김", not any(k in apply_overrides(shell, live) for k in SILENCED_KEYS), "")
+    for m, ov in (("dry", dry), ("live", live)):
+        ok &= _check(f"{m} FLASK_DEBUG = \"0\"", ov.get("FLASK_DEBUG") == "0", "debug 기동 금지")
+        ok &= _check(f"{m} 셸 FLASK_DEBUG=1 → 0", apply_overrides({"FLASK_DEBUG": "1"}, ov)["FLASK_DEBUG"] == "0", "")
     ok &= _check("dry 적용 결과 6키 빈 값", all(apply_overrides({k: "x" for k in SILENCED_KEYS}, dry)[k] == ""
                                               for k in SILENCED_KEYS), "")
     try:

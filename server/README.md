@@ -78,7 +78,7 @@ server/
     utils.py          # KST 시간 / ULID / 예측 정책 / mock ML
     errors.py         # 통일 JSON 에러
     auth.py           # Device / Dashboard Bearer Token 데코레이터
-    rate_limit.py     # device_id 5초당 1회 (in-memory)
+    rate_limit.py     # device_id 2.5초당 1회 (in-memory)
     models.py         # Notification / IdempotencyKey / KakaoToken /
                       #   RegistrationState / RegistrationTemplate / RegistrationMatch /
                       #   RegistrationFailure / DeviceHeartbeat
