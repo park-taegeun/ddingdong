@@ -28,7 +28,7 @@ interface NotificationListProps {
   groupByDay?: boolean
   // 이 시각보다 뒤에 감지된 발송 시도 행에 「새 알림」 표식(lib/unread.ts). 없으면 표식 0.
   newSince?: number
-  // 기타 소리 행을 한 줄로 줄인다(누르면 펼침) — 알림 화면만. 홈은 현행.
+  // 생활 소음 행을 한 줄로 줄인다(누르면 펼침) — 알림 화면만. 홈은 현행.
   collapseOther?: boolean
 }
 
@@ -73,7 +73,7 @@ export function NotificationList({
 
   const items = limit ? notifications.slice(0, limit) : notifications
   const isNew = (n: NotificationItem) => newSince !== undefined && isNewNotification(n, newSince)
-  // 줄이는 것은 기타 소리뿐 — 화재 · 초인종 · 노크는 늘 전체 카드다.
+  // 줄이는 것은 생활 소음뿐 — 화재 · 초인종 · 노크는 늘 전체 카드다.
   const row = (n: NotificationItem) =>
     collapseOther && n.predicted_class === "other" ? (
       <OtherRow key={n.request_id} notification={n} />
@@ -98,7 +98,7 @@ export function NotificationList({
   )
 }
 
-// 기타 소리 한 줄(감사 UX-D29) — 숨기지 않고(33.17(f)①) 줄여 보인다. 누르면 원래 카드가 아래에 펼쳐진다.
+// 생활 소음 한 줄(감사 UX-D29) — 숨기지 않고(33.17(f)①) 줄여 보인다. 누르면 원래 카드가 아래에 펼쳐진다.
 // 펼침 상태 = 행마다(key = request_id라 폴링에도 유지) · 화면을 나가면 다시 접힌다.
 function OtherRow({ notification }: { notification: NotificationItem }) {
   const [open, setOpen] = useState(false)

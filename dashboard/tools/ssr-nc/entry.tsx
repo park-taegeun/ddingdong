@@ -410,7 +410,7 @@ export const output: Record<string, string> = {
   // 대조 — 예측 노크 발송 · 예측 노크 저신뢰 미발송은 제목 「노크」 그대로(덮어쓰기는 knock_single_hit 하나만)
   card_knock_sent: card(item("knock", "2020-01-01T09:00:00.000+09:00", status(true, false, "skipped", null))),
   card_knock_low: card(item("knock", "2020-01-01T09:00:00.000+09:00", status(false, false, "skipped", null, "low_confidence"))),
-  // 카드 메타 색 · 아이콘(SSR 라벨 축 밖이라 순수 함수 결과를 글자로) — 한 번 난 소리 = 기타 소리 중립 색 · 노크 아이콘
+  // 카드 메타 색 · 아이콘(SSR 라벨 축 밖이라 순수 함수 결과를 글자로) — 한 번 난 소리 = 생활 소음 중립 색 · 노크 아이콘
   card_meta: renderToStaticMarkup(
     <ul>
       {(
@@ -523,7 +523,7 @@ export const output: Record<string, string> = {
   skip_no_fail_class: classTokens(renderToStaticMarkup(<SkipReasonsCard counts={{ ...SKIP_ZERO, not_target: 2 }} />)),
   skip_zero: renderToStaticMarkup(<SkipReasonsCard counts={SKIP_ZERO} />),
   skip_knock: renderToStaticMarkup(<SkipReasonsCard counts={{ ...SKIP_ZERO, knock_single_hit: 1 }} />),
-  // 기타 소리 한 줄 — 화재 · 초인종은 전체 카드, 기타 소리는 한 줄(숨김 0 · 기본 접힘)
+  // 생활 소음 한 줄 — 화재 · 초인종은 전체 카드, 생활 소음은 한 줄(숨김 0 · 기본 접힘)
   list_collapse: renderToStaticMarkup(
     <SettingsProvider>
       <NotificationList

@@ -313,7 +313,7 @@ const CASES = [
     anchor: "if (s.skip_reason && KAKAO_FAILURE_REASONS.has(s.skip_reason)) return true",
     patch: "if (false) return true",
   },
-  // 전역 경고 띠 — 의도된 차단 행은 건너뛰고 첫 발송 시도 행을 본다. 결함 = 맨 위 행만 보면 실패 뒤 기타 소리
+  // 전역 경고 띠 — 의도된 차단 행은 건너뛰고 첫 발송 시도 행을 본다. 결함 = 맨 위 행만 보면 실패 뒤 생활 소음
   // 한 건이 띠를 지운다. 함정: 실패 행이 맨 위인 입력만 보면 같다 — 차단 뒤 실패 입력을 단언한다.
   {
     id: "NC-G3",
@@ -373,7 +373,7 @@ const CASES = [
     anchor: '(cls === "all" || n.predicted_class === cls)',
     patch: "true",
   },
-  // 새 알림 — 발송 시도 행만 센다. 결함 = 조건이 빠지면 기타 소리 · 차단 행도 「새」가 되어 탭 제목이 부푼다.
+  // 새 알림 — 발송 시도 행만 센다. 결함 = 조건이 빠지면 생활 소음 · 차단 행도 「새」가 되어 탭 제목이 부푼다.
   // 함정: 확인 시각 뒤에 차단 행이 없으면 결과가 같다 — 픽스처의 기타 차단 행(10시)이 9시 확인보다 뒤다.
   {
     id: "NC-E1a",
@@ -441,7 +441,7 @@ const CASES = [
     anchor: "{r.failure ? (",
     patch: "{false ? (",
   },
-  // 기타 소리 한 줄 — 줄이는 것은 기타 소리뿐. 결함 = 화재까지 줄이면 대응 수칙이 접힌 채 지나간다.
+  // 생활 소음 한 줄 — 줄이는 것은 생활 소음뿐. 결함 = 화재까지 줄이면 대응 수칙이 접힌 채 지나간다.
   {
     id: "NC-E5",
     file: SRC.list,
@@ -449,7 +449,7 @@ const CASES = [
     anchor: 'collapseOther && n.predicted_class === "other" ? (',
     patch: 'collapseOther && (n.predicted_class === "other" || n.predicted_class === "fire_alarm") ? (',
   },
-  // 기타 소리 한 줄 — 숨기지 않는다(33.17(f)①). 결함 = 줄이는 대신 빼면 목록에서 기타 소리가 사라진다.
+  // 생활 소음 한 줄 — 숨기지 않는다(33.17(f)①). 결함 = 줄이는 대신 빼면 목록에서 생활 소음이 사라진다.
   {
     id: "NC-E5b",
     file: SRC.list,
@@ -789,7 +789,7 @@ const ASSERTIONS = [
   { fixture: "skip_no_fail_class", kind: "lacks", text: "lucide-triangle-alert" },
   { fixture: "skip_zero", kind: "has", text: "오늘은 보내지 않은 알림이 없어요." },
   { fixture: "skip_zero", kind: "lacks", text: "모두 0건" },
-  // 기타 소리 한 줄
+  // 생활 소음 한 줄
   { fixture: "list_collapse", kind: "has", text: "화재 시 대응 수칙" },
   { fixture: "list_collapse", kind: "has", text: "초인종" },
   { fixture: "list_collapse", kind: "has", text: "생활 소음" },
