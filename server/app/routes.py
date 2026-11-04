@@ -104,7 +104,7 @@ def detect():
         db.session.delete(existing)  # TTL 만료 → 폐기 후 신규 처리
         db.session.flush()
 
-    # 2) rate limit (device_id 5초당 1회) — 통과 전엔 오디오를 읽지 않아 스팸 요청의 디코딩 비용 회피
+    # 2) rate limit (device_id 2.5초당 1회) — 통과 전엔 오디오를 읽지 않아 스팸 요청의 디코딩 비용 회피
     retry_after = rate_limit.check_and_register(device_id)
     if retry_after is not None:
         raise ApiError(
@@ -530,7 +530,7 @@ _FW_PATTERN = re.compile(r"[A-Za-z0-9_]{1,32}")
 @device_auth
 def heartbeat():
     # rate limit 을 부르지 않는다 — /detect 와 같은 device_id 키를 공유하면 heartbeat
-    # 직후 5초 안의 초인종이 429 로 막힌다.
+    # 직후 rate limit 시간(DEVICE_RATE_LIMIT_SECONDS) 안의 초인종이 429 로 막힌다.
     # 필드 5개 전부 필수 · 기본값으로 채우지 않는다(빠지면 400).
     body = request.get_json(silent=True)
     if not isinstance(body, dict):

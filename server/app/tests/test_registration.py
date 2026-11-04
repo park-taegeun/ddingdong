@@ -535,7 +535,7 @@ class _DetectCase(_AppCase):
 
         self._seq += 1
         crid = crid or f"obs-{self._testMethodName}-{self._seq}"
-        # rate limit 이 기기별 5초라 요청마다 device_id 를 바꾼다
+        # rate limit 이 기기별 2.5초라 요청마다 device_id 를 바꾼다
         data = {
             "client_request_id": crid,
             "device_id": f"dev-{self._testMethodName}-{self._seq}",
