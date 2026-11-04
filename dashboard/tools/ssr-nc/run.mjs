@@ -378,7 +378,7 @@ const CASES = [
   {
     id: "NC-E1a",
     file: SRC.unread,
-    desc: "새 알림에 차단 행 섞기 — 9시 확인 뒤 기타 소리가 '새' (새 알림 표식)",
+    desc: "새 알림에 차단 행 섞기 — 9시 확인 뒤 생활 소음이 '새' (새 알림 표식)",
     anchor: "isSendAttempt(n) && ",
     patch: "",
   },
