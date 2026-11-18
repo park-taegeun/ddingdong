@@ -517,7 +517,7 @@ static void runEvent() {
 
   // ── 게이트 (§2-1 ① / ⑤ / 덤) ──────────────────────────────────────────
   const EnrichGate gate = enrichGateFromDetectBody(resp);
-  // "[e2] gate=parsefail sent=4294967295/12" = 38B
+  // "[e2] gate=parsefail sent=4294967295/4294967295" = 46B
   Serial.printf("[e2] gate=%s sent=%u/%u\n", enrichGateName(gate), (unsigned)g_enrichSent,
                 (unsigned)ENRICH_SESSION_MAX_EVENTS);
   if (gate != ENRICH_GATE_PENDING) {
