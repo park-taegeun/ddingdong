@@ -38,7 +38,7 @@
          --label knock --unit a --port 5000
 5) 보드 시리얼 모니터에서 's' → 5초 안에 소리. 보드 로그 `[e2] gate=pending` 뒤 `[e2] e http=201` 이면
    post 저장 완료. 수신기 로그의 take 번호를 확인한다.
-6) 보드 세션 상한 = 2차 12건(ENRICH_SESSION_MAX_EVENTS). 12회마다 보드 물리 리셋 버튼.
+6) 보드 세션 상한(ENRICH_SESSION_MAX_EVENTS) = 2026-11-18 사실상 해제 → 리셋 불필요(옛 값 12 = 12회마다 리셋).
    상한 뒤의 's' 는 pre 만 저장되고 post 가 없다(manifest 에 pre_saved 만 남음).
 """
 
