@@ -30,6 +30,8 @@
   (순서 역전 = **404**, 재처리 = **409** — decisions.md 6.5(b)).
 - 카카오 토큰·NCP 자격증명이 설정돼 있으면 **실발송·실과금이 일어난다**. 세션 상한 12를
   코드가 걸어 두지만, 그 상한은 **부팅마다 리셋**된다(재부팅 = 새 세션).
+  현재값(2026-11-18): 세션 상한은 **사실상 해제**(`0xFFFFFFFFu` · 사용자 결정 — 시연 중 USB 재연결 불가).
+  과금 상한은 이제 서버 NCP 일 · 월 한도뿐이다.
 - 포트 1개만 점유 — 모니터를 켠 채 업로드하지 말 것.
 
 ---
@@ -74,7 +76,7 @@ pio device monitor -e enrich_uplink            # 115200
 [e2] id=e2-89abcdef-1 rms=812 peak=9044
 [e2] stk=2048 psram=7234560 gaps=0 tof_stk=1536
 [e2] d http=201 rtt=1043ms cls=doorbell conf=0.97
-[e2] gate=pending sent=0/12
+[e2] gate=pending sent=0/4294967295
 [e2] cam ms=383/121 len=5438 soi=1
 [e2] e http=200 rtt=2210ms body=169700
 ```
@@ -115,7 +117,7 @@ pio device monitor -e enrich_uplink            # 115200
 | `[e2] e http=409` | 이미 처리된 알림 | 같은 `client_request_id` 재전송 → nonce 확인 |
 | `[e2] e http=-1` | 타임아웃·소켓 실패 | 15초를 넘겼다 → rtt 값을 기록. 확정값(2026-09-23)의 **재판정 트리거와 대조**(`uplink_common.h` 주석) |
 | `[e2] rec 미완 filled=N/163840` | i2s_read 가 멈췄다 | `gaps` 와 함께 보고. 6.3(n) 축과 대조 |
-| `[e2] 세션 상한 도달` | 12건을 이미 보냈다 | 정상. 더 필요하면 재부팅(= 새 세션) |
+| `[e2] 세션 상한 도달` | 상한(MAX)건을 이미 보냈다 — 작성 당시 12 · 2026-11-18부터 사실상 해제(4294967295)라 현실적으로 안 나온다 | 정상. 더 필요하면 재부팅(= 새 세션) |
 | `[tof][e2] 멈춤 age_ms=…` | 마지막 ToF 프레임 뒤 1,000ms 초과 → 4필드 미전송(서버 `tof_absent`) | 정상 동작 중 나오면 보고. 보드 확인 절차 = `ENRICH_AUTOTRIG_RUNBOOK.md` 12절 |
 
 ---
@@ -150,7 +152,7 @@ md5 가 갈린다(카테고리 20, 2026-09-18). **전처리 출력(`c++ -E`) md5
 | NC-1 | `enrichBuildMultipart` 의 image/audio 파트 이름 **스왑** | I1 이름↔바이트 대응 | 모든 2차 발송 → 서버 SOI 400 |
 | NC-2 | `enrichGateFromDetectBody` 가 항상 `PENDING` 반환 | I2 skip 시 미발송 | `enrich_status="skipped"` 응답 → 409 |
 | NC-3 | 파싱 실패 시 `PARSE_FAIL` → `PENDING` 폴백 | I3 조용한 통과 금지 | 잘린 응답 바디 → 근거 없는 2차 발송 |
-| NC-4 | `sent < MAX` → `sent <= MAX` | I4 과금 상한 | 12건째 이후 → CSR 일 한도 초과 |
+| NC-4 | `sent < MAX` → `sent <= MAX` | I4 과금 상한 | 상한 이후 → CSR 일 한도 초과 |
 | NC-5 | `ENRICH_AUDIO_BUFFERS` 80 → 62 | I5 녹음 ≥5.000초 | 모든 2차 → 3.968초 오디오 |
 
 ⚠️ **파트 「순서」만 뒤집는 변형은 쓰지 않았다** — 서버 계약상 무해할 수 있어(6.5(d) 함정 예고)

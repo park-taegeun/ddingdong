@@ -68,10 +68,13 @@ static_assert(ENRICH_AUDIO_BYTES <= ENRICH_SERVER_AUDIO_MAX_BYTES,
 // ── 세션 과금 상한 (§2-1 ⑧ / 6.5(e) 「1세션 ≤12 이벤트」) ──────────────────────────
 // 근거 = CSR 180초 = 일 한도 600초의 30%(30.9 「스위트 1회 = 12건 = 180초」와 같은 단위).
 // 카톡 ≤36건은 12×3 **파생값**이라 상수를 따로 두지 않는다(죽은 상수 금지).
-constexpr uint32_t ENRICH_SESSION_MAX_EVENTS = 12;
+// (위 2줄 = 작성 당시 근거 · 당시 값 12)
+// 현재값: 2026-11-18 사실상 해제(사용자 결정 — 시연 중 USB 재연결 불가). 과금 상한은 서버 NCP
+// 일 · 월 한도가 맡는다. 재판정 트리거 = 시연 뒤 운영 재개 · NCP 한도 원복 시 이 값도 다시 정한다.
+constexpr uint32_t ENRICH_SESSION_MAX_EVENTS = 0xFFFFFFFFu;
 
 // sent = 이번 세션에 **이미 보낸** 2차 이벤트 수. 상한에 닿으면 false.
-// ⚠️ 경계: sent == MAX 면 이미 12건을 보냈으므로 **보내면 안 된다**(< 이지 <= 가 아니다).
+// ⚠️ 경계: sent == MAX 면 이미 MAX건을 보냈으므로 **보내면 안 된다**(< 이지 <= 가 아니다).
 inline bool enrichSessionAllows(uint32_t sent) { return sent < ENRICH_SESSION_MAX_EVENTS; }
 
 // ── /detect 응답 JSON 얕은 추출 ──────────────────────────────────────────────────

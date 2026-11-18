@@ -214,19 +214,21 @@ static void test_json_peek() {
 
 // ── I4: 세션 상한 ────────────────────────────────────────────────────────────
 static void test_session_cap() {
-  CHECK(ENRICH_SESSION_MAX_EVENTS == 12);
+  // 2026-11-18 사실상 해제(uint32 최댓값). 로직 · `<` 경계는 그대로다.
+  CHECK(ENRICH_SESSION_MAX_EVENTS == 0xFFFFFFFFu);
   CHECK(enrichSessionAllows(0));
-  CHECK(enrichSessionAllows(11));            // 11건 보냈다 → 12번째 허용
-  CHECK(!enrichSessionAllows(12));           // 12건 보냈다 → 더 못 보낸다 (경계, NC-4)
-  CHECK(!enrichSessionAllows(13));
-  CHECK(!enrichSessionAllows(0xFFFFFFFFu));
-  // 상한까지 실제로 세어 본다: 정확히 12번만 통과해야 한다
+  CHECK(enrichSessionAllows(11));
+  CHECK(enrichSessionAllows(12));            // 옛 상한 12 → 이제 통과
+  CHECK(enrichSessionAllows(13));
+  CHECK(enrichSessionAllows(0xFFFFFFFEu));   // MAX-1건 보냈다 → 마지막 1건 허용
+  CHECK(!enrichSessionAllows(0xFFFFFFFFu));  // MAX건 보냈다 → 더 못 보낸다 (경계, NC-4)
+  // 50회 세어 본다: 상한 없이 전부 통과해야 한다
   uint32_t sent = 0, passed = 0;
   for (int i = 0; i < 50; ++i) {
     if (enrichSessionAllows(sent)) { passed++; sent++; }
   }
-  CHECK(passed == 12);
-  CHECK(sent == 12);
+  CHECK(passed == 50);
+  CHECK(sent == 50);
 }
 
 // ── I5: 2차 녹음 길이 불변식 ─────────────────────────────────────────────────
